@@ -75,6 +75,9 @@ void bpf_gen__prog_load(struct bpf_gen *gen,
 			struct bpf_prog_load_opts *load_attr, int prog_idx);
 void bpf_gen__map_update_elem(struct bpf_gen *gen, int map_idx, void *value, __u32 value_size,
 			      __u64 flags);
+void bpf_gen__struct_ops_update_elem(struct bpf_gen *gen, int map_idx, void *value,
+				     __u32 value_size, const __u32 *fd_offs,
+				     const int *prog_idxs, int cnt);
 void bpf_gen__map_freeze(struct bpf_gen *gen, int map_idx);
 int bpf_gen__func_ptr_map_create(struct bpf_gen *gen, const char *map_name, int obj_map_idx,
 				 void *value, __u32 value_size, const __u32 *ptr_offs,
