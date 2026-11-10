@@ -1142,6 +1142,10 @@ void bpf_gen__prog_load(struct bpf_gen *gen,
 	/* populate union bpf_attr with btf_fd saved in the stack earlier */
 	move_stack2blob(gen, attr_field(prog_load_attr, prog_btf_fd), 4,
 			stack_off(btf_fd));
+	if (prog_type == BPF_PROG_TYPE_STRUCT_OPS)
+		/* attach_btf_id is a struct in the BTF of the object */
+		move_stack2blob(gen, attr_field(prog_load_attr, attach_btf_obj_fd), 4,
+				stack_off(btf_fd));
 	if (gen->attach_kind) {
 		emit_find_attach_target(gen);
 		/* populate union bpf_attr with btf_id and btf_obj_fd found by helper */
@@ -1247,6 +1251,36 @@ void bpf_gen__map_update_elem(struct bpf_gen *gen, int map_idx, void *pvalue,
 	if (!OPTS_GET(gen->opts, gen_hash, false))
 		emit_copy_initial_value(gen, map_idx, value, value_size, 0);
 
+	emit_map_update_elem(gen, map_idx, &attr, attr_size, key, value, value_size);
+}
+
+/*
+ * pvalue is the struct as the object has it. The kernel moves the members to
+ * where it has them. The fds of the programs prog_idxs go to fd_offs.
+ */
+void bpf_gen__struct_ops_update_elem(struct bpf_gen *gen, int map_idx, void *pvalue,
+				     __u32 value_size, const __u32 *fd_offs,
+				     const int *prog_idxs, int cnt)
+{
+	int attr_size = offsetofend(union bpf_attr, flags);
+	int value, key, zero = 0, i;
+	union bpf_attr attr;
+
+	memset(&attr, 0, attr_size);
+	value = add_data(gen, pvalue, value_size);
+	key = add_data(gen, &zero, sizeof(zero));
+
+	/* see bpf_gen__map_update_elem() */
+	if (!OPTS_GET(gen->opts, gen_hash, false))
+		emit_copy_initial_value(gen, map_idx, value, value_size, 0);
+
+	for (i = 0; i < cnt; i++) {
+		emit(gen, BPF_LDX_MEM(BPF_W, BPF_REG_0, BPF_REG_10,
+				      stack_off(prog_fd[prog_idxs[i]])));
+		emit2(gen, BPF_LD_IMM64_RAW_FULL(BPF_REG_1, BPF_PSEUDO_MAP_IDX_VALUE,
+						 0, 0, 0, value + fd_offs[i]));
+		emit(gen, BPF_STX_MEM(BPF_DW, BPF_REG_1, BPF_REG_0, 0));
+	}
 	emit_map_update_elem(gen, map_idx, &attr, attr_size, key, value, value_size);
 }
 
