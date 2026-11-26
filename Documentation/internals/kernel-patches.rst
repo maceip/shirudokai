@@ -68,6 +68,29 @@ bpf-next commit and builds the kernel package with the configuration in
 :src:`testing/kernel/`. CI checks the BTF ABI and LSM hooks before it
 stages the image for the test VM.
 
+Qualifying a target kernel
+--------------------------
+
+``kernel_abi_patch_status()`` in :src:`util/kernel_abi.c` classifies a
+kernel's ``vmlinux`` BTF against the signed-loader ABI and patches
+``0020`` through ``0024`` before boot or in CI: ``0020``
+(``bpf_lsm_tpm_command``) and ``0024`` (``bpf_lsm_mm_read_access``)
+appear directly in BTF as ``btf_ready`` or ``missing``, while ``0021``,
+``0022`` and ``0023`` change kfunc permission checks, the sleepable hook
+set and verifier pointer trust without changing BTF types
+(``runtime_only``).
+
+:src:`testing/helper/test-kernel-patches` and the functional test
+``t6161-carried-kernel-patches`` exercise all five contracts on a booted
+target or candidate distribution kernel: ``status`` checks BTF
+readiness, ``tpm`` checks ``tpm_common_write()`` header bounds and
+``lsm/tpm_command`` refusals, ``xattr-unpriv`` checks
+``bpf_get_dentry_xattr()`` on uncached labeled inodes without caller
+``MAY_READ``, ``sleepable-inode`` and the overlay mount check the
+sleepable inode hooks and ``dentry->d_parent``, and ``mm-read`` checks
+``lsm/mm_read_access`` on ``/proc/<pid>/`` under ``CAP_PERFMON`` and
+``CAP_SYS_ADMIN``.
+
 TPM command LSM hook
 --------------------
 
