@@ -269,7 +269,7 @@ or copies it.
 The seal pairs the label with inode storage in the pattern above. When
 one of its sleepable programs reads a label, on every open of a
 directory, on an open of a file for writing and after an xattr change,
-it records the label for that inode in the ``seal_dir_marks`` map, or
+it records the label for that inode in the ``shirudo_dir_marks`` map, or
 drops the record when there is no label. The hooks that add an entry to
 a directory, by creation, link or rename, read the directory's label
 from the new entry's parent dentry, require runtime authority when it
@@ -280,7 +280,7 @@ before by the entry hook of the same operation, and records a new
 directory in turn, so a subtree created in one go needs no reopen.
 ``lsm.s/inode_copy_up`` refuses an overlay copy-up of a labeled inode
 (``SealCopyUp``).
-Like every map of shirudo's, ``seal_dir_marks`` is refused to tasks
+Like every map of shirudo's, ``shirudo_dir_marks`` is refused to tasks
 without runtime authority, so userspace can neither read nor change a
 record. See :doc:`/internals/seal`.
 

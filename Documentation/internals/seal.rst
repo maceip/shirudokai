@@ -320,7 +320,7 @@ creation transaction and gives the new inode its parent's label with
 creation: no inode is better than one of shirudo's without its label.
 
 That hook cannot sleep, so it cannot read the parent's extended
-attribute. It uses a cached mark instead: ``seal_dir_marks``, inode
+attribute. It uses a cached mark instead: ``shirudo_dir_marks``, inode
 storage that records an inode's label, on files and directories alike.
 The table gives every event that sets or clears a mark and what each
 result of its label read does. A label of another length than the
