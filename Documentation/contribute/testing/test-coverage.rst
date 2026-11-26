@@ -248,6 +248,13 @@ signed config image.
        that is no jar, a jar without a ``Premain-Class``, ``--java``
        alone, rodata on a Java upatch and a header relabelled BPF are
        refused
+   * - ``t3015-kernel-cve-build``
+     - Every ``kernel-cve`` Beefile builds with ``bpm build`` against the
+       checkout's ``vmlinux.h`` without a local ``vmlinux.h`` or version
+       and architecture selector lock-in, packages a verified load and
+       unload directive inspected by ``bpm info`` and ``upatch info``,
+       maps ``__x86_64__``, ``__aarch64__`` and ``__riscv`` to
+       ``__TARGET_ARCH_*``, and passes the ``bpf_`` Coccinelle rules
    * - ``t3101-target-fixtures``
      - Prebuilt fixtures load and unload, foreign and own-keyring
        fixtures are refused, a map fixture exports
