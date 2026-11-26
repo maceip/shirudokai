@@ -2028,7 +2028,15 @@ R17 Telemetry is the target's own account
    ``shirudo-quote-check`` verifies it without a TPM. A quote that
    checks proves that the body (and, for signed OTLP exports, the boot
    identity and export sequence) is unchanged since that key signed it,
-   and its clock orders the quotes of one key. A quote sent
+   and its clock orders the quotes of one key. The export sequence
+   orders nothing across runs: it counts the exports of one invocation
+   and starts again at 1 in the next, and the boot identity is a string
+   the target reads from ``/proc``. What orders two exports is the
+   clock, the reset count and the restart count inside the quote, which
+   the TPM signs. The proof travels in HTTP headers, so it reaches a
+   backend only through a collector that forwards them and leaves the
+   body as sent; the example collector of :src:`tools/backend` does
+   neither. A quote sent
    again checks as it did the first time: a backend has to take a
    record's age from when its clock first arrived, as the example
    backend's check 2 does, or a silent node reads as alive. It does not prove
