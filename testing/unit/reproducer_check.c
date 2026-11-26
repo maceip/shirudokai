@@ -158,12 +158,16 @@ static void verdict_json_and_text_are_deterministic(void)
 		.stack_ids = { 77 },
 		.nr_stack_ids = 1,
 	};
+	struct reproducer_snapshot ben = {
+		.counters = { .activity = 9, .hits = 2, .observed = 2 },
+	};
 	struct reproducer_verdict v;
 	char *jbuf = NULL, *tbuf = NULL;
 	size_t jcap = 0, tlen = 0;
 	FILE *mem;
 
-	ASSERT_EQ(reproducer_evaluate(&before, &exp, NULL, &v), 0);
+	EXPECT_EQ(reproducer_evaluate(&before, &exp, NULL, &v), -EINVAL);
+	ASSERT_EQ(reproducer_evaluate(&before, &exp, &ben, &v), 0);
 	ASSERT_EQ(reproducer_verdict_json("cve-shield", &v, &jbuf, &jcap), 0);
 	ASSERT_TRUE(jbuf);
 	EXPECT_TRUE(str_contains(jbuf, "\"verdict\":\"pass\""));
@@ -181,10 +185,14 @@ static void verdict_json_and_text_are_deterministic(void)
 
 	/* Invalid or unpinned upatch name fails cleanly in test-run runner. */
 	EXPECT_EQ(reproducer_run_test_prog("../bad", "shield_counters", NULL,
-					   "/nonexistent", NULL, &v), -EINVAL);
+					   "/nonexistent", "/nonexistent",
+					   &v), -EINVAL);
+	EXPECT_EQ(reproducer_run_test_prog("absent-shield", "shield_counters",
+					   NULL, "/nonexistent", NULL, &v),
+		  -EINVAL);
 	EXPECT_TRUE(reproducer_run_test_prog("absent-shield", "shield_counters",
-					     NULL, "/nonexistent", NULL,
-					     &v) < 0);
+					     NULL, "/nonexistent",
+					     "/nonexistent", &v) < 0);
 }
 
 static const struct unit_case cases[] = {

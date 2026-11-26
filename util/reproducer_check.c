@@ -87,12 +87,11 @@ int reproducer_evaluate(const struct reproducer_snapshot *before,
 			const struct reproducer_snapshot *after_benign,
 			struct reproducer_verdict *out)
 {
-	const struct reproducer_snapshot *benign;
+	const struct reproducer_snapshot *benign = after_benign;
 
-	if (!before || !after_exploit || !out)
+	if (!before || !after_exploit || !benign || !out)
 		return -EINVAL;
 	memset(out, 0, sizeof(*out));
-	benign = after_benign ? after_benign : after_exploit;
 
 	collect_new_stack_ids(before, after_exploit, out);
 
@@ -414,7 +413,8 @@ int reproducer_run_test_prog(const char *upatch_name,
 
 	if (!upatch_name || !upatch_name_valid(upatch_name) ||
 	    !counters_map || !counters_map[0] ||
-	    !test_input_path || !test_input_path[0] || !out)
+	    !test_input_path || !test_input_path[0] ||
+	    !benign_input_path || !benign_input_path[0] || !out)
 		return -EINVAL;
 	memset(out, 0, sizeof(*out));
 
@@ -444,20 +444,16 @@ int reproducer_run_test_prog(const char *upatch_name,
 				    &after_exp);
 	if (ret)
 		goto out;
-	if (benign_input_path && benign_input_path[0]) {
-		ret = run_input_once(prog_fd, benign_input_path, &ben_ret);
-		if (ret)
-			goto out;
-		ret = capture_live_snapshot(upatch_name, counters_map,
-					    stack_map, &after_ben);
-		if (ret)
-			goto out;
-		ret = reproducer_evaluate(&before, &after_exp, &after_ben, out);
-		out->has_benign_test_run = true;
-		out->benign_test_run_retval = ben_ret;
-	} else {
-		ret = reproducer_evaluate(&before, &after_exp, NULL, out);
-	}
+	ret = run_input_once(prog_fd, benign_input_path, &ben_ret);
+	if (ret)
+		goto out;
+	ret = capture_live_snapshot(upatch_name, counters_map, stack_map,
+				    &after_ben);
+	if (ret)
+		goto out;
+	ret = reproducer_evaluate(&before, &after_exp, &after_ben, out);
+	out->has_benign_test_run = true;
+	out->benign_test_run_retval = ben_ret;
 	out->test_run_executed = true;
 	out->test_run_retval = exp_ret;
 out:
