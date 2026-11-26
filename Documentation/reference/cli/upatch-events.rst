@@ -13,7 +13,7 @@ loaded upatch in a single bounded pass.
 
 Runs on: target, as root with the runtime binary. Requires: a loaded
 upatch with at least one pinned ``ringbuf`` map. Changes measured state:
-no.
+no. It does change the buffer: a record it reads is gone from it.
 
 Usage
 -----
@@ -42,6 +42,10 @@ and drains up to ``--max-records`` samples in one pass:
   records read; records beyond ``--max-records`` remain queued in the
   kernel ring buffer for a later invocation, and the output notes
   ``truncated``.
+- A record is delivered once, to whichever invocation reads it. A ring
+  buffer has one consumer position and ``events`` takes no lock, so two
+  invocations on one upatch at the same time race on it and can each
+  lose or repeat records. Run one reader per upatch.
 - When the map's BTF resolves a value type (either ``btf_value_type_id``
   on the map or ``__type(value, ...)`` on its ``SEC(".maps")`` variable),
   each sample at least as large as that type is decoded field by field.
