@@ -38,8 +38,9 @@ _shirudo_value()
 	case $1 in
 	*dir*)
 		COMPREPLY=( $(compgen -d -- "$cur") ) ;;
-	'<hex>'|'<64-hex>'|'<n>'|'<0-10>'|'<id>'|'<url>'|'<uri>'|'<version>'|\
-	'<ref>'|'<list>'|'<upatch-name>'|*'=<hex>'|*':'*|sha256:*|"'<flags>'")
+	'<hex>'|'<64-hex>'|'<n>'|'<0-10>'|'<id>'|'<cve-id>'|'<url>'|'<uri>'|\
+	'<version>'|'<ref>'|'<list>'|'<upatch-name>'|*'=<hex>'|*':'*|\
+	sha256:*|"'<flags>'")
 		;;
 	*)
 		COMPREPLY=( $(compgen -f -- "$cur") ) ;;
@@ -69,7 +70,7 @@ _shirudo_args()
 	'bpm build')
 		COMPREPLY=( $(compgen -d -- "$cur") ) ;;
 	'upatch get'|'upatch map'|'bpm uninstall'|'bpm pull'|'bpm repo update'|\
-	'bpm config register'*|'bpm tree show')
+	'bpm config register'*|'bpm tree show'|'bpm feed'*)
 		;;
 	*)
 		COMPREPLY=( $(compgen -f -- "$cur") ) ;;

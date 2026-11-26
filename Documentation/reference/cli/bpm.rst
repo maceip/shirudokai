@@ -33,6 +33,9 @@ Usage
    shirudo bpm tree append <package> oci://<registry>/<repository> [<append-options>]
    shirudo bpm tree show oci://<registry>/<repository> (--cert <certificate> | --cert=<certificate>)
                          [--reference <reference> | --reference=<reference>] [--walk]
+   shirudo bpm feed verify --feed <path> --sig <path> --cert <certificate> [--json]
+   shirudo bpm feed (list | match) --feed <path> --sig <path> --cert <certificate>
+                    [--cve <cve-id>] [--json]
    shirudo bpm key (add | fingerprint) <certificate | package | oci-reference>
    shirudo bpm key list [--json]
    shirudo bpm pull oci://<registry>/<repository>:<tag>
@@ -85,6 +88,10 @@ Usage
      - yes
    * - ``tree append``, ``tree show``
      - operator host, helper
+     - no
+     - no
+   * - ``feed verify``, ``feed list``, ``feed match``
+     - any host
      - no
      - no
    * - ``key add``
@@ -426,6 +433,22 @@ not match its digest or an operation digest that does not match its
 operation, ``No such file or directory`` for a reference that does not
 exist, and ``Invalid argument`` for a document that is not a tree
 publication.
+
+feed
+----
+
+``feed`` verifies and queries a curated CVE shield feed offline against a
+detached ML-DSA-87 CMS signature (``--sig``) and signer certificate
+(``--cert``), as :src:`tools/put-shields` ``--feed`` writes:
+
+- ``feed verify`` verifies the signature under the ML-DSA-87 certificate
+  and validates the feed schema, printing the feed ID, entry count and
+  ``generated_at`` timestamp, or a JSON verdict with ``--json``.
+- ``feed list`` verifies the feed and lists every entry, or only those
+  whose ``cves`` list contains ``--cve``, as a table or as canonical feed
+  JSON with ``--json``.
+- ``feed match`` verifies the feed and filters its entries to those whose
+  ``selector`` matches the running host (and ``--cve`` when given).
 
 key
 ---
