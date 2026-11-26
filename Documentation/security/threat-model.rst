@@ -1056,7 +1056,8 @@ elsewhere is the caller's to vouch for (U3).
    ``t6112``, ``t6113``, ``t6114``, ``t6115``, ``t6118``, ``t6123``,
    ``t6124``, ``t6127``, ``t6129``, ``t6131``, ``t6133``, ``t6134``,
    ``t6135``, ``t6136``, ``t6137``, ``t6144``, ``t6145``, ``t6146``,
-   ``t6149``, ``t6150``, ``t6152``, ``t6153``, ``t6156``, ``t7114``
+   ``t6149``, ``t6150``, ``t6152``, ``t6153``, ``t6156``, ``t6161``,
+   ``t7114``
 :Residual: R2, R19, R22
 
 T4 Substituting artifacts
@@ -1223,7 +1224,7 @@ tree operations run without it.
    ``tpm_error`` and ``eventlog_full`` from shirudo
 :Counters: ``TpmExtend``, ``TpmWrite``
 :Tests: ``t0057``, ``t4002``, ``t4003``, ``t4102``, ``t4103``, ``t6115``,
-   ``t6122``, ``t6128``, ``t6143``, ``t6144``, ``t6147``
+   ``t6122``, ``t6128``, ``t6143``, ``t6144``, ``t6147``, ``t6161``
 :Proofs: ``Shirudo.Chain``, ``Shirudo.Events``, ``Shirudo.Measured``,
    ``Shirudo.UpatchLoad``, ``chain-events``, ``measured-fold-model``,
    ``eventlog-records``, ``tpm-digest``

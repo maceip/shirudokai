@@ -833,6 +833,7 @@ TEST_HELPERS += testing/helper/test-nv-writer
 TEST_HELPERS += testing/helper/test-keyring-seal
 TEST_HELPERS += testing/helper/test-tpm-preopened
 TEST_HELPERS += testing/helper/test-keepalive-quote
+TEST_HELPERS += testing/helper/test-kernel-patches
 
 testing/helper/test-conditions: testing/helper/test-conditions.c util/conditions.o \
                                 util/string.o util/malloc.o
@@ -957,6 +958,11 @@ testing/helper/test-bpf-cmd: testing/helper/test-bpf-cmd.c
 testing/helper/test-shared-bpf: testing/helper/test-shared-bpf.c
 	@printf '  CC      $@\n'
 	$(Q)$(CC) $(CFLAGS) -o $@ $^
+
+testing/helper/test-kernel-patches: testing/helper/test-kernel-patches.c \
+		util/kernel_abi.o util/string.o $(LIBBPF_A)
+	@printf '  CC      $@\n'
+	$(Q)$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LIBELF_LIBS) $(ZLIB_LIBS)
 
 testing/helper/test-exec-fail: testing/helper/test-exec-fail.c
 	@printf '  CC      $@\n'
