@@ -38,9 +38,9 @@ _shirudo_value()
 	case $1 in
 	*dir*)
 		COMPREPLY=( $(compgen -d -- "$cur") ) ;;
-	'<hex>'|'<64-hex>'|'<n>'|'<0-10>'|'<id>'|'<cve-id>'|'<url>'|'<uri>'|\
-	'<version>'|'<ref>'|'<list>'|'<map>'|'<upatch-name>'|*'=<hex>'|*':'*|\
-	sha256:*|"'<flags>'")
+	'<hex>'|'<64-hex>'|'<n>'|'<ms>'|'<0-10>'|'<id>'|'<cve-id>'|'<url>'|\
+	'<uri>'|'<version>'|'<ref>'|'<list>'|'<map>'|'<upatch-name>'|*'=<hex>'|\
+	*':'*|sha256:*|"'<flags>'")
 		;;
 	*)
 		COMPREPLY=( $(compgen -f -- "$cur") ) ;;
@@ -69,9 +69,9 @@ _shirudo_args()
 			    $(compgen -d -- "$cur") ) ;;
 	'bpm build')
 		COMPREPLY=( $(compgen -d -- "$cur") ) ;;
-	'upatch get'|'upatch map'|'upatch check'|'bpm uninstall'|'bpm pull'|\
-	'bpm repo update'|'bpm config register'*|'bpm tree show'|'bpm feed'*|\
-	'attest ek-name'|'keys rotate')
+	'upatch get'|'upatch map'|'upatch check'|'upatch events'|\
+	'bpm uninstall'|'bpm pull'|'bpm repo update'|'bpm config register'*|\
+	'bpm tree show'|'bpm feed'*|'attest ek-name'|'keys rotate')
 		;;
 	*)
 		COMPREPLY=( $(compgen -f -- "$cur") ) ;;
