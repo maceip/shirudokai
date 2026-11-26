@@ -16,15 +16,15 @@
 
 \begin{document}
 \begin{tikzpicture}
-  \useasboundingbox (0,0) rectangle (840,380);
+  \useasboundingbox (0,0) rectangle (900,380);
 
-  \foreach \i in {1,2,3,4,18} {\figcell{\i}{fig-line}}
-  \foreach \i in {5,...,9} {\figcell{\i}{fig-s1}}
-  \foreach \i in {10,...,13} {\figcell{\i}{fig-s2}}
-  \foreach \i in {14,...,17} {\figcell{\i}{fig-s3}}
+  \foreach \i in {1,...,5,19} {\figcell{\i}{fig-line}}
+  \foreach \i in {6,...,10} {\figcell{\i}{fig-s1}}
+  \foreach \i in {11,...,14} {\figcell{\i}{fig-s2}}
+  \foreach \i in {15,...,18} {\figcell{\i}{fig-s3}}
 
   \begin{scope}[draw=fig-accent, line width=1.5bp]
-    \foreach \x in {340,460,660} {
+    \foreach \x in {380,500,700} {
       \draw (\x,28) -- (\x,36);
       \draw (\x,58) -- (\x,100);
     }
@@ -32,34 +32,34 @@
 
   % What a stop in each span leaves.
   \begin{scope}[link, thin]
-    \foreach \a/\b/\y in {20/460/122, 460/540/152, 540/560/182,
-        560/700/212} {
+    \foreach \a/\b/\y in {20/500/122, 500/580/152, 580/600/182,
+        600/740/212} {
       \draw (\a,\y) -- (\b,\y);
       \draw (\a,\y-5) -- (\a,\y+5);
       \draw (\b,\y-5) -- (\b,\y+5);
     }
   \end{scope}
-  \draw[grid] (10,256) -- (830,256);
+  \draw[grid] (10,256) -- (890,256);
 
   \draw[box] (20,272) rectangle (330,370);
-  \draw[box] (360,272) rectangle (820,370);
+  \draw[box] (360,272) rectangle (880,370);
 
   \begin{scope}[every node/.append style={note, small, anchor=base}]
-    \node[text=fig-accent] at (340,22) {keyrings sealed};
-    \node[text=fig-accent] at (460,22) {guards attached};
-    \node[text=fig-accent] at (660,22) {PCR 9 anchor};
-    \node at (100,52) {settings, mounts};
-    \node at (280,52) {images and keyrings};
-    \node at (460,52) {guards, runtime};
-    \node at (620,52) {boot event, restore, register};
+    \node[text=fig-accent] at (380,22) {keyrings sealed};
+    \node[text=fig-accent] at (500,22) {guards attached};
+    \node[text=fig-accent] at (700,22) {PCR 9 anchor};
+    \node at (120,52) {settings, mounts};
+    \node at (320,52) {images and keyrings};
+    \node at (500,52) {guards, runtime};
+    \node at (660,52) {boot event, restore, register};
   \end{scope}
 
   \begin{scope}[every node/.append style={note, small, anchor=base west}]
-    \node at (470,126) {nothing attached, service skipped};
-    \node at (550,156) {guards on, no runtime, service skipped};
-    \node at (570,186) {nothing pending: service runs init again};
-    \node at (710,216) {pending until};
-    \node at (710,230) {a reboot};
+    \node at (510,126) {nothing attached, service skipped};
+    \node at (590,156) {guards on, no runtime, service skipped};
+    \node at (610,186) {nothing pending: service runs init again};
+    \node at (750,216) {pending until};
+    \node at (750,230) {a reboot};
     \node at (20,114) {if init stops:};
     \node at (20,248) {switch to the root file system: systemd extends
       PCR 11 at leave-initrd, and /run moves};
