@@ -5,9 +5,16 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <openssl/bio.h>
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+
 #include <shirudo/string.h>
 
 #include "attest.h"
+#include "ek_cloud.h"
+#include "hex.h"
+#include "malloc.h"
 #include "unit.h"
 
 #define EVIDENCE "fuzz/corpus/attest/snapshot"
@@ -154,12 +161,159 @@ static void record_without_digest_is_refused(void)
 		  -EINVAL);
 }
 
+static size_t make_p256_pem(const __u8 x[32], const __u8 y[32], char *out,
+			    size_t cap)
+{
+	EVP_PKEY_CTX *kctx;
+	EVP_PKEY *pkey = NULL;
+	OSSL_PARAM params[3];
+	char *mem = NULL;
+	__u8 point[65];
+	BIO *bio;
+	long n;
+
+	point[0] = 0x04;
+	memcpy(point + 1, x, 32);
+	memcpy(point + 33, y, 32);
+	params[0] = OSSL_PARAM_construct_utf8_string("group", (char *)"P-256",
+						     0);
+	params[1] = OSSL_PARAM_construct_octet_string("pub", point,
+						      sizeof(point));
+	params[2] = OSSL_PARAM_construct_end();
+	kctx = EVP_PKEY_CTX_new_from_name(NULL, "EC", NULL);
+	ASSERT_TRUE(kctx);
+	ASSERT_TRUE(EVP_PKEY_fromdata_init(kctx) > 0);
+	ASSERT_TRUE(EVP_PKEY_fromdata(kctx, &pkey, EVP_PKEY_PUBLIC_KEY,
+				      params) > 0);
+	EVP_PKEY_CTX_free(kctx);
+
+	bio = BIO_new(BIO_s_mem());
+	ASSERT_TRUE(bio);
+	ASSERT_EQ(PEM_write_bio_PUBKEY(bio, pkey), 1);
+	n = BIO_get_mem_data(bio, &mem);
+	ASSERT_TRUE(n > 0 && (size_t)n < cap);
+	memcpy(out, mem, (size_t)n);
+	out[n] = '\0';
+	BIO_free(bio);
+	EVP_PKEY_free(pkey);
+	return (size_t)n;
+}
+
+static void cloud_ek_pub_vouches_challenge_and_verify(void)
+{
+	static const __u8 nonce[16] = {
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+	};
+	static char doc[16384], report[ATTEST_REPORT_MAX];
+	char pem[1024], wrong_pem[1024], ek_hex[2 * TPM_PUBLIC_MAX + 1];
+	__u8 ek_raw[TPM_PUBLIC_MAX], cred[TPM_CREDENTIAL_LEN];
+	struct attest_challenge_policy pol = {};
+	struct attest_expect expect = {
+		.nonce = nonce,
+		.nonce_len = sizeof(nonce),
+	};
+	size_t len, pem_len, wrong_len, ek_len = 0, out_len = 0, out_cap = 0;
+	char *ek_obj, *pub_key, *pub_end, *ek_cert, *cert_end, *chal = NULL;
+	struct tpm_public pub;
+	const char *full;
+	EVP_PKEY *wrong;
+	char *mem = NULL;
+	BIO *bio;
+	long n;
+
+	full = read_evidence(&len);
+	ASSERT_TRUE(len < sizeof(doc));
+	memcpy(doc, full, len);
+
+	ek_obj = span_find(doc, len, "\"ek\":{");
+	ASSERT_TRUE(ek_obj);
+	pub_key = span_find(ek_obj, len - (size_t)(ek_obj - doc),
+			    "\"public\":\"");
+	ASSERT_TRUE(pub_key);
+	pub_key += sizeof("\"public\":\"") - 1;
+	pub_end = memchr(pub_key, '"', len - (size_t)(pub_key - doc));
+	ASSERT_TRUE(pub_end &&
+		    (size_t)(pub_end - pub_key) < sizeof(ek_hex));
+	memcpy(ek_hex, pub_key, (size_t)(pub_end - pub_key));
+	ek_hex[pub_end - pub_key] = '\0';
+	ASSERT_EQ(hex_decode_max(ek_hex, ek_raw, sizeof(ek_raw), &ek_len), 0);
+	ASSERT_EQ(tpm_public_parse(ek_raw, ek_len, &pub), 0);
+	ASSERT_EQ(pub.type, TPM_ALG_ECC);
+	pem_len = make_p256_pem(pub.x, pub.y, pem, sizeof(pem));
+
+	wrong = EVP_PKEY_Q_keygen(NULL, NULL, "EC", "P-256");
+	ASSERT_TRUE(wrong);
+	bio = BIO_new(BIO_s_mem());
+	ASSERT_TRUE(bio && PEM_write_bio_PUBKEY(bio, wrong) == 1);
+	n = BIO_get_mem_data(bio, &mem);
+	ASSERT_TRUE(n > 0 && (size_t)n < sizeof(wrong_pem));
+	memcpy(wrong_pem, mem, (size_t)n);
+	wrong_len = (size_t)n;
+	BIO_free(bio);
+	EVP_PKEY_free(wrong);
+
+	/* Strip ek_certificate to null as on cloud vTPMs (AWS/GCP/Azure). */
+	ek_cert = span_find(doc, len, "\"ek_certificate\":\"");
+	if (ek_cert) {
+		char *val = ek_cert + sizeof("\"ek_certificate\":") - 1;
+
+		cert_end = memchr(val + 1, '"', len - (size_t)(val + 1 - doc));
+		ASSERT_TRUE(cert_end);
+		memcpy(val, "null", 4);
+		memmove(val + 4, cert_end + 1,
+			len - (size_t)(cert_end + 1 - doc));
+		len -= (size_t)(cert_end + 1 - val) - 4;
+	}
+
+	/* Without --ek-pub or --trust-presented-ek, challenge refuses. */
+	EXPECT_EQ(attest_challenge_make(doc, len, &pol, cred, &chal, &out_len,
+					&out_cap, report, sizeof(report)),
+		  -EKEYREJECTED);
+
+	/* Matching --ek-pub vouches for the EK without --trust-presented-ek. */
+	pol.ek_pub = pem;
+	pol.ek_pub_len = pem_len;
+	ASSERT_EQ(attest_challenge_make(doc, len, &pol, cred, &chal, &out_len,
+					&out_cap, report, sizeof(report)), 0);
+	EXPECT_TRUE(span_find(report, strlen(report),
+			      "  OK    endorsement key: matches cloud public key\n") != NULL);
+	xfree(chal, out_cap);
+	chal = NULL;
+
+	/* Wrong --ek-pub fails challenge. */
+	pol.ek_pub = wrong_pem;
+	pol.ek_pub_len = wrong_len;
+	EXPECT_EQ(attest_challenge_make(doc, len, &pol, cred, &chal, &out_len,
+					&out_cap, report, sizeof(report)),
+		  -EKEYREJECTED);
+	EXPECT_TRUE(span_find(report, strlen(report),
+			      "  FAIL  endorsement key: matches cloud public key\n") != NULL);
+
+	/* attest_verify checks --ek-pub and reports OK vs FAIL. */
+	expect.have_ek_pub = true;
+	expect.ek_pub = pem;
+	expect.ek_pub_len = pem_len;
+	EXPECT_EQ(attest_verify(doc, len, &expect, report, sizeof(report)),
+		  -EKEYREJECTED);
+	EXPECT_TRUE(span_find(report, strlen(report),
+			      "  OK    endorsement key: matches cloud public key\n") != NULL);
+
+	expect.ek_pub = wrong_pem;
+	expect.ek_pub_len = wrong_len;
+	EXPECT_EQ(attest_verify(doc, len, &expect, report, sizeof(report)),
+		  -EKEYREJECTED);
+	EXPECT_TRUE(span_find(report, strlen(report),
+			      "  FAIL  endorsement key: matches cloud public key\n") != NULL);
+}
+
 static const struct unit_case cases[] = {
 	UNIT_CASE(pcrs_are_a_list_up_to_23),
 	UNIT_CASE(pcr_value_is_a_pcr_and_an_equals),
 	UNIT_CASE(name_digest_is_a_name_and_64_digits),
 	UNIT_CASE(report_ends_its_last_line_at_any_size),
 	UNIT_CASE(record_without_digest_is_refused),
+	UNIT_CASE(cloud_ek_pub_vouches_challenge_and_verify),
 	{}
 };
 

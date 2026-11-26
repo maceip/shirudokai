@@ -259,6 +259,7 @@ UTIL_SRCS := \
     util/io.c \
     util/tpm.c \
     util/tpm_wire.c \
+    util/ek_cloud.c \
     util/attest.c \
     util/chain.c \
     util/chain_history.c \
@@ -853,7 +854,7 @@ testing/helper/test-harden: testing/helper/test-harden.c util/harden.o util/log.
 # The register code pulls in the eventlog, which pulls in the seal
 # label writer, the JSON codec and the measured set it folds.
 REGISTER_OBJS := util/config_attest.o util/config_update.o util/config_measure.o util/config_image.o \
-                 util/chain.o util/tpm.o util/tpm_wire.o util/eventlog.o \
+                 util/chain.o util/tpm.o util/tpm_wire.o util/ek_cloud.o util/eventlog.o \
                  util/measured.o util/paths.o util/timefmt.o util/upatch.o \
                  util/hex.o util/crypto_openssl.o util/json.o util/string.o \
                  util/io.o util/seal.o util/config.o util/image_config.o \
@@ -1248,8 +1249,12 @@ $(FUZZ_OUT)/fuzz-bpm-package: testing/fuzz/fuzz-bpm-package.c $(FUZZ_BASE) \
 $(FUZZ_OUT)/fuzz-tpm-wire: testing/fuzz/fuzz-tpm-wire.c $(FUZZ_BASE) \
                             util/tpm_wire.c util/crypto_openssl.c util/io.c \
                             $(FUZZ_SEAL)
+$(FUZZ_OUT)/fuzz-ek-pub: testing/fuzz/fuzz-ek-pub.c $(FUZZ_BASE) \
+                          util/ek_cloud.c util/tpm_wire.c \
+                          util/crypto_openssl.c util/io.c $(FUZZ_SEAL)
 $(FUZZ_OUT)/fuzz-attest: testing/fuzz/fuzz-attest.c $(FUZZ_BASE) \
-                          util/attest.c util/chain.c util/chain_history.c \
+                          util/attest.c util/ek_cloud.c util/chain.c \
+                          util/chain_history.c \
                           util/nv_writer.c util/tpm.c \
                           util/tpm_wire.c util/eventlog.c util/timefmt.c \
                           util/crypto_openssl.c util/io.c $(FUZZ_SEAL) \
@@ -1367,6 +1372,7 @@ $(FUZZ_OUT)/fuzz-bpm-info: FUZZ_LIBS += $(TSS2_LIBS) $(LIBBPF_A) $(LIBELF_LIBS)
 $(FUZZ_OUT)/fuzz-attest-report: testing/fuzz/fuzz-attest-report.c \
                                $(FUZZ_BASE) testing/fuzz/output.c \
                                builtin-attest.c builtin.h util/attest.c \
+                               util/ek_cloud.c \
                                util/chain.c util/chain_history.c \
                                util/config_attest.c util/config_measure.c \
                                util/config_update.c util/crypto_openssl.c \

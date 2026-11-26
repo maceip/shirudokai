@@ -70,7 +70,7 @@ _shirudo_args()
 	'bpm build')
 		COMPREPLY=( $(compgen -d -- "$cur") ) ;;
 	'upatch get'|'upatch map'|'bpm uninstall'|'bpm pull'|'bpm repo update'|\
-	'bpm config register'*|'bpm tree show'|'bpm feed'*)
+	'bpm config register'*|'bpm tree show'|'bpm feed'*|'attest ek-name')
 		;;
 	*)
 		COMPREPLY=( $(compgen -f -- "$cur") ) ;;

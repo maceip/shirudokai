@@ -25,12 +25,14 @@ Usage
    shirudo attest verify ...
    shirudo attest predict ...
    shirudo attest challenge ...
+   shirudo attest ek-name ...
    shirudo attest --list-cmds
 
 Every option takes its value after ``=`` or as the next argument, and
 ``-o`` is ``--output``. ``attest`` with no argument produces evidence. It
 does not print help. The subcommands run on the operator host:
-:doc:`attest-verify`, :doc:`attest-predict`, :doc:`attest-challenge`.
+:doc:`attest-verify`, :doc:`attest-predict`, :doc:`attest-challenge`,
+:doc:`attest-ek-name`.
 
 Description
 -----------
@@ -201,5 +203,6 @@ Related
 - :doc:`attest-verify`
 - :doc:`attest-challenge`
 - :doc:`attest-predict`
+- :doc:`attest-ek-name`
 - :doc:`/operate/run/attest`
 - :doc:`/internals/measurement-register`
