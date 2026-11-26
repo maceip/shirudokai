@@ -174,8 +174,12 @@ The config image accepts these keys:
      - ``true`` quotes the origin digest of each OTLP export with the
        target's TPM attestation key and attaches ``X-Shirudo-TPM-*``,
        ``X-Shirudo-Boot-ID`` and ``X-Shirudo-Export-Seq`` headers for
-       offline verification by ``shirudo-quote-check --otel``. Default:
-       ``false``.
+       offline verification by ``shirudo-quote-check --otel``. The
+       sequence starts again at 1 in each invocation, so it does not
+       order exports across runs or show a replay; order them by the
+       clock inside the quote. A collector between the target and the
+       backend has to forward the headers and the body unchanged for
+       the check to be possible. Default: ``false``.
    * - ``map_export.otel_retries``
      - Retries after a failed request, 0 to 10. Default: 3.
    * - ``map_export.json_path``
