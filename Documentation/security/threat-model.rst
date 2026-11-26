@@ -2328,18 +2328,21 @@ U10 Two kernel prerequisites are checked only in part
    :Consequence: The pre-flight cannot tell whether a kernel allows
       writes under mounted file systems when the target has neither
       ``/proc/config.gz`` nor ``/boot/config-<release>``, which is the
-      usual case in an initrd and on distribution kernels built without
-      ``CONFIG_IKCONFIG_PROC``: BTF shows that the guard is built, not
-      its default, and the check then passes on the command line alone.
-      A kernel with ``CONFIG_BLK_DEV_WRITE_MOUNTED=y`` and no
-      ``bdev_allow_write_mounted`` parameter initializes without an
-      error and without the protection A10 gives. The hibernation
+      usual case in the initrd, where ``init`` runs first, on a kernel
+      built without ``CONFIG_IKCONFIG_PROC``: BTF shows that the guard
+      is built, not its default, and the check then passes on the
+      command line alone. A kernel with ``CONFIG_BLK_DEV_WRITE_MOUNTED=y``
+      and no ``bdev_allow_write_mounted`` parameter then initializes
+      without an error and without the protection A10 gives. The hibernation
       check takes ``noresume`` for a disabled resume and does not look
       at an initrd tool that resumes on its own.
-   :Status: Confirmed in code, and on a distribution kernel:
-      ``7.0.0-1020-azure`` has no ``/proc/config.gz`` and is built with
-      ``CONFIG_BLK_DEV_WRITE_MOUNTED=y``. The 32-bit compatibility check
-      (A5) reads BTF and is complete.
+   :Status: Confirmed in code. Distribution kernels have the default
+      on: ``7.0.0-1020-azure`` has no ``/proc/config.gz``, and the
+      ``/boot/config-7.0.0-1020-azure`` of its root file system sets
+      ``CONFIG_BLK_DEV_WRITE_MOUNTED=y``; an initrd that does not carry
+      that file passes the check. Not booted with a shirudo initrd. The
+      32-bit compatibility check (A5) reads BTF, which shows whether
+      compatibility is built.
    :Meanwhile: Put ``bdev_allow_write_mounted=0`` on the command line of
       the UKI, which the check reads whatever the kernel's default is,
       and build the kernel and its command line as

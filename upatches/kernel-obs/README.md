@@ -241,6 +241,9 @@ and pending-table counters in user space and in BPF:
       header offsets and out-of-packet targets;
 - [x] count a full pending table, LRU displacement, stale responses and
       answers past its cap of 75, instead of dropping them silently;
-- [x] cover malformed packets in the host unit suite `testing/unit/dns_obs.c`
-      against the shared wire parser `obs_dns_parse.h`; a live raw-frame
-      injection harness on the target VM remains optional follow-up work.
+- [ ] cover malformed packets on the target, which needs a live packet
+      injection harness in the test VM. The host unit suite
+      `testing/unit/dns_obs.c` covers them against the shared wire
+      parser `obs_dns_parse.h` and a simulation of the matcher; the
+      matcher the BPF program runs, in `obs_dns.bpf.c`, is a separate
+      copy that no test exercises.

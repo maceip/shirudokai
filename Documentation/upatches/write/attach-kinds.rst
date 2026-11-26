@@ -105,8 +105,9 @@ the link against the metadata and pins it.
      - struct_ops
      - not attached itself: its map is, with ``BPF_LINK_CREATE`` and
        ``BPF_STRUCT_OPS``
-     - ``struct_ops``-by-name kernel support and what the struct needs,
-       ``CONFIG_INET`` for ``tcp_congestion_ops``
+     - ``struct_ops``-by-name kernel support, which is a proposal on
+       the bpf list that the tested kernel does not carry, and what the
+       struct needs, ``CONFIG_INET`` for ``tcp_congestion_ops``
    * - ``syscall``, named ``shirudo_serialize__<map>``
      - syscall
      - not attached, run by ``shirudo upatch map``
@@ -733,9 +734,14 @@ TCX
 ``tcx/ingress`` and ``tcx/egress`` attach ``BPF_PROG_TYPE_SCHED_CLS``
 programs on the ``sk_buff`` dataplane with ``BPF_LINK_CREATE`` and
 ``BPF_TCX_INGRESS`` or ``BPF_TCX_EGRESS``. Unlike native XDP, TCX uses
-the kernel's ``mprog`` list on each interface, so multiple dataplane
-shields — and existing TCX programs such as Cilium — chain on the same
-interface without occupying the slot.
+the kernel's ``mprog`` list on each interface, so several programs
+attach to one interface without occupying a slot. shirudo creates the
+link without a position, which puts the program at the end of the
+list, after the programs already there. The list runs in order and
+goes on to the next program only while each one returns ``TCX_NEXT``:
+any other verdict, ``TCX_PASS`` included, ends it. Beside a datapath
+whose programs return a final verdict, a shield at the end of the list
+does not see the packets that datapath has decided.
 
 Bare ``SEC("tcx/ingress")`` and ``SEC("tcx/egress")`` select all device
 classes (mask ``27``). Optional device-class suffixes accept decimal
@@ -771,6 +777,13 @@ map in ``SEC(".struct_ops.link")`` that names the programs:
            .ssthresh       = (void *)cc_ssthresh,
            .name           = "cc",
    };
+
+A ``struct_ops`` upatch builds and signs but does not load on the
+kernel :doc:`/operate/plan/system-requirements` describes. The signed
+loader names the struct and its members and needs the kernel to match
+them by name, which is the kernel half of an RFC on the bpf list.
+:src:`testing/kernel/patches` does not carry that patch, and no test
+loads a ``struct_ops`` upatch.
 
 ``struct_ops.s/<name>`` declares a sleepable member callback. The object
 names the struct and its members in BTF, which the signature covers, and

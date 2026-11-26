@@ -129,11 +129,14 @@ What an xdp or tcx program does not see
   length from ``bpf_xdp_get_buff_len()``.
 
 ``tcx/ingress`` and ``tcx/egress`` run on the ``sk_buff`` path of each
-selected device, chained in ``BPF_TCX`` order alongside other TCX
-programs such as Cilium:
+selected device, at the end of the device's TCX list, after the
+programs another datapath attached there:
 
-- A program earlier in the TCX chain that returns ``TCX_DROP`` or
-  ``TCX_REDIRECT`` ends the chain before later programs see the packet.
+- A program earlier in the list that returns anything but ``TCX_NEXT``
+  ends the list before later programs see the packet: ``TCX_DROP`` and
+  ``TCX_REDIRECT``, and ``TCX_PASS`` too. A shield attached after a
+  datapath that returns a final verdict for the packets it handles
+  does not see them.
 - Direct packet access reaches only the linear head of ``sk_buff``; read
   nonlinear fragments with ``bpf_skb_load_bytes()``.
 - Loopback has no device class and is never selected.
