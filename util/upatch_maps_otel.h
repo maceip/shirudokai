@@ -66,6 +66,8 @@ int upatch_maps_otel_build_log_file(const char *path,
 int upatch_maps_otel_build_metric_file(const char *path,
 				       const struct map_view *v,
 				       char **out, size_t *out_len);
+int upatch_maps_otel_build_shield_metrics(const struct map_view *v,
+					  char **out, size_t *out_len);
 int upatch_maps_otel_send(const struct map_view *v,
 			  enum otel_mode mode,
 			  const struct otel_opts *opts);
