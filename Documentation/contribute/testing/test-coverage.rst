@@ -263,6 +263,14 @@ signed config image.
        deserialization and shell guards in observe and enforce modes, and
        ``web-worker-guard`` builds a signed BPF LSM ``.bee`` package that
        passes the ``bpf_`` Coccinelle rules
+   * - ``t3018-sandbox-pod-llm``
+     - ``app-sandbox`` builds with its default ``sandbox.toml`` and with
+       ``--rodata-input sandbox=upatches/app-sandbox/llm-agent.toml``,
+       round-trips ``deny.read``, ``families``, ``ports``, ``deny.ports``,
+       ``deny.network``, ``deny.unix``, ``deny_ptrace`` and pod
+       ``cgroup_ids`` through ``bpm info data --json``, refuses malformed
+       TOML rules in ``gen_policy.py``, and passes the ``bpf_`` Coccinelle
+       rules alongside ``web-worker-guard.bpf.c``
    * - ``t3101-target-fixtures``
      - Prebuilt fixtures load and unload, foreign and own-keyring
        fixtures are refused, a map fixture exports
