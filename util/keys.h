@@ -60,9 +60,8 @@ int keys_load(const char *keys_dir, const char *revoked_dir,
 	      bool with_trusted, struct trusted_set *set);
 
 /*
- * The set of a config image, read through its root descriptor; revoked
- * certificates are excluded before vouches are evaluated so a revoked
- * signer cannot admit dependent keys.
+ * The set of a config image, read through its root descriptor; historical
+ * vouches are validated before revoked signing keys are excluded.
  */
 int keys_load_image_at(const char *primary, int keys_fd,
 		       bool with_trusted,
