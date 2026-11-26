@@ -64,6 +64,9 @@ int cert_subject(const struct cert *cert, char *out, size_t out_sz)
 	__must_check;
 /* The start of the validity period as a UTC date, YYYY-MM-DD. */
 int cert_not_before(const struct cert *cert, char out[11]) __must_check;
+/* UTC validity window [not_before, not_after] in Unix seconds. */
+int cert_validity_window(const struct cert *cert, __s64 *not_before,
+			 __s64 *not_after) __must_check;
 int verify_detached(const __u8 *payload, size_t payload_len,
 		    const __u8 *signature, size_t signature_len,
 		    const struct cert *cert) __must_check;

@@ -353,6 +353,47 @@ int cert_not_before(const struct cert *cert, char out[11])
 	return asn1_date(X509_get0_notBefore(cert->impl), out);
 }
 
+static __s64 tm_to_unix_utc(const struct tm *tm)
+{
+	__s64 y = (__s64)tm->tm_year + 1900;
+	__s64 m = (__s64)tm->tm_mon + 1;
+	__s64 d = (__s64)tm->tm_mday;
+	__s64 era, yoe, doy, doe, days;
+
+	if (m <= 2)
+		y--;
+	era = (y >= 0 ? y : y - 399) / 400;
+	yoe = y - era * 400;
+	doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+	doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+	days = era * 146097 + doe - 719468;
+	return days * 86400 + (__s64)tm->tm_hour * 3600 +
+	       (__s64)tm->tm_min * 60 + (__s64)tm->tm_sec;
+}
+
+int cert_validity_window(const struct cert *cert, __s64 *not_before,
+			 __s64 *not_after)
+{
+	const ASN1_TIME *nb_asn1, *na_asn1;
+	struct tm nb_tm, na_tm;
+	__s64 nb, na;
+
+	if (!cert || !cert->impl || !not_before || !not_after)
+		return -EINVAL;
+	nb_asn1 = X509_get0_notBefore(cert->impl);
+	na_asn1 = X509_get0_notAfter(cert->impl);
+	if (!nb_asn1 || !na_asn1 || !ASN1_TIME_to_tm(nb_asn1, &nb_tm) ||
+	    !ASN1_TIME_to_tm(na_asn1, &na_tm))
+		return -EINVAL;
+	nb = tm_to_unix_utc(&nb_tm);
+	na = tm_to_unix_utc(&na_tm);
+	if (na < nb)
+		return -EINVAL;
+	*not_before = nb;
+	*not_after = na;
+	return 0;
+}
+
 static bool cms_has_signers(CMS_ContentInfo *cms)
 {
 	const struct stack_st_CMS_SignerInfo *signers = CMS_get0_SignerInfos(cms);

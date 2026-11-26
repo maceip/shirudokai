@@ -113,16 +113,20 @@ verifies:
 Certificate validity
 --------------------
 
-No verifier enforces a certificate's validity period. shirudo's own
-CMS and chain checks for signatures set ``X509_V_FLAG_NO_CHECK_TIME``.
-The kernel compares a signature's signing time with the signer's
-validity only when the signature carries a signing time, and shirudo's
-signatures carry none: every one is made with OpenSSL's
-``CMS_NO_SIGNING_TIME``. ``shirudo genkey`` writes no expiration date;
-the certificate's ``notAfter`` is ``99991231235959Z``, the value RFC 5280
-gives a certificate with no well-defined expiration. ``shirudo status``
-and ``shirudo keys`` show only the date a certificate was issued. Retire
-a key by revoking it (residual risks R13 and R16).
+The kernel's ``.bpf`` and ``.dm-verity`` signature checks compare a
+signature's signing time with the signer's validity only when the
+signature carries one, and shirudo's CMS signatures carry none: every one
+is made with OpenSSL's ``CMS_NO_SIGNING_TIME``. ``shirudo genkey`` and
+``shirudo keys rotate`` write no certificate expiration date; ``notAfter``
+is ``99991231235959Z``, the value RFC 5280 gives a certificate with no
+well-defined expiration. Userspace certificate checks (``cert_valid_at()``)
+enforce X.509 ``notBefore`` and ``notAfter`` validity windows when
+verifying vouches, repository indexes, Java upatch signatures and
+operator key commands, and ``shirudo keys vouch --expires-days`` and
+``shirudo keys rotate`` bind a 64-bit big-endian Unix ``not_after``
+expiration timestamp into the signed ``shirudo-key-vouch-v2`` payload.
+Retire an active BPF signing key by revoking it (residual risks R13 and
+R16).
 
 Digests
 -------

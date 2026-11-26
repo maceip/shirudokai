@@ -20,8 +20,12 @@
 /*
  * A vouch is a detached CMS signature by a member's key over this
  * prefix, NUL included, followed by the vouched certificate's DER.
+ * Vouch v2 prepends KEYS_VOUCH_V2_PREFIX, NUL and an 8-byte big-endian
+ * Unix expiration timestamp to both the signed payload and the file.
  */
 #define KEYS_VOUCH_PREFIX	"shirudo-key-vouch"
+#define KEYS_VOUCH_V2_PREFIX	"shirudo-key-vouch-v2"
+#define KEYS_VOUCH_V2_HDR_LEN	(sizeof(KEYS_VOUCH_V2_PREFIX) + 8)
 
 /* voucher is the admitting member's fingerprint, zero for the primary. */
 struct trusted_cert {
@@ -56,8 +60,9 @@ int keys_load(const char *keys_dir, const char *revoked_dir,
 	      bool with_trusted, struct trusted_set *set);
 
 /*
- * The set of a config image, read through its root descriptor; historical
- * vouches are validated before revoked signing keys are excluded.
+ * The set of a config image, read through its root descriptor; revoked
+ * certificates are excluded before vouches are evaluated so a revoked
+ * signer cannot admit dependent keys.
  */
 int keys_load_image_at(const char *primary, int keys_fd,
 		       bool with_trusted,
@@ -81,6 +86,8 @@ const struct trusted_cert *keys_member(const struct trusted_set *set,
 				       const __u8 fingerprint[32]);
 int keys_cert_read(const struct trusted_cert *c,
 		   struct cert *cert);
+/* 0 when unix_sec lies in [notBefore, notAfter], -EKEYEXPIRED outside. */
+int cert_valid_at(const struct cert *c, __s64 unix_sec) __must_check;
 
 /* A whole file of at most KEYS_DER_MAX bytes, xmalloc'd. */
 int keys_read_der(const char *path, __u8 **out,
@@ -108,21 +115,34 @@ bool keys_is_revoked(const char *revoked_dir,
 /* The bytes a vouch signs: the prefix and the certificate, xmalloc'd. */
 int keys_vouch_payload(const __u8 *der, size_t der_sz,
 		       __u8 **out, size_t *out_sz);
+int keys_vouch_payload_v2(const __u8 *der, size_t der_sz, __s64 not_after,
+			  __u8 **out, size_t *out_sz);
+int keys_vouch_encode_v2(__s64 not_after, const __u8 *cms, size_t cms_sz,
+			 __u8 **out, size_t *out_sz);
 
 /* Verify a detached signature under a member; signer may be NULL. */
 int keys_verify_signature(const struct trusted_set *set,
 			  const __u8 *payload, size_t payload_sz,
 			  const __u8 *sig, size_t sig_sz,
 			  __u8 signer[32]);
+int keys_verify_signature_at(const struct trusted_set *set,
+			     const __u8 *payload, size_t payload_sz,
+			     const __u8 *sig, size_t sig_sz,
+			     __s64 unix_sec, __u8 signer[32]);
 
 /*
  * Whether a member of the set signed the vouch for this certificate:
- * 0 with the member's fingerprint in voucher, -EKEYREJECTED when none did.
+ * 0 with the member's fingerprint in voucher, -EKEYREJECTED when none did,
+ * -EKEYEXPIRED when a bounded v2 vouch has passed its not_after timestamp.
  */
 int keys_verify_vouch(const struct trusted_set *set,
 		      const __u8 *der, size_t der_sz,
 		      const __u8 *sig, size_t sig_sz,
 		      __u8 voucher[32]);
+int keys_verify_vouch_at(const struct trusted_set *set,
+			 const __u8 *der, size_t der_sz,
+			 const __u8 *sig, size_t sig_sz,
+			 __s64 unix_sec, __u8 voucher[32]);
 
 /*
  * Write the certificate and its vouch under <keys_dir>/trusted, named

@@ -9,6 +9,7 @@
 #include <limits.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <linux/bpf.h>
@@ -97,10 +98,11 @@ static int java_signature_verify(const struct upatch *u)
 	if (!ret && !set->n)
 		ret = -EKEYREJECTED;
 	if (!ret)
-		ret = keys_verify_signature(set, upatch_data(u),
-					    u->hdr.data_len,
-					    upatch_signature(u),
-					    u->hdr.signature_len, signer);
+		ret = keys_verify_signature_at(set, upatch_data(u),
+					       u->hdr.data_len,
+					       upatch_signature(u),
+					       u->hdr.signature_len,
+					       (__s64)time(NULL), signer);
 	if (!ret)
 		ret = signer_enrolled(set, signer);
 	xfree(set, sizeof(*set));

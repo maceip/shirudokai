@@ -220,6 +220,9 @@ int main(int argc, char **argv)
 	if (argc >= 3 && strcmp(args[1], "keys") == 0 &&
 	    strcmp(args[2], "vouch") == 0)
 		return build_keys_vouch(argc - 2, args + 2);
+	if (argc >= 3 && strcmp(args[1], "keys") == 0 &&
+	    strcmp(args[2], "rotate") == 0)
+		return build_keys_rotate(argc - 2, args + 2);
 
 	OPT_INIT(&p, "build", build_opts, &build_help, argc, args, 1);
 	for (opt = opt_next(&p); opt != OPT_END; opt = opt_next(&p)) {

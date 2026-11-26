@@ -15,6 +15,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 #include <zlib.h>
 #include <openssl/bio.h>
@@ -264,8 +265,12 @@ int bpm_verify_cms(const __u8 *payload, size_t payload_len,
 	struct cert cert = {};
 	int ret = -EINVAL;
 
-	if (!cert_read_file(cert_path, &cert))
-		ret = verify_detached(payload, payload_len, sig, sig_len, &cert);
+	if (!cert_read_file(cert_path, &cert)) {
+		ret = cert_valid_at(&cert, (__s64)time(NULL));
+		if (!ret)
+			ret = verify_detached(payload, payload_len, sig,
+					      sig_len, &cert);
+	}
 	cert_free(&cert);
 	return ret;
 }
@@ -276,8 +281,12 @@ int bpm_verify_cms_fd(const __u8 *payload, size_t payload_len,
 	struct cert cert = {};
 	int ret = -EINVAL;
 
-	if (!cert_read_fd(cert_fd, &cert))
-		ret = verify_detached(payload, payload_len, sig, sig_len, &cert);
+	if (!cert_read_fd(cert_fd, &cert)) {
+		ret = cert_valid_at(&cert, (__s64)time(NULL));
+		if (!ret)
+			ret = verify_detached(payload, payload_len, sig,
+					      sig_len, &cert);
+	}
 	cert_free(&cert);
 	return ret;
 }
