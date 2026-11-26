@@ -52,8 +52,9 @@ the link, which ``struct bpf_link_info`` reports:
   case, rate-limited, and counts neither.
 
 A detector built on these kinds can therefore miss the event it looks
-for, and a count it keeps is a lower bound. ``lsm``, ``xdp``,
-``cgroup_skb`` and ``netfilter`` programs are never skipped.
+for, and a count it keeps is a lower bound. ``lsm``, ``xdp``, ``tcx``,
+``cgroup_skb``, ``netfilter`` and ``struct_ops`` programs are never
+skipped.
 
 ``shirudo status`` shows, in its ``MISSED`` column and ``missed_runs``,
 the sum of what the kernel counts for each upatch: every program's
@@ -95,7 +96,8 @@ kernel calls afterwards, such as ``socket_post_create`` or
 The current task in a softirq
 -----------------------------
 
-``cgroup_skb`` ingress, ``netfilter`` and the socket hooks the network
+``cgroup_skb`` ingress, ``tcx/ingress``, ``netfilter``, ``struct_ops``
+callbacks invoked on packet arrival and the socket hooks the network
 stack calls on receive run in a softirq, on top of whatever task the CPU
 was running. There ``bpf_get_current_pid_tgid()``,
 ``bpf_get_current_task_btf()``, ``bpf_get_current_comm()`` and
@@ -105,8 +107,8 @@ socket storage, and keep such programs off task storage. An ``xdp``
 program runs there too, before the packet has a socket, so nothing
 attributes it: decide on the packet alone.
 
-What an xdp program does not see
---------------------------------
+What an xdp or tcx program does not see
+---------------------------------------
 
 ``xdp`` runs in the driver on receive, before the kernel builds an
 ``sk_buff``:
@@ -115,8 +117,8 @@ What an xdp program does not see
   a veth pair with one endpoint attached, it sees only what arrives at
   that endpoint.
 - It sees only the devices it is attached to, and a device with no program
-  passes everything. :doc:`attach-kinds` says which devices are selected
-  and when.
+  passes everything. :doc:`attach-kinds` says which devices and optional
+  ``ifname=`` or ``driver=`` filters are selected and when.
 - It sees packets as they arrive, before GRO joins them, so a transfer
   is many runs.
 - A VLAN tag the NIC stripped is not in the packet.
@@ -125,6 +127,16 @@ What an xdp program does not see
   MTU the rest of a frame is in fragments and ``ctx->data_end`` stops at the
   first one. Read past it with ``bpf_xdp_load_bytes()``, and take the frame's
   length from ``bpf_xdp_get_buff_len()``.
+
+``tcx/ingress`` and ``tcx/egress`` run on the ``sk_buff`` path of each
+selected device, chained in ``BPF_TCX`` order alongside other TCX
+programs such as Cilium:
+
+- A program earlier in the TCX chain that returns ``TCX_DROP`` or
+  ``TCX_REDIRECT`` ends the chain before later programs see the packet.
+- Direct packet access reaches only the linear head of ``sk_buff``; read
+  nonlinear fragments with ``bpf_skb_load_bytes()``.
+- Loopback has no device class and is never selected.
 
 RCU pointers in sleepable programs
 ----------------------------------

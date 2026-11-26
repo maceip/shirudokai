@@ -202,6 +202,24 @@ static inline bool kind_is_kprobe_multi(__u32 kind)
 	return kind == UPATCH_ATTACH_KPROBE_MULTI || kind == UPATCH_ATTACH_KRETPROBE_MULTI;
 }
 
+static inline bool kind_is_tcx(__u32 kind)
+{
+	return kind == UPATCH_ATTACH_TCX_INGRESS || kind == UPATCH_ATTACH_TCX_EGRESS;
+}
+
+static inline bool kind_is_netdev(__u32 kind)
+{
+	return kind == UPATCH_ATTACH_XDP || kind_is_tcx(kind);
+}
+
+/*
+ * Whether filter is a valid optional XDP/TCX device filter in
+ * upatch_prog_entry.target: empty (selecting all devices of the signed
+ * classes), or "ifname=<glob>" / "driver=<glob>" with 1..120 printable
+ * ASCII bytes containing no whitespace, '/', ',' or '|', and not "." or "..".
+ */
+bool netdev_filter_valid(const char *filter);
+
 /*
  * Whether the size bytes at path hold a string that a policy label can
  * name files with: an absolute path of at most UPATCH_POLICY_PATH_LEN_MAX

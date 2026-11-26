@@ -68,6 +68,7 @@ static void the_kinds_it_never_skips_or_never_counts_do_not(void)
 {
 	static const __u32 types[] = {
 		BPF_LINK_TYPE_UPROBE_MULTI, BPF_LINK_TYPE_XDP,
+		BPF_LINK_TYPE_TCX, BPF_LINK_TYPE_STRUCT_OPS,
 		BPF_LINK_TYPE_CGROUP, BPF_LINK_TYPE_NETFILTER,
 	};
 	struct bpf_link_info info = tracing_link(BPF_LSM_MAC);

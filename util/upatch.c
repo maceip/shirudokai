@@ -734,6 +734,32 @@ bool kprobe_sym_valid(const char *sym, size_t len)
 	return true;
 }
 
+bool netdev_filter_valid(const char *filter)
+{
+	const char *glob;
+	size_t len, i;
+
+	if (!filter)
+		return false;
+	if (!filter[0])
+		return true;
+	len = strnlen(filter, UPATCH_ATTACH_TARGET_MAX);
+	if (len >= UPATCH_ATTACH_TARGET_MAX)
+		return false;
+	glob = str_after_prefix(filter, "ifname=");
+	if (!glob)
+		glob = str_after_prefix(filter, "driver=");
+	if (!glob || !glob[0] || !strcmp(glob, ".") || !strcmp(glob, ".."))
+		return false;
+	for (i = 0; glob[i]; i++) {
+		__u8 c = (__u8)glob[i];
+
+		if (c <= ' ' || c >= 0x7f || c == '/' || c == ',' || c == '|')
+			return false;
+	}
+	return true;
+}
+
 static int parse_uprobe_targets(const __u8 **pos, const __u8 *end, struct prog_spec *specs,
 				__u32 nr_progs, __u32 nr_uprobes)
 {
@@ -940,6 +966,7 @@ int prog_specs_parse(const void *metadata, __u32 metadata_len,
 			spec->map[sizeof(spec->map) - 1] = '\0';
 			continue;
 		case UPATCH_PROG_ROLE_TEST_RUN:
+		case UPATCH_PROG_ROLE_STRUCT_OPS:
 			if (prog.kind || prog.offset || prog.target[0] || prog.map[0])
 				goto out;
 			spec->role = role;
@@ -984,18 +1011,30 @@ int prog_specs_parse(const void *metadata, __u32 metadata_len,
 			nr_uprobes++;
 			break;
 		case UPATCH_ATTACH_XDP:
+		case UPATCH_ATTACH_TCX_INGRESS:
+		case UPATCH_ATTACH_TCX_EGRESS: {
+			size_t tlen = strnlen(prog.target, sizeof(prog.target));
+
 			spec->device_classes = le32_to_cpu(prog.xdp.device_classes);
-			/* A device runs one native XDP program at a time. */
+			/* A device runs one native XDP program at a time; TCX chains. */
 			if (!spec->device_classes ||
 			    (spec->device_classes & ~(__u32)UPATCH_XDP_ALL) ||
-			    (spec->device_classes & xdp_classes) ||
+			    (kind == UPATCH_ATTACH_XDP &&
+			     (spec->device_classes & xdp_classes)) ||
 			    prog.xdp.reserved ||
-			    memcmp(prog.target, empty.target, sizeof(prog.target)) ||
+			    tlen >= sizeof(prog.target) ||
+			    memcmp(prog.target + tlen, empty.target,
+				   sizeof(prog.target) - tlen) ||
+			    !netdev_filter_valid(prog.target) ||
 			    memcmp(prog.map, empty.map, sizeof(prog.map)))
 				goto out;
-			xdp_classes |= spec->device_classes;
+			if (kind == UPATCH_ATTACH_XDP)
+				xdp_classes |= spec->device_classes;
 			spec->kind = kind;
+			memcpy(spec->target, prog.target, sizeof(spec->target));
+			spec->target[sizeof(spec->target) - 1] = '\0';
 			continue;
+		}
 		case UPATCH_ATTACH_KPROBE_MULTI:
 		case UPATCH_ATTACH_KRETPROBE_MULTI:
 			spec->kind = kind;

@@ -706,6 +706,20 @@ static bool unsupported_fmod_ret_section(const char *sec)
 	       strcmp(sec, "fmod_ret.s/") == 0;
 }
 
+static bool unsupported_tcx_section(const char *sec)
+{
+	if (!sec)
+		return false;
+	if (sec[0] == '?')
+		sec++;
+	if (strcmp(sec, "tcx/ingress") == 0 ||
+	    strcmp(sec, "tcx/egress") == 0 ||
+	    (str_has_prefix(sec, "tcx/ingress/") && sec[12]) ||
+	    (str_has_prefix(sec, "tcx/egress/") && sec[11]))
+		return false;
+	return strcmp(sec, "tcx") == 0 || str_has_prefix(sec, "tcx/");
+}
+
 /*
  * The sections the target attaches by their BTF target alone, through
  * BPF_RAW_TRACEPOINT_OPEN or a BPF_LSM_MAC link; every other type fails
@@ -775,6 +789,20 @@ static __u32 attach_kind_from_section(const char *sec,
 	if (n && sec[n]) {
 		*target = sec + n;
 		return UPATCH_ATTACH_XDP;
+	}
+	if (strcmp(sec, "tcx/ingress") == 0)
+		return UPATCH_ATTACH_TCX_INGRESS;
+	n = str_has_prefix(sec, "tcx/ingress/");
+	if (n && sec[n]) {
+		*target = sec + n;
+		return UPATCH_ATTACH_TCX_INGRESS;
+	}
+	if (strcmp(sec, "tcx/egress") == 0)
+		return UPATCH_ATTACH_TCX_EGRESS;
+	n = str_has_prefix(sec, "tcx/egress/");
+	if (n && sec[n]) {
+		*target = sec + n;
+		return UPATCH_ATTACH_TCX_EGRESS;
 	}
 	return UPATCH_ATTACH_RAW_TRACEPOINT;
 }
@@ -1114,6 +1142,20 @@ static __u8 *write_kprobe_targets(__u8 *cursor, const struct build_kprobe_target
 static bool is_syscall_section(const char *sec)
 {
 	return sec && strcmp(sec, "syscall") == 0;
+}
+
+static bool is_struct_ops_section(const char *sec)
+{
+	const char *rest;
+
+	if (!sec)
+		return false;
+	if (sec[0] == '?')
+		sec++;
+	rest = str_after_prefix(sec, "struct_ops/");
+	if (!rest)
+		rest = str_after_prefix(sec, "struct_ops.s/");
+	return rest && *rest;
 }
 
 static const char *serializer_map_name(const struct bpf_program *p)
@@ -1502,6 +1544,100 @@ static int compose_signed_data(const void *data, __u32 data_len,
 	return 0;
 }
 
+/*
+ * Without BPF_F_LINK the map update in the loader registers the
+ * struct_ops, before the target holds a pin that could take it out.
+ */
+static int validate_struct_ops_maps(struct bpf_object *obj)
+{
+	struct bpf_map *m;
+
+	bpf_object__for_each_map(m, obj) {
+		if (bpf_map__type(m) != BPF_MAP_TYPE_STRUCT_OPS ||
+		    (bpf_map__map_flags(m) & BPF_F_LINK))
+			continue;
+		pr_err("struct_ops map '%s' must be in SEC(\".struct_ops.link\")",
+		       bpf_map__name(m));
+		return -EINVAL;
+	}
+	return 0;
+}
+
+static int parse_tcx_class_names(const char *s, size_t len, __u64 *out)
+{
+	size_t off = 0;
+	__u64 mask = 0;
+
+	if (!len)
+		return -EINVAL;
+	while (off < len) {
+		const char *plus = memchr(s + off, '+', len - off);
+		size_t tlen = plus ? (size_t)(plus - (s + off)) : len - off;
+		const char *tok = s + off;
+
+		if (!tlen)
+			return -EINVAL;
+		if (span_equals_str(tok, tlen, "network"))
+			mask |= UPATCH_XDP_NETWORK;
+		else if (span_equals_str(tok, tlen, "virtual"))
+			mask |= UPATCH_XDP_VIRTUAL;
+		else if (span_equals_str(tok, tlen, "vm"))
+			mask |= UPATCH_XDP_VM;
+		else if (span_equals_str(tok, tlen, "unknown"))
+			mask |= UPATCH_XDP_UNKNOWN;
+		else if (span_equals_str(tok, tlen, "all"))
+			mask |= UPATCH_XDP_ALL;
+		else
+			return -EINVAL;
+		if (!plus)
+			break;
+		off += tlen + 1;
+		if (off == len)
+			return -EINVAL;
+	}
+	*out = mask;
+	return 0;
+}
+
+static int parse_netdev_section(__u32 kind, const char *spec, __u64 *mask_out,
+				char filter_out[UPATCH_ATTACH_TARGET_MAX])
+{
+	const char *colon;
+	size_t class_len;
+	int err;
+
+	*mask_out = 0;
+	filter_out[0] = '\0';
+	if (kind_is_tcx(kind) && !spec) {
+		*mask_out = UPATCH_XDP_ALL;
+		return 0;
+	}
+	if (!spec || !spec[0])
+		return -EINVAL;
+	if (kind_is_tcx(kind) &&
+	    (str_has_prefix(spec, "ifname=") ||
+	     str_has_prefix(spec, "driver="))) {
+		if (!netdev_filter_valid(spec) ||
+		    strscpy(filter_out, spec, UPATCH_ATTACH_TARGET_MAX) < 0)
+			return -EINVAL;
+		*mask_out = UPATCH_XDP_ALL;
+		return 0;
+	}
+	colon = strchr(spec, ':');
+	class_len = colon ? (size_t)(colon - spec) : strlen(spec);
+	if (colon) {
+		if (!colon[1] || !netdev_filter_valid(colon + 1) ||
+		    strscpy(filter_out, colon + 1, UPATCH_ATTACH_TARGET_MAX) < 0)
+			return -EINVAL;
+	}
+	err = parse_u64(spec, class_len, UPATCH_XDP_ALL, mask_out);
+	if (err && kind_is_tcx(kind))
+		err = parse_tcx_class_names(spec, class_len, mask_out);
+	if (err || !*mask_out || (*mask_out & ~(__u64)UPATCH_XDP_ALL))
+		return -EINVAL;
+	return 0;
+}
+
 static int validate_serializer_output_map(struct bpf_object *obj)
 {
 	struct bpf_map *m;
@@ -1568,6 +1704,9 @@ static int build_prog_metadata(struct bpf_object *obj, __u32 nr_maps,
 		if (err)
 			return err;
 	}
+	err = validate_struct_ops_maps(obj);
+	if (err)
+		return err;
 	base_len = struct_size(md, progs, nr_progs);
 	if (base_len > UINT32_MAX)
 		return -EOVERFLOW;
@@ -1651,6 +1790,12 @@ static int build_prog_metadata(struct bpf_object *obj, __u32 nr_maps,
 			i++;
 			continue;
 		}
+		if (is_struct_ops_section(sec)) {
+			md->progs[i].role =
+				cpu_to_le32(UPATCH_PROG_ROLE_STRUCT_OPS);
+			i++;
+			continue;
+		}
 		if (is_syscall_section(sec)) {
 			const char *prog_name = bpf_program__name(p);
 			const char *id = prog_name;
@@ -1710,10 +1855,16 @@ static int build_prog_metadata(struct bpf_object *obj, __u32 nr_maps,
 			err = -EOPNOTSUPP;
 			goto err_free;
 		}
+		if (unsupported_tcx_section(sec)) {
+			pr_err("unsupported tcx section '%s'; use tcx/ingress[/<classes>][:<filter>] or tcx/egress[/<classes>][:<filter>]",
+			       sec);
+			err = -EOPNOTSUPP;
+			goto err_free;
+		}
 		kind = attach_kind_from_section(sec, &target);
 		if (kind == UPATCH_ATTACH_RAW_TRACEPOINT &&
 		    !default_attach_section(sec)) {
-			pr_err("unsupported section '%s'; supported are fentry, fexit, fmod_ret, lsm, tp_btf, kprobe, kretprobe, kprobe.multi, kretprobe.multi, uprobe[.s], uretprobe[.s], uprobe.multi[.s], uretprobe.multi[.s], cgroup_skb, netfilter and xdp/<mask>",
+			pr_err("unsupported section '%s'; supported are fentry, fexit, fmod_ret, lsm, tp_btf, kprobe, kretprobe, kprobe.multi, kretprobe.multi, uprobe[.s], uretprobe[.s], uprobe.multi[.s], uretprobe.multi[.s], cgroup_skb, netfilter, xdp/<mask>, tcx/ingress, tcx/egress and struct_ops",
 			       sec);
 			err = -EOPNOTSUPP;
 			goto err_free;
@@ -1721,25 +1872,29 @@ static int build_prog_metadata(struct bpf_object *obj, __u32 nr_maps,
 		md->progs[i].role =
 			cpu_to_le32(UPATCH_PROG_ROLE_ATTACH);
 		md->progs[i].kind = cpu_to_le32(kind);
-		if (kind == UPATCH_ATTACH_XDP) {
+		if (kind_is_netdev(kind)) {
 			__u64 mask;
 
-			err = parse_u64(target, strlen(target), UPATCH_XDP_ALL,
-					&mask);
-			if (err || !mask || (mask & ~(__u64)UPATCH_XDP_ALL)) {
-				pr_err("invalid XDP device class mask in section '%s'; use xdp/<decimal-mask>, a sum of 1, 2, 8 and 16",
-				       sec);
-				err = -EINVAL;
+			err = parse_netdev_section(kind, target, &mask,
+						   md->progs[i].target);
+			if (err) {
+				if (kind == UPATCH_ATTACH_XDP)
+					pr_err("invalid XDP device class mask or filter in section '%s'; use xdp/<decimal-mask>[:ifname=<glob>|driver=<glob>], a sum of 1, 2, 8 and 16",
+					       sec);
+				else
+					pr_err("invalid TCX device class or filter in section '%s'; use tcx/{ingress,egress}[/<classes>][:ifname=<glob>|driver=<glob>]",
+					       sec);
 				goto err_free;
 			}
-			/* A device takes one native XDP program at a time. */
-			if (mask & xdp_classes) {
+			/* A device takes one native XDP program at a time; TCX chains. */
+			if (kind == UPATCH_ATTACH_XDP && (mask & xdp_classes)) {
 				pr_err("XDP section '%s' selects a device class another XDP program of this upatch selects; give each class to one program",
 				       sec);
 				err = -EINVAL;
 				goto err_free;
 			}
-			xdp_classes |= (__u32)mask;
+			if (kind == UPATCH_ATTACH_XDP)
+				xdp_classes |= (__u32)mask;
 			md->progs[i].xdp.device_classes = cpu_to_le32((__u32)mask);
 			i++;
 			continue;
@@ -1893,6 +2048,12 @@ static int set_target_attach_types(struct bpf_object *obj)
 			type = BPF_CGROUP_INET_INGRESS;
 		else if (strcmp(sec, "cgroup_skb/egress") == 0)
 			type = BPF_CGROUP_INET_EGRESS;
+		else if (strcmp(sec, "tcx/ingress") == 0 ||
+			 str_has_prefix(sec, "tcx/ingress/"))
+			type = BPF_TCX_INGRESS;
+		else if (strcmp(sec, "tcx/egress") == 0 ||
+			 str_has_prefix(sec, "tcx/egress/"))
+			type = BPF_TCX_EGRESS;
 		else if (str_has_prefix(sec, "xdp/")) {
 			type = BPF_XDP;
 			if (bpf_program__set_flags(p, bpf_program__flags(p) |
@@ -1914,47 +2075,47 @@ static int set_target_attach_types(struct bpf_object *obj)
 	return 0;
 }
 
-static int register_target_attach_types(int handler_ids[3])
+static void unregister_target_attach_types(int handler_ids[5])
 {
-	handler_ids[0] = libbpf_register_prog_handler("cgroup_skb/ingress",
-						      BPF_PROG_TYPE_CGROUP_SKB,
-						      BPF_CGROUP_INET_INGRESS,
-						      NULL);
-	if (handler_ids[0] < 0)
-		return handler_ids[0];
+	int i;
 
-	handler_ids[1] = libbpf_register_prog_handler("cgroup_skb/egress",
-						      BPF_PROG_TYPE_CGROUP_SKB,
-						      BPF_CGROUP_INET_EGRESS,
-						      NULL);
-	if (handler_ids[1] < 0) {
-		libbpf_unregister_prog_handler(handler_ids[0]);
-		handler_ids[0] = -1;
-		return handler_ids[1];
+	for (i = 4; i >= 0; i--) {
+		if (handler_ids[i] >= 0) {
+			libbpf_unregister_prog_handler(handler_ids[i]);
+			handler_ids[i] = -1;
+		}
 	}
-	handler_ids[2] = libbpf_register_prog_handler("xdp/", BPF_PROG_TYPE_XDP,
-						      BPF_XDP, NULL);
-	if (handler_ids[2] < 0) {
-		libbpf_unregister_prog_handler(handler_ids[1]);
-		libbpf_unregister_prog_handler(handler_ids[0]);
-		handler_ids[1] = -1;
-		handler_ids[0] = -1;
-		return handler_ids[2];
-	}
-	return 0;
 }
 
-static void unregister_target_attach_types(int handler_ids[3])
+static int register_target_attach_types(int handler_ids[5])
 {
-	if (handler_ids[2] >= 0)
-		libbpf_unregister_prog_handler(handler_ids[2]);
-	if (handler_ids[1] >= 0)
-		libbpf_unregister_prog_handler(handler_ids[1]);
-	if (handler_ids[0] >= 0)
-		libbpf_unregister_prog_handler(handler_ids[0]);
-	handler_ids[0] = -1;
-	handler_ids[1] = -1;
-	handler_ids[2] = -1;
+	static const struct {
+		const char		*sec;
+		enum bpf_prog_type	prog_type;
+		enum bpf_attach_type	attach_type;
+	} defs[5] = {
+		{ "cgroup_skb/ingress", BPF_PROG_TYPE_CGROUP_SKB, BPF_CGROUP_INET_INGRESS },
+		{ "cgroup_skb/egress", BPF_PROG_TYPE_CGROUP_SKB, BPF_CGROUP_INET_EGRESS },
+		{ "xdp/", BPF_PROG_TYPE_XDP, BPF_XDP },
+		{ "tcx/ingress+", BPF_PROG_TYPE_SCHED_CLS, BPF_TCX_INGRESS },
+		{ "tcx/egress+", BPF_PROG_TYPE_SCHED_CLS, BPF_TCX_EGRESS },
+	};
+	int i;
+
+	for (i = 0; i < 5; i++) {
+		handler_ids[i] = libbpf_register_prog_handler(defs[i].sec,
+							      defs[i].prog_type,
+							      defs[i].attach_type,
+							      NULL);
+		if (handler_ids[i] < 0) {
+			int err = handler_ids[i];
+
+			handler_ids[i] = -1;
+			unregister_target_attach_types(handler_ids);
+			return err;
+		}
+	}
+	return 0;
 }
 
 /* Header, loader, signature and data, in the order the header names them. */
@@ -2323,7 +2484,7 @@ int build_package_load_mode(const char *bpf_o, const char *src_path,
 	__u32 label_len = 0, policy_map_idx = 0, socket_policy_map_idx = 0;
 	struct upatch_policy_label_header *label_blob = NULL;
 	struct bpf_map *map, *task_map, *sock_map;
-	int handler_ids[3] = { -1, -1, -1 };
+	int handler_ids[5] = { -1, -1, -1, -1, -1 };
 	struct bpf_object *obj;
 	__u32 map_idx = 0;
 	int err;

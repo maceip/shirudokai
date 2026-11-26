@@ -1438,6 +1438,24 @@ static int bpf_map__init_kern_struct_ops(struct bpf_map *map)
 	return 0;
 }
 
+/* The kernel finds its struct_ops and the members by the names that they have in obj->btf */
+static void bpf_map__init_gen_struct_ops(struct bpf_map *map)
+{
+	struct bpf_struct_ops *st_ops = map->st_ops;
+	__u32 i, vlen = btf_vlen(btf__type_by_id(map->obj->btf, st_ops->type_id));
+
+	map->mod_btf_fd = -1;
+	for (i = 0; i < vlen; i++) {
+		struct bpf_program *prog = st_ops->progs[i];
+
+		/* The kernel rejects a prog that two maps use for different members */
+		if (!prog || prog->attach_btf_id)
+			continue;
+		prog->attach_btf_id = st_ops->type_id;
+		prog->expected_attach_type = i;
+	}
+}
+
 static int bpf_object__init_kern_struct_ops_maps(struct bpf_object *obj)
 {
 	struct bpf_map *map;
@@ -1452,6 +1470,11 @@ static int bpf_object__init_kern_struct_ops_maps(struct bpf_object *obj)
 
 		if (!map->autocreate)
 			continue;
+
+		if (obj->gen_loader) {
+			bpf_map__init_gen_struct_ops(map);
+			continue;
+		}
 
 		err = bpf_map__init_kern_struct_ops(map);
 		if (err)
@@ -5556,7 +5579,8 @@ static int bpf_object__create_map(struct bpf_object *obj, struct bpf_map *map, b
 		map->btf_value_type_id = 0;
 		break;
 	case BPF_MAP_TYPE_STRUCT_OPS:
-		create_attr.btf_value_type_id = 0;
+		if (!obj->gen_loader)
+			create_attr.btf_value_type_id = 0;
 		break;
 	default:
 		break;
@@ -9652,6 +9676,46 @@ static int bpf_map_prepare_vdata(const struct bpf_map *map)
 	return 0;
 }
 
+/* The loader keeps the fds of the programs in the order of bpf_object__load_progs() */
+static int bpf_program_gen_idx(const struct bpf_program *prog)
+{
+	const struct bpf_program *p;
+	int idx = 0;
+
+	for (p = prog->obj->programs; p != prog; p++)
+		if (!prog_is_subprog(prog->obj, p) &&
+		    p->load_strategy == BPF_PROG_LOAD_STRATEGY_AUTO)
+			idx++;
+	return idx;
+}
+
+static int bpf_map_gen_struct_ops_update(struct bpf_map *map)
+{
+	struct bpf_struct_ops *st_ops = map->st_ops;
+	__u32 i, cnt = 0, *fd_offs = st_ops->kern_func_off;
+	struct bpf_object *obj = map->obj;
+	const struct btf_type *type;
+	int *prog_idxs;
+
+	type = btf__type_by_id(obj->btf, st_ops->type_id);
+	prog_idxs = calloc(btf_vlen(type), sizeof(*prog_idxs));
+	if (!prog_idxs)
+		return -ENOMEM;
+
+	for (i = 0; i < btf_vlen(type); i++) {
+		if (!st_ops->progs[i])
+			continue;
+		fd_offs[cnt] = btf_member_bit_offset(type, i) / 8;
+		/* struct bpf_program * doesn't go into the blob. The loader stores the fd here. */
+		memset(st_ops->data + fd_offs[cnt], 0, sizeof(__u64));
+		prog_idxs[cnt++] = bpf_program_gen_idx(st_ops->progs[i]);
+	}
+	bpf_gen__struct_ops_update_elem(obj->gen_loader, map - obj->maps, st_ops->data,
+					type->size, fd_offs, prog_idxs, cnt);
+	free(prog_idxs);
+	return 0;
+}
+
 static int bpf_object_prepare_struct_ops(struct bpf_object *obj)
 {
 	struct bpf_map *map;
@@ -9666,7 +9730,10 @@ static int bpf_object_prepare_struct_ops(struct bpf_object *obj)
 		if (!map->autocreate)
 			continue;
 
-		err = bpf_map_prepare_vdata(map);
+		if (obj->gen_loader)
+			err = bpf_map_gen_struct_ops_update(map);
+		else
+			err = bpf_map_prepare_vdata(map);
 		if (err)
 			return err;
 	}

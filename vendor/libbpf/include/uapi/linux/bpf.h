@@ -1598,6 +1598,13 @@ union bpf_attr {
 						   * struct stored as the
 						   * map value
 						   */
+		/*
+		 * BPF_MAP_TYPE_STRUCT_OPS takes one of the two ids.
+		 * btf_value_type_id is a struct in btf_fd, e.g. tcp_congestion_ops,
+		 * and value_size is its size. The kernel finds its struct_ops and
+		 * the members by name. BPF_MAP_UPDATE_ELEM takes the struct of
+		 * btf_fd. BPF_MAP_LOOKUP_ELEM returns the struct of the kernel.
+		 */
 		/* Any per-map-type extra fields
 		 *
 		 * BPF_MAP_TYPE_BLOOM_FILTER - the lowest 4 bits indicate the
@@ -1685,7 +1692,13 @@ union bpf_attr {
 		union {
 			/* valid prog_fd to attach to bpf prog */
 			__u32		attach_prog_fd;
-			/* or valid module BTF object fd or 0 to attach to vmlinux */
+			/*
+			 * or valid module BTF object fd or 0 to attach to vmlinux.
+			 * BPF_PROG_TYPE_STRUCT_OPS takes the BTF of the bpf object too.
+			 * Then attach_btf_id is a struct in that BTF and
+			 * expected_attach_type is the index of its member.
+			 * The kernel finds its struct_ops and the member by name.
+			 */
 			__u32		attach_btf_obj_fd;
 		};
 		__u32		core_relo_cnt;	/* number of bpf_core_relo */

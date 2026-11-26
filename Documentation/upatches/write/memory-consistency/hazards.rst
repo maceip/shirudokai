@@ -107,9 +107,19 @@ between on the CPU under each model:
      - Yes
      - Yes
      - Yes
-   * - ``cgroup_skb``, ``netfilter``
+   * - ``cgroup_skb``, ``netfilter``, ``tcx/ingress``, ``tcx/egress``
      - No
      - No
+     - Yes
+     - Yes
+   * - ``struct_ops``
+     - No
+     - No
+     - Yes
+     - Yes
+   * - ``struct_ops.s``
+     - No
+     - Yes
      - Yes
      - Yes
    * - ``xdp``
@@ -123,10 +133,13 @@ What the table cannot carry:
 - A sleepable run gives the CPU to another run at any sleeping call.
 - An ``lsm`` hook a softirq calls can run on top of one a process
   called.
-- An egress ``cgroup_skb`` run from a process can be preempted by
-  another task's egress run on the same CPU, and an ingress run in a
-  softirq can run on top of it. ``netfilter`` programs run at IPv6
-  pre-routing, mostly in a softirq.
+- An egress ``cgroup_skb`` or ``tcx/egress`` run from a process can be
+  preempted by another task's egress run on the same CPU, and an ingress
+  run in a softirq (``cgroup_skb``, ``tcx/ingress`` or ``netfilter``)
+  can run on top of it. ``netfilter`` programs run at IPv6 pre-routing,
+  mostly in a softirq. ``struct_ops`` callbacks run in whatever context
+  the kernel subsystem calls them from, such as softirq on TCP ACK
+  arrival for ``tcp_congestion_ops``.
 - ``xdp`` programs run in a device's NAPI poll with bottom halves
   disabled, so no task and no other softirq comes between on one CPU
   but on ``PREEMPT_RT``. The receive queues of a device run on

@@ -62,7 +62,8 @@ static void names_are_parsed_strictly(void)
 	static const char * const ignored[] = {
 		"link_", "link_07", "link_1x", "link_-1", "link_+1",
 		"link_4294967296", "link_ 1", "links", "xdp_prog_",
-		"xdp_prog_01", "xdp_prog_a", "test", "maps", "serializers",
+		"xdp_prog_01", "xdp_prog_a", "tcx_prog_", "tcx_prog_01",
+		"tcx_prog_a", "test", "maps", "serializers",
 		".", "..",
 	};
 	struct upatch_pins pins = {};
@@ -73,6 +74,7 @@ static void names_are_parsed_strictly(void)
 	EXPECT_FALSE(pins.has_link);
 	EXPECT_UEQ(pins.nr_links, 0);
 	EXPECT_UEQ(pins.nr_xdp_progs, 0);
+	EXPECT_UEQ(pins.nr_tcx_progs, 0);
 	EXPECT_FALSE(upatch_pins_loaded(&pins));
 }
 
@@ -85,10 +87,14 @@ static void lowest_index_is_kept_in_any_order(void)
 	upatch_pins_note(&pins, "link_2");
 	upatch_pins_note(&pins, "xdp_prog_3");
 	upatch_pins_note(&pins, "xdp_prog_1");
+	upatch_pins_note(&pins, "tcx_prog_5");
+	upatch_pins_note(&pins, "tcx_prog_2");
 	EXPECT_UEQ(pins.nr_links, 3);
 	EXPECT_UEQ(pins.first_link, 2);
 	EXPECT_UEQ(pins.nr_xdp_progs, 2);
 	EXPECT_UEQ(pins.first_xdp_prog, 1);
+	EXPECT_UEQ(pins.nr_tcx_progs, 2);
+	EXPECT_UEQ(pins.first_tcx_prog, 2);
 }
 
 static void loaded_needs_the_first_link_or_a_program(void)
@@ -106,6 +112,10 @@ static void loaded_needs_the_first_link_or_a_program(void)
 
 	memset(&pins, 0, sizeof(pins));
 	upatch_pins_note(&pins, "xdp_prog_4");
+	EXPECT_TRUE(upatch_pins_loaded(&pins));
+
+	memset(&pins, 0, sizeof(pins));
+	upatch_pins_note(&pins, "tcx_prog_0");
 	EXPECT_TRUE(upatch_pins_loaded(&pins));
 }
 
@@ -157,6 +167,12 @@ static void xdp_program_pins_have_one_name(void)
 	ASSERT_TRUE(len > strlen("/xdp_prog_3"));
 	EXPECT_STREQ(pin + len - strlen("/xdp_prog_3"), "/xdp_prog_3");
 	EXPECT_EQ(upatch_xdp_prog_pin(small, sizeof(small), "fw", 3),
+		  -ENAMETOOLONG);
+	ASSERT_EQ(upatch_tcx_prog_pin(pin, sizeof(pin), "fw", 3), 0);
+	len = strlen(pin);
+	ASSERT_TRUE(len > strlen("/tcx_prog_3"));
+	EXPECT_STREQ(pin + len - strlen("/tcx_prog_3"), "/tcx_prog_3");
+	EXPECT_EQ(upatch_tcx_prog_pin(small, sizeof(small), "fw", 3),
 		  -ENAMETOOLONG);
 }
 

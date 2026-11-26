@@ -660,8 +660,8 @@ or shorter, and "lengths 0 to 6" every input of each of those lengths.
      - A refusal leaves nothing allocated and ``*out`` NULL; an accepted
        program has a known role and kind, a terminated target and map,
        uprobe fields only on a uprobe, kprobe names only on a kprobe
-       multi program, and device classes, set and within the known
-       mask, only on XDP
+       multi program, and device classes and optional ``ifname=`` or
+       ``driver=`` filter only on XDP and TCX
    * - ``upatch-prog-count``
      - The program count ``prog_specs_parse()`` takes from the header
      - Tables of 3, 16, 176 and 336 bytes, any count larger than they
@@ -1768,8 +1768,10 @@ refusal of
 ``measured_event()`` at the set's capacity of ``MEASURED_MAX``, 4096
 entries, whose proof runs past 40 minutes; and of :src:`util/xdp.c` the loop of
 ``nl_exchange()`` over a reply's messages, the requests ``attr_put()``
-builds and the device class and selection that ``xdp_device_class()``,
-``veth_peer()`` and ``xdp_device_selected()`` decide.
+builds and the device class, glob filter and selection that
+``xdp_device_class()``, ``veth_peer()``, ``xdp_device_selected()``,
+``xdp_device_filter_valid()``, ``xdp_device_match_glob()`` and
+``xdp_device_selected_filtered()`` decide.
 Logic of the files without a proof that sits between their calls and
 could be proven, as neither a proof nor a fuzz target reads it:
 ``split_describe()`` and the match of ``keyring_holds_exactly()`` in

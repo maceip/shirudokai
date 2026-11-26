@@ -77,6 +77,18 @@ int upatch_xdp_each_uncovered(const char *name, const struct prog_spec *specs,
 					__u32 attached, void *ctx),
 			      void *ctx);
 
+/*
+ * Calls cb for each device a TCX program of name selects that has no live
+ * BPF_LINK_TYPE_TCX link of that program and direction pinned for name.
+ * Unlike XDP, another TCX program on the device does not occupy it.
+ */
+int upatch_tcx_each_uncovered(const char *name, const struct prog_spec *specs,
+			      __u32 nr_progs, const struct xdp_device *devices,
+			      size_t count,
+			      int (*cb)(int prog_fd, const struct prog_spec *spec,
+					const struct xdp_device *dev, void *ctx),
+			      void *ctx);
+
 struct measured_set;
 
 /*
