@@ -416,14 +416,14 @@ Each program entry is 160 bytes:
    * - +4
      - 4
      - ``kind``
-     - Attach kind, see the table below. 0 for the serializer and test-run
-       roles.
+     - Attach kind, see the table below. 0 for the serializer, test-run
+       and struct_ops roles.
    * - +8
      - 8
      - ``offset`` / ``xdp``
      - Byte offset into the function for ``kprobe`` and for ``uprobe`` at a
        function; the file offset the target uses is in the ``UPUT`` record.
-       For XDP, a
+       For XDP and TCX, a
        little-endian ``u32 device_classes`` followed by ``u32 reserved``
        (0). The mask is nonzero and uses only bits 1 (network-facing),
        2 (virtual), 8 (VM) and 16 (unknown); 27 selects all classes.
@@ -434,8 +434,9 @@ Each program entry is 160 bytes:
      - NUL-terminated. The kernel symbol for ``kprobe`` and
        ``kretprobe``, the function or the ``0x`` file offset as written for
        ``uprobe`` and ``uretprobe``, the function glob for ``uprobe.multi``
-       and ``uretprobe.multi`` (no ``,`` or ``|``). Empty for every other
-       kind and role.
+       and ``uretprobe.multi`` (no ``,`` or ``|``), or an optional
+       ``ifname=<glob>`` / ``driver=<glob>`` filter for XDP and TCX. Empty
+       for every other kind and role.
    * - +144
      - 16
      - ``map``
@@ -458,6 +459,11 @@ Each program entry is 160 bytes:
    * - 2
      - test-run
      - The one ``SEC("syscall")`` program named ``shirudo_test__<id>``.
+   * - 3
+     - struct_ops
+     - A ``struct_ops/<name>`` or ``struct_ops.s/<name>`` program. The
+       target does not attach it: it links each ``struct_ops`` map the
+       loader made, which holds the programs.
 
 .. list-table::
    :header-rows: 1
@@ -494,7 +500,7 @@ Each program entry is 160 bytes:
        ``uprobe.multi.s/<absolute-path>:<function-glob>``
    * - 8
      - native XDP device classes
-     - ``xdp/<decimal-mask>``
+     - ``xdp/<decimal-mask>[:<filter>]``
    * - 9
      - uretprobe.multi
      - ``uretprobe.multi/<absolute-path>:<function-glob>``,
@@ -509,12 +515,26 @@ Each program entry is 160 bytes:
      - ``uretprobe/<absolute-path>:<function>``,
        ``uretprobe/<absolute-path>:0x<file-offset>``, and their
        ``uretprobe.s`` forms
+   * - 12
+     - kprobe.multi
+     - ``kprobe.multi/<symbol>[,<symbol>...]``
+   * - 13
+     - kretprobe.multi
+     - ``kretprobe.multi/<symbol>[,<symbol>...]``
+   * - 14
+     - TCX ingress
+     - ``tcx/ingress[/<classes>][:<filter>]``
+   * - 15
+     - TCX egress
+     - ``tcx/egress[/<classes>][:<filter>]``
 
 :doc:`/upatches/write/attach-kinds` describes how the target attaches each kind.
-XDP retains the 160-byte entry and UPGM version 1; readers that do not
-know kind 8 refuse it. Its ``target`` and ``map`` are empty. A reader
-refuses a device-class mask that sets a bit outside 27, which bit 4 is,
-and a table whose XDP entries share a class.
+XDP and TCX retain the 160-byte entry and UPGM version 1; readers that do
+not know kinds 8, 14 or 15 refuse them. ``map`` is empty, and ``target``
+is empty or holds ``ifname=<glob>`` or ``driver=<glob>`` padded with NULs.
+A reader refuses a device-class mask that sets a bit outside 27, which
+bit 4 is, and a table whose XDP entries share a class; TCX entries may
+share classes.
 :doc:`/upatches/write/attach-kinds` says how a device is classified.
 
 When any entry has kind 7, 9, 10 or 11, one ``UPUT`` block follows the

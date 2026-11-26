@@ -169,65 +169,82 @@ int upatch_archive_verify(const char *name,
 	return 0;
 }
 
-static int count_non_xdp_link(__u32 index, const char *pin,
-			      const struct bpf_link_info *info, void *ctx)
+static int count_non_netdev_link(__u32 index, const char *pin,
+				 const struct bpf_link_info *info, void *ctx)
 {
 	__u32 *found = ctx;
 
-	if (info->type != BPF_LINK_TYPE_XDP)
+	if (info->type != BPF_LINK_TYPE_XDP &&
+	    info->type != BPF_LINK_TYPE_TCX)
 		(*found)++;
 	return 0;
 }
 
 /*
- * XDP links come and go with devices, so their number says nothing. What
- * cannot change is a program pin for each XDP program and a link for each
- * other attach program. Link numbers are shared and shift with the devices,
- * so the kernel says which links are which.
+ * XDP and TCX links come and go with devices, so their number says nothing.
+ * What cannot change is a program pin for each XDP or TCX program and a link
+ * for each other attach program and struct_ops map. Link numbers are shared
+ * and shift with the devices, so the kernel says which links are which.
  */
-static int xdp_upatch_complete(const char *name, const struct prog_spec *specs,
-			       __u32 nr_progs, __u32 nr_attach)
+static int netdev_upatch_complete(const char *name, const struct prog_spec *specs,
+				  __u32 nr_progs, __u32 nr_attach,
+				  bool has_struct_ops)
 {
-	__u32 i, nr_xdp = 0, found = 0;
+	__u32 i, nr_netdev = 0, found = 0, expected;
 	char pin[PATH_MAX];
 	struct stat st;
 	int ret;
 
 	for (i = 0; i < nr_progs; i++) {
-		if (specs[i].kind != UPATCH_ATTACH_XDP)
+		if (specs[i].kind == UPATCH_ATTACH_XDP) {
+			nr_netdev++;
+			if (upatch_xdp_prog_pin(pin, sizeof(pin), name, i))
+				return -ENAMETOOLONG;
+		} else if (kind_is_tcx(specs[i].kind)) {
+			nr_netdev++;
+			if (upatch_tcx_prog_pin(pin, sizeof(pin), name, i))
+				return -ENAMETOOLONG;
+		} else {
 			continue;
-		nr_xdp++;
-		if (upatch_xdp_prog_pin(pin, sizeof(pin), name, i))
-			return -ENAMETOOLONG;
+		}
 		if (stat(pin, &st))
 			return errno == ENOENT ? 0 : -errno;
 	}
-	if (nr_attach == nr_xdp)
+	expected = nr_attach - nr_netdev;
+	if (!expected && !has_struct_ops)
 		return 1;
-	ret = upatch_each_link_info(name, count_non_xdp_link, &found);
+	ret = upatch_each_link_info(name, count_non_netdev_link, &found);
 	if (ret)
 		return ret;
-	return found == nr_attach - nr_xdp;
+	return has_struct_ops ? found > expected : found == expected;
 }
 
 static int links_complete_specs(const char *name,
 				const struct prog_spec *specs, __u32 nr_progs)
 {
+	bool has_netdev = false, has_struct_ops = false;
+	__u32 i, nr_attach = 0, total;
 	struct upatch_pins pins;
-	__u32 i, nr_attach = 0;
-	bool has_xdp = false;
 	int ret;
 
 	for (i = 0; i < nr_progs; i++) {
 		if (specs[i].role == UPATCH_PROG_ROLE_ATTACH)
 			nr_attach++;
-		if (specs[i].kind == UPATCH_ATTACH_XDP)
-			has_xdp = true;
+		if (specs[i].role == UPATCH_PROG_ROLE_STRUCT_OPS)
+			has_struct_ops = true;
+		if (kind_is_netdev(specs[i].kind))
+			has_netdev = true;
 	}
-	if (has_xdp)
-		return xdp_upatch_complete(name, specs, nr_progs, nr_attach);
+	if (has_netdev)
+		return netdev_upatch_complete(name, specs, nr_progs, nr_attach,
+					      has_struct_ops);
 	ret = upatch_pins_read(name, &pins);
-	return ret ? ret : upatch_pins_complete(&pins, nr_attach);
+	if (ret)
+		return ret;
+	if (!has_struct_ops)
+		return upatch_pins_complete(&pins, nr_attach);
+	total = pins.has_link ? 1 : pins.nr_links;
+	return total > nr_attach && upatch_pins_complete(&pins, total);
 }
 
 int upatch_links_complete(const char *name, const char *path)
@@ -308,13 +325,87 @@ int upatch_xdp_each_uncovered(const char *name, const struct prog_spec *specs,
 			__u32 attached = xdp_device_attached(&devices[j]);
 			int ret;
 
-			if (!xdp_device_selected(devices, count, j,
-						 specs[i].device_classes))
+			if (!xdp_device_selected_filtered(devices, count, j,
+							  specs[i].device_classes,
+							  specs[i].target))
 				continue;
 			if (xdp_reconcile_action(true, attached, prog_id) ==
 			    XDP_RECONCILE_COVERED)
 				continue;
 			ret = cb(fd, &specs[i], &devices[j], attached, ctx);
+			if (ret) {
+				close(fd);
+				return ret;
+			}
+		}
+		close(fd);
+	}
+	return 0;
+}
+
+struct tcx_cover_query {
+	__u32	prog_id;
+	__u32	ifindex;
+	__u32	attach_type;
+	bool	covered;
+};
+
+static int check_tcx_link(__u32 index, const char *pin,
+			  const struct bpf_link_info *info, void *ctx)
+{
+	struct tcx_cover_query *q = ctx;
+
+	if (info->type == BPF_LINK_TYPE_TCX &&
+	    info->prog_id == q->prog_id &&
+	    info->tcx.ifindex == q->ifindex &&
+	    info->tcx.attach_type == q->attach_type) {
+		q->covered = true;
+		return 1;
+	}
+	return 0;
+}
+
+int upatch_tcx_each_uncovered(const char *name, const struct prog_spec *specs,
+			      __u32 nr_progs, const struct xdp_device *devices,
+			      size_t count,
+			      int (*cb)(int prog_fd, const struct prog_spec *spec,
+					const struct xdp_device *dev, void *ctx),
+			      void *ctx)
+{
+	__u32 i;
+
+	for (i = 0; i < nr_progs; i++) {
+		__u32 attach_type, prog_id = 0;
+		size_t j;
+		int fd;
+
+		if (!kind_is_tcx(specs[i].kind))
+			continue;
+		attach_type = specs[i].kind == UPATCH_ATTACH_TCX_EGRESS ?
+			      BPF_TCX_EGRESS : BPF_TCX_INGRESS;
+		fd = upatch_tcx_prog_open(name, i, &prog_id);
+		if (fd < 0)
+			return fd;
+		for (j = 0; j < count; j++) {
+			struct tcx_cover_query q = {
+				.prog_id = prog_id,
+				.ifindex = devices[j].ifindex,
+				.attach_type = attach_type,
+			};
+			int ret;
+
+			if (!xdp_device_selected_filtered(devices, count, j,
+							  specs[i].device_classes,
+							  specs[i].target))
+				continue;
+			ret = upatch_each_link_info(name, check_tcx_link, &q);
+			if (ret < 0) {
+				close(fd);
+				return ret;
+			}
+			if (q.covered)
+				continue;
+			ret = cb(fd, &specs[i], &devices[j], ctx);
 			if (ret) {
 				close(fd);
 				return ret;
@@ -551,7 +642,7 @@ static int check_one(const char *name, void *ctx)
 		note_err(&w->c->check_err, ret);
 		note_err(&w->c->coverage_err, ret);
 	}
-	if (ret || !pins.nr_xdp_progs)
+	if (ret || (!pins.nr_xdp_progs && !pins.nr_tcx_progs))
 		return note_links_unverified(w, name);
 	ret = upatch_archive_verify(name, payload, &u);
 	if (ret == -ESTALE) {
@@ -576,7 +667,7 @@ static int check_one(const char *name, void *ctx)
 	}
 	ret = note_links(w, name, links_complete_specs(name, specs,
 						       u.hdr.nr_progs));
-	if (!ret)
+	if (!ret && pins.nr_xdp_progs)
 		ret = check_coverage(w, name, specs, u.hdr.nr_progs);
 	prog_specs_free(specs, u.hdr.nr_progs);
 	upatch_close(&u);

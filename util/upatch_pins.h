@@ -21,6 +21,8 @@ struct upatch_pins {
 	__u32	last_link;
 	__u32	nr_xdp_progs;
 	__u32	first_xdp_prog;
+	__u32	nr_tcx_progs;
+	__u32	first_tcx_prog;
 };
 
 void upatch_pins_note(struct upatch_pins *pins, const char *entry);
@@ -62,6 +64,15 @@ int upatch_xdp_prog_pin(char *out, size_t cap, const char *name, __u32 index);
  * -ESTALE when the pin holds a program that is not XDP.
  */
 int upatch_xdp_prog_open(const char *name, __u32 index, __u32 *id);
+
+/* The pin that keeps TCX program index of name loaded: 0 or -ENAMETOOLONG. */
+int upatch_tcx_prog_pin(char *out, size_t cap, const char *name, __u32 index);
+
+/*
+ * The fd of TCX program index pinned for name, its id in *id, or -errno;
+ * -ESTALE when the pin holds a program that is not BPF_PROG_TYPE_SCHED_CLS.
+ */
+int upatch_tcx_prog_open(const char *name, __u32 index, __u32 *id);
 
 /*
  * The payload hash a load set on the pin directory of name: 0,

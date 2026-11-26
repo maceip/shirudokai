@@ -75,6 +75,10 @@ __u32 xdp_device_class(const struct xdp_device *dev);
 __u32 xdp_device_attached(const struct xdp_device *dev);
 bool xdp_device_selected(const struct xdp_device *devs, size_t count,
 			 size_t index, __u32 mask);
+bool xdp_device_filter_valid(const char *filter);
+bool xdp_device_match_glob(const struct xdp_device *dev, const char *filter);
+bool xdp_device_selected_filtered(const struct xdp_device *devs, size_t count,
+				  size_t index, __u32 mask, const char *filter);
 /*
  * 0 in the initial network namespace, -EXDEV in another. Devices, and the
  * hook of a netfilter link, are the caller's namespace's.

@@ -110,6 +110,8 @@ int upatch_first_prog_id(const char *name, __u32 *out)
 		if (ret)
 			return ret;
 		*out = linfo.prog_id;
+		if (linfo.type == BPF_LINK_TYPE_STRUCT_OPS)
+			return 0;
 		return linfo.prog_id ? 0 : -EINVAL;
 	}
 	if (fd != -ENOENT)
@@ -117,9 +119,12 @@ int upatch_first_prog_id(const char *name, __u32 *out)
 	ret = upatch_pins_read(name, &pins);
 	if (ret)
 		return ret;
-	if (!pins.nr_xdp_progs)
+	if (pins.nr_xdp_progs)
+		fd = upatch_xdp_prog_open(name, pins.first_xdp_prog, out);
+	else if (pins.nr_tcx_progs)
+		fd = upatch_tcx_prog_open(name, pins.first_tcx_prog, out);
+	else
 		return -ENOENT;
-	fd = upatch_xdp_prog_open(name, pins.first_xdp_prog, out);
 	if (fd < 0)
 		return fd;
 	close(fd);
@@ -128,6 +133,7 @@ int upatch_first_prog_id(const char *name, __u32 *out)
 
 struct xdp_links {
 	char	device[IF_NAMESIZE + 16];
+	__u32	attach_type;
 	__u32	lowest;
 	__u32	live;
 };
@@ -204,6 +210,95 @@ static int xdp_location(const char *name, char *out, size_t cap)
 	return n < 0 ? -E2BIG : 0;
 }
 
+static int note_tcx_link(__u32 index, const char *pin,
+			 const struct bpf_link_info *info, void *ctx)
+{
+	struct xdp_links *l = ctx;
+	char name[IF_NAMESIZE];
+
+	if (info->type != BPF_LINK_TYPE_TCX || !info->tcx.ifindex)
+		return 0;
+	if (!l->live || index < l->lowest) {
+		l->lowest = index;
+		l->attach_type = info->tcx.attach_type;
+		if (if_indextoname(info->tcx.ifindex, name)) {
+			if (strscpy(l->device, name, sizeof(l->device)) < 0)
+				return -E2BIG;
+		} else if (strsprintf(l->device, sizeof(l->device), "ifindex:%u",
+				      info->tcx.ifindex) < 0) {
+			return -E2BIG;
+		}
+	}
+	l->live++;
+	return 0;
+}
+
+static int tcx_location(const char *name, char *out, size_t cap)
+{
+	struct xdp_links links = {};
+	const char *dir;
+	int ret, n;
+
+	ret = upatch_each_link_info(name, note_tcx_link, &links);
+	if (ret)
+		return ret;
+	dir = links.attach_type == BPF_TCX_EGRESS ? "egress" : "ingress";
+	if (!links.live)
+		n = strsprintf(out, cap, "tcx (waiting for a device)");
+	else if (links.live == 1)
+		n = strsprintf(out, cap, "tcx/%s/%s", dir, links.device);
+	else
+		n = strsprintf(out, cap, "tcx/%s/%s (+%u)", dir, links.device,
+			       links.live - 1);
+	return n < 0 ? -E2BIG : 0;
+}
+
+/* Empty when text does not fit, as strsprintf() leaves a location. */
+static int location_copy(char *out, size_t cap, const char *text)
+{
+	if (strscpy(out, text, cap) >= 0)
+		return 0;
+	out[0] = '\0';
+	return -E2BIG;
+}
+
+#define STRUCT_OPS_VALUE_PREFIX		"bpf_struct_ops_"
+
+/*
+ * The kernel names the value of a struct_ops map after the struct it
+ * fills, tcp_congestion_ops in bpf_struct_ops_tcp_congestion_ops. A
+ * module's type has an id past those of vmlinux and stays unnamed.
+ */
+static int struct_ops_location(struct btf *vbtf, __u32 map_id,
+			       char *out, size_t cap)
+{
+	LIBBPF_OPTS(bpf_get_fd_by_id_opts, opts, .open_flags = BPF_F_RDONLY);
+	struct bpf_map_info info = {};
+	__u32 len = sizeof(info);
+	const struct btf_type *t;
+	const char *value_name;
+	int map_fd, ret;
+
+	map_fd = bpf_map_get_fd_by_id_opts(map_id, &opts);
+	if (map_fd < 0)
+		return -errno;
+	ret = bpf_map_get_info_by_fd(map_fd, &info, &len);
+	close(map_fd);
+	if (ret)
+		return ret;
+	if (!vbtf || !info.btf_vmlinux_value_type_id ||
+	    info.btf_vmlinux_value_type_id >= btf__type_cnt(vbtf))
+		return location_copy(out, cap, "struct_ops");
+	t = btf__type_by_id(vbtf, info.btf_vmlinux_value_type_id);
+	value_name = t ? btf__name_by_offset(vbtf, t->name_off) : NULL;
+	value_name = value_name ?
+		     str_after_prefix(value_name, STRUCT_OPS_VALUE_PREFIX) : NULL;
+	if (!value_name || !*value_name)
+		return location_copy(out, cap, "struct_ops");
+	return strsprintf(out, cap, "struct_ops/%s", value_name) < 0 ?
+	       -E2BIG : 0;
+}
+
 static bool link_is_uprobe(const struct bpf_link_info *linfo)
 {
 	return linfo->type == BPF_LINK_TYPE_PERF_EVENT &&
@@ -267,15 +362,6 @@ static int prog_info_by_id(__u32 prog_id, struct bpf_prog_info *info)
 	ret = bpf_prog_get_info_by_fd(fd, info, &len);
 	close(fd);
 	return ret;
-}
-
-/* Empty when text does not fit, as strsprintf() leaves a location. */
-static int location_copy(char *out, size_t cap, const char *text)
-{
-	if (strscpy(out, text, cap) >= 0)
-		return 0;
-	out[0] = '\0';
-	return -E2BIG;
 }
 
 /* pinfo is the program's info when the caller has read it already. */
@@ -352,10 +438,17 @@ int upatch_resolve_location(struct btf *vbtf, const char *name,
 		return ret;
 	if (pins.nr_xdp_progs)
 		return xdp_location(name, out, cap);
+	if (pins.nr_tcx_progs)
+		return tcx_location(name, out, cap);
 	link_fd = upatch_open_first_link(name);
 	if (link_fd < 0)
 		return link_fd;
 	ret = bpf_link_get_info_by_fd(link_fd, &linfo, &len);
+	if (!ret && linfo.type == BPF_LINK_TYPE_STRUCT_OPS) {
+		close(link_fd);
+		return struct_ops_location(vbtf, linfo.struct_ops.map_id, out,
+					   cap);
+	}
 	if (!ret && !linfo.prog_id)
 		ret = -EINVAL;
 	if (!ret)
@@ -520,6 +613,9 @@ void upatch_loaded_at(const char *name, char *out, size_t cap)
 		return;
 	if (pins.nr_xdp_progs &&
 	    upatch_xdp_prog_pin(dir, sizeof(dir), name, pins.first_xdp_prog))
+		return;
+	if (!pins.nr_xdp_progs && pins.nr_tcx_progs &&
+	    upatch_tcx_prog_pin(dir, sizeof(dir), name, pins.first_tcx_prog))
 		return;
 	if (stat(dir, &st) != 0)
 		return;

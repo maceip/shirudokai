@@ -1300,6 +1300,10 @@ static const char *attach_kind_name(__u32 kind)
 		return "uprobe";
 	case UPATCH_ATTACH_URETPROBE:
 		return "uretprobe";
+	case UPATCH_ATTACH_TCX_INGRESS:
+		return "tcx/ingress";
+	case UPATCH_ATTACH_TCX_EGRESS:
+		return "tcx/egress";
 	default:
 		return "unknown";
 	}
@@ -1531,6 +1535,15 @@ static int link_matches_spec(int link_fd,
 			return -EXDEV;
 		/* The caller's namespace was checked before the devices were read. */
 		return 0;
+	case UPATCH_ATTACH_TCX_INGRESS:
+	case UPATCH_ATTACH_TCX_EGRESS:
+		if (info.type != BPF_LINK_TYPE_TCX || !ifindex ||
+		    info.tcx.ifindex != ifindex ||
+		    info.tcx.attach_type !=
+		    (spec->kind == UPATCH_ATTACH_TCX_EGRESS ?
+		     BPF_TCX_EGRESS : BPF_TCX_INGRESS))
+			return -EXDEV;
+		return 0;
 	case UPATCH_ATTACH_CGROUP_SKB_INGRESS:
 	case UPATCH_ATTACH_CGROUP_SKB_EGRESS:
 		return -EXDEV;
@@ -1687,6 +1700,14 @@ static void count_attach_progs(const struct prog_spec *specs,
 	*out = n;
 }
 
+static int link_pin_path(char *pin, size_t sz, const char *dir,
+			 __u32 link_count, __u32 link_idx)
+{
+	if (link_count == 1)
+		return path_join(pin, sz, dir, "link");
+	return upatch_link_pin(pin, sz, dir, link_idx);
+}
+
 static int prog_pin_path(char *pin, size_t sz, const char *dir,
 			 const char *serializers_dir,
 			 const struct prog_spec *spec,
@@ -1696,9 +1717,102 @@ static int prog_pin_path(char *pin, size_t sz, const char *dir,
 		return path_join(pin, sz, serializers_dir, spec->map);
 	if (spec->role == UPATCH_PROG_ROLE_TEST_RUN)
 		return path_join(pin, sz, dir, "test");
-	if (attach_count == 1)
-		return path_join(pin, sz, dir, "link");
-	return upatch_link_pin(pin, sz, dir, attach_idx);
+	return link_pin_path(pin, sz, dir, attach_count, attach_idx);
+}
+
+static int loader_map_fd(const struct loader_ctx *cx, __u32 idx)
+{
+	const struct map_desc *md =
+		(const void *)((const char *)cx + sizeof(*cx) +
+			       (size_t)idx * sizeof(*md));
+
+	return md->map_fd;
+}
+
+/* *id is the id of the struct_ops map behind map_fd, 0 for any other. */
+static int struct_ops_map_id(int map_fd, __u32 *id)
+{
+	struct bpf_map_info info = {};
+	__u32 len = sizeof(info);
+
+	*id = 0;
+	if (map_fd <= 0)
+		return 0;
+	if (bpf_map_get_info_by_fd(map_fd, &info, &len))
+		return -errno;
+	if (info.type == BPF_MAP_TYPE_STRUCT_OPS)
+		*id = info.id;
+	return 0;
+}
+
+static int count_struct_ops_maps(const struct loader_ctx *cx, __u32 nr_maps,
+				 __u32 *out)
+{
+	__u32 i, id, n = 0;
+	int ret;
+
+	for (i = 0; i < nr_maps; i++) {
+		ret = struct_ops_map_id(loader_map_fd(cx, i), &id);
+		if (ret)
+			return ret;
+		if (id)
+			n++;
+	}
+	*out = n;
+	return 0;
+}
+
+/*
+ * A struct_ops map attaches, not its programs: its link takes the link
+ * pin after those of the programs.
+ */
+static int attach_and_pin_struct_ops(const struct loader_ctx *cx,
+				     __u32 nr_maps, const char *dir,
+				     bool has_netdev, __u32 link_count,
+				     __u32 first_idx, __u32 *pinned_links,
+				     __u32 *made)
+{
+	char pin[PATH_MAX + 32];
+	int map_fd, link_fd, ret;
+	__u32 i, id;
+
+	for (i = 0; i < nr_maps; i++) {
+		map_fd = loader_map_fd(cx, i);
+		ret = struct_ops_map_id(map_fd, &id);
+		if (ret)
+			return ret;
+		if (!id)
+			continue;
+		if (has_netdev) {
+			if (*pinned_links == UINT32_MAX)
+				return -EOVERFLOW;
+			ret = upatch_link_pin(pin, sizeof(pin), dir,
+					      *pinned_links);
+		} else {
+			ret = link_pin_path(pin, sizeof(pin), dir, link_count,
+					    first_idx + *made);
+		}
+		if (ret)
+			return ret;
+		link_fd = bpf_link_create(map_fd, 0, BPF_STRUCT_OPS, NULL);
+		if (link_fd < 0) {
+			pr_err("attach struct_ops map %u: %s", i,
+			       strerror(-link_fd));
+			return link_fd;
+		}
+		ret = obj_pin(link_fd, pin);
+		close(link_fd);
+		if (ret) {
+			pr_err("pin %s: %s", pin, strerror(-ret));
+			return ret;
+		}
+		if (has_netdev)
+			(*pinned_links)++;
+		else
+			(*made)++;
+		pr_info("upatch load: struct_ops map %u pinned at %s", i, pin);
+	}
+	return 0;
 }
 
 /*
@@ -1716,6 +1830,87 @@ static int pin_xdp_prog(int prog_fd, const char *name, __u32 index)
 	if (ret)
 		pr_err("pin XDP program %s: %s", pin, strerror(-ret));
 	return ret;
+}
+
+static int pin_tcx_prog(int prog_fd, const char *name, __u32 index)
+{
+	char pin[PATH_MAX];
+	int ret;
+
+	if (upatch_tcx_prog_pin(pin, sizeof(pin), name, index))
+		return -ENAMETOOLONG;
+	ret = obj_repin(prog_fd, pin);
+	if (ret)
+		pr_err("pin TCX program %s: %s", pin, strerror(-ret));
+	return ret;
+}
+
+static int tcx_attach_one(int prog_fd, const struct prog_spec *spec,
+			  const struct xdp_device *dev, const char *pin)
+{
+	enum bpf_attach_type attach_type =
+		spec->kind == UPATCH_ATTACH_TCX_EGRESS ?
+		BPF_TCX_EGRESS : BPF_TCX_INGRESS;
+	int fd, ret;
+
+	ret = xdp_device_verify(dev);
+	if (ret)
+		return ret;
+	fd = bpf_link_create(prog_fd, (int)dev->ifindex, attach_type, NULL);
+	if (fd < 0)
+		return fd;
+	ret = link_matches_spec(fd, spec, dev->ifindex);
+	if (ret == -EXDEV)
+		ret = XDP_ERR_LINK_SCOPE;
+	if (!ret)
+		ret = xdp_device_verify(dev);
+	if (!ret)
+		ret = obj_pin(fd, pin);
+	close(fd);
+	return ret;
+}
+
+static int attach_tcx_devices(int prog_fd, const struct prog_spec *spec,
+			      const struct xdp_device *devices, size_t count,
+			      const char *dir, __u32 *pinned)
+{
+	__u32 attached = 0;
+	size_t i;
+
+	for (i = 0; i < count; i++) {
+		const struct xdp_device *dev = &devices[i];
+		char pin[PATH_MAX + 32];
+		int ret;
+
+		if (!xdp_device_selected_filtered(devices, count, i,
+						  spec->device_classes,
+						  spec->target))
+			continue;
+		if (*pinned == UINT32_MAX)
+			return -EOVERFLOW;
+		if (upatch_link_pin(pin, sizeof(pin), dir, *pinned))
+			return -ENAMETOOLONG;
+		ret = tcx_attach_one(prog_fd, spec, dev, pin);
+		if (xdp_attach_skippable(ret, dev)) {
+			pr_warn("TCX: skipping %s (ifindex %u): %s", dev->name,
+				dev->ifindex, xdp_attach_strerror(ret));
+			continue;
+		}
+		if (ret) {
+			pr_err("TCX: attach %s (ifindex %u): %s", dev->name,
+			       dev->ifindex, xdp_attach_strerror(ret));
+			return ret;
+		}
+		(*pinned)++;
+		attached++;
+		pr_info("TCX: attached %s (ifindex %u, class %u) at %s",
+			dev->name, dev->ifindex, xdp_device_class(dev), pin);
+	}
+	if (!attached)
+		pr_info("TCX: no attachable interface matches signed class mask %u%s%s yet",
+			spec->device_classes,
+			spec->target[0] ? " and " : "", spec->target);
+	return 0;
 }
 
 /*
@@ -1776,7 +1971,9 @@ static int attach_xdp_devices(int prog_fd, const struct prog_spec *spec,
 		char pin[PATH_MAX + 32];
 		int ret;
 
-		if (!xdp_device_selected(devices, count, i, spec->device_classes))
+		if (!xdp_device_selected_filtered(devices, count, i,
+						  spec->device_classes,
+						  spec->target))
 			continue;
 		if (*pinned == UINT32_MAX)
 			return -EOVERFLOW;
@@ -1814,7 +2011,7 @@ static int attach_xdp_devices(int prog_fd, const struct prog_spec *spec,
  * A failure unpins what this call pinned: the upatch is then neither
  * archived nor measured, so none of its programs may stay attached.
  */
-static int attach_and_pin_progs(const struct loader_ctx *cx,
+static int attach_and_pin_progs(const struct loader_ctx *cx, __u32 nr_maps,
 				size_t prog_desc_off, __u32 nr_progs,
 				const char *name,
 				const struct prog_spec *specs)
@@ -1822,12 +2019,13 @@ static int attach_and_pin_progs(const struct loader_ctx *cx,
 	char dir[PATH_MAX], serializers_dir[PATH_MAX + 16];
 	int grant __cleanup(pin_grant_close) = -1;
 	bool made_dir = false, made_serializers = false;
+	__u32 nr_struct_ops = 0, struct_ops_made = 0;
 	__u32 i, attach_count = 0, attach_seen = 0;
 	struct xdp_device *devices = NULL;
 	char pin[PATH_MAX + 32];
 	__u32 pinned_links = 0;
 	size_t nr_devices = 0;
-	bool has_xdp = false;
+	bool has_netdev = false;
 	bool *made = NULL;
 	int test_fd = -1;
 	int ret;
@@ -1839,8 +2037,8 @@ static int attach_and_pin_progs(const struct loader_ctx *cx,
 	if (upatch_pin_path(dir, sizeof(dir), name, NULL))
 		return -ENAMETOOLONG;
 	for (i = 0; i < nr_progs; i++)
-		if (specs[i].kind == UPATCH_ATTACH_XDP)
-			has_xdp = true;
+		if (kind_is_netdev(specs[i].kind))
+			has_netdev = true;
 
 	ret = mkdir_if_absent(BPFFS_UPATCHES_DIR, 0700, NULL);
 	if (ret) {
@@ -1854,7 +2052,7 @@ static int attach_and_pin_progs(const struct loader_ctx *cx,
 	made = xcalloc(nr_progs, sizeof(*made));
 	if (!made)
 		return -ENOMEM;
-	if (has_xdp) {
+	if (has_netdev) {
 		ret = netns_initial();
 		if (!ret)
 			ret = xdp_devices_read(&devices, &nr_devices);
@@ -1873,6 +2071,10 @@ static int attach_and_pin_progs(const struct loader_ctx *cx,
 		goto out;
 	}
 	count_attach_progs(specs, nr_progs, &attach_count);
+	ret = count_struct_ops_maps(cx, nr_maps, &nr_struct_ops);
+	if (ret)
+		goto out;
+	attach_count += nr_struct_ops;
 
 	for (i = 0; i < nr_progs; i++) {
 		const struct prog_desc *pd =
@@ -1888,6 +2090,8 @@ static int attach_and_pin_progs(const struct loader_ctx *cx,
 			ret = -EINVAL;
 			goto out;
 		}
+		if (spec->role == UPATCH_PROG_ROLE_STRUCT_OPS)
+			continue;
 		ret = prog_pin_path(pin, sizeof(pin), dir, serializers_dir,
 				    spec, attach_count, attach_seen);
 		if (ret)
@@ -1936,7 +2140,18 @@ static int attach_and_pin_progs(const struct loader_ctx *cx,
 				goto out;
 			continue;
 		}
-		if (has_xdp) {
+		if (kind_is_tcx(spec->kind)) {
+			ret = pin_tcx_prog(inner_fd, name, i);
+			if (ret)
+				goto out;
+			made[i] = true;
+			ret = attach_tcx_devices(inner_fd, spec, devices, nr_devices,
+						 dir, &pinned_links);
+			if (ret)
+				goto out;
+			continue;
+		}
+		if (has_netdev) {
 			if (pinned_links == UINT32_MAX) {
 				ret = -EOVERFLOW;
 				goto out;
@@ -1992,11 +2207,16 @@ static int attach_and_pin_progs(const struct loader_ctx *cx,
 			goto out;
 		}
 		made[i] = true;
-		if (has_xdp)
+		if (has_netdev)
 			pinned_links++;
 		pr_info("upatch load: program %u (%s) pinned at %s",
 			i, kind, pin);
 	}
+	ret = attach_and_pin_struct_ops(cx, nr_maps, dir, has_netdev,
+					attach_count, attach_seen,
+					&pinned_links, &struct_ops_made);
+	if (ret)
+		goto out;
 	if (test_fd >= 0) {
 		__u64 init_ctx[2] = {};
 		__u32 retval = 0;
@@ -2025,14 +2245,22 @@ out:
 			if (made[i] && specs[i].kind == UPATCH_ATTACH_XDP &&
 			    !upatch_xdp_prog_pin(pin, sizeof(pin), name, i))
 				unlink(pin);
+			if (made[i] && kind_is_tcx(specs[i].kind) &&
+			    !upatch_tcx_prog_pin(pin, sizeof(pin), name, i))
+				unlink(pin);
 			if (made[i] &&
-			    !(has_xdp && specs[i].role == UPATCH_PROG_ROLE_ATTACH) &&
+			    !(has_netdev && specs[i].role == UPATCH_PROG_ROLE_ATTACH) &&
 			    !prog_pin_path(pin, sizeof(pin), dir,
 					   serializers_dir, &specs[i],
 					   attach_count, attach_seen))
 				unlink(pin);
 			if (specs[i].role == UPATCH_PROG_ROLE_ATTACH)
 				attach_seen++;
+		}
+		for (i = 0; i < struct_ops_made; i++) {
+			if (!link_pin_path(pin, sizeof(pin), dir, attach_count,
+					   attach_seen + i))
+				unlink(pin);
 		}
 		if (made_serializers)
 			rmdir(serializers_dir);
@@ -2090,7 +2318,8 @@ static int pin_upatch_maps(const struct loader_ctx *cx,
 				i, strerror(errno));
 			continue;
 		}
-		if (info.name[0] == '\0')
+		if (info.name[0] == '\0' ||
+		    info.type == BPF_MAP_TYPE_STRUCT_OPS)
 			continue;
 		if (strchr(info.name, '.'))
 			continue;
@@ -2768,9 +2997,9 @@ static int upatch_attach(const struct signed_load *sl)
 {
 	int ret;
 
-	ret = attach_and_pin_progs(sl->cx, sl->prog_desc_off,
-				   sl->u->hdr.nr_progs, sl->upatch_name,
-				   sl->prog_specs);
+	ret = attach_and_pin_progs(sl->cx, sl->u->hdr.nr_maps,
+				   sl->prog_desc_off, sl->u->hdr.nr_progs,
+				   sl->upatch_name, sl->prog_specs);
 	if (!ret)
 		return 0;
 	rep_fail(sl->rep, "link_create", cat_from_attach_err(ret),
@@ -4748,6 +4977,9 @@ static int upatch_get_collect(const char *want, struct upatch_get_ctx *c)
 		strscpy_literal(c->location, "?");
 	c->missed_ret = upatch_each_link_misses(vbtf, want, keep_link_misses, c);
 	btf__free(vbtf);
+	/* The link of a struct_ops map holds the map, not one program. */
+	if (!c->prog_id)
+		return 0;
 
 	prog_fd = bpf_prog_get_fd_by_id(c->prog_id);
 	if (prog_fd < 0)
@@ -5047,10 +5279,10 @@ static const struct help_section upatch_reconcile_sections[] = {
 
 static const struct help upatch_reconcile_help = {
 	.usage   = "shirudo upatch reconcile [--report=<path>]",
-	.summary = "Attach each loaded XDP upatch to the devices its signed "
-		   "classes select\nand that it is not attached to yet, and "
-		   "remove the pins of devices that\nare gone. One pass; udev "
-		   "and a timer run it.",
+	.summary = "Attach each loaded XDP and TCX upatch to the devices its "
+		   "signed classes\nand filter select and that it is not "
+		   "attached to yet, and remove the\npins of devices that are "
+		   "gone. One pass; udev and a timer run it.",
 	.sections   = upatch_reconcile_sections,
 	.n_sections = ARRAY_SIZE(upatch_reconcile_sections),
 };
@@ -5176,7 +5408,7 @@ static int collect_one(const char *name, void *ctx)
 			 "cannot read the pins of an upatch");
 		return 1;
 	}
-	if (ret || !pins.nr_xdp_progs)
+	if (ret || (!pins.nr_xdp_progs && !pins.nr_tcx_progs))
 		return 0;
 	grown = xreallocarray(c->work, c->nr, c->nr + 1, sizeof(*c->work));
 	if (!grown) {
@@ -5232,8 +5464,10 @@ static int scan_link(__u32 index, const char *pin,
 		     const struct bpf_link_info *info, void *ctx)
 {
 	struct link_scan *scan = ctx;
+	bool gone = (info->type == BPF_LINK_TYPE_XDP && !info->xdp.ifindex) ||
+		    (info->type == BPF_LINK_TYPE_TCX && !info->tcx.ifindex);
 
-	if (info->type == BPF_LINK_TYPE_XDP && !info->xdp.ifindex) {
+	if (gone) {
 		scan->dead = true;
 		if (scan->collect) {
 			int grant __cleanup(pin_grant_close) = -1;
@@ -5244,7 +5478,9 @@ static int scan_link(__u32 index, const char *pin,
 				return grant;
 			if (unlink(pin))
 				return -errno;
-			pr_info("XDP: removed %s, its device is gone", pin);
+			pr_info("%s: removed %s, its device is gone",
+				info->type == BPF_LINK_TYPE_TCX ? "TCX" : "XDP",
+				pin);
 			return 0;
 		}
 	}
@@ -5323,6 +5559,53 @@ static int reconcile_device(int prog_fd, const struct prog_spec *spec,
 	return reconcile_attach(prog_fd, p->name, spec, dev, p->next, p->rep);
 }
 
+static int reconcile_tcx_attach(int prog_fd, const char *name,
+				const struct prog_spec *spec,
+				const struct xdp_device *dev, __u32 *next,
+				struct op_report *rep)
+{
+	char dir[PATH_MAX], pin[PATH_MAX + 32];
+	int ret;
+
+	if (*next == UINT32_MAX ||
+	    upatch_pin_path(dir, sizeof(dir), name, NULL) ||
+	    upatch_link_pin(pin, sizeof(pin), dir, *next)) {
+		rep_fail(rep, "link_create", "unknown", ENAMETOOLONG,
+			 "no pin name left for the link");
+		return 1;
+	}
+	ret = tcx_attach_one(prog_fd, spec, dev, pin);
+	if (!ret) {
+		(*next)++;
+		pr_audit("TCX: upatch=%s attached device=%s ifindex=%u class=%u",
+			 name, dev->name, dev->ifindex, xdp_device_class(dev));
+	} else if (ret == -EACCES || ret == -EPERM) {
+		rep_fail(rep, "link_create", "lsm_denied", ret,
+			 "the guards refused the TCX link");
+		return 1;
+	} else if (ret == XDP_ERR_LINK_SCOPE) {
+		rep_fail(rep, "link_create", "attach_scope_mismatch",
+			 xdp_attach_errno(ret), xdp_attach_strerror(ret));
+		return 1;
+	} else if (!xdp_attach_skippable(ret, dev)) {
+		pr_warn("TCX: upatch %s: attach %s (ifindex %u): %s", name,
+			dev->name, dev->ifindex, xdp_attach_strerror(ret));
+	}
+	return 0;
+}
+
+static int reconcile_tcx_device(int prog_fd, const struct prog_spec *spec,
+				const struct xdp_device *dev, void *ctx)
+{
+	struct reconcile_pass *p = ctx;
+
+	*p->needed = true;
+	if (!p->next)
+		return 0;
+	return reconcile_tcx_attach(prog_fd, p->name, spec, dev, p->next,
+				    p->rep);
+}
+
 /*
  * With next NULL only says whether a device needs attaching, or that the
  * pins need a look under the register lock.
@@ -5338,6 +5621,11 @@ static int reconcile_walk(const struct xdp_work *w,
 
 	ret = upatch_xdp_each_uncovered(w->name, w->specs, w->u.hdr.nr_progs,
 					devices, count, reconcile_device, &pass);
+	if (ret == 0)
+		ret = upatch_tcx_each_uncovered(w->name, w->specs,
+						w->u.hdr.nr_progs, devices,
+						count, reconcile_tcx_device,
+						&pass);
 	if (ret >= 0)
 		return ret;
 	if (!next) {

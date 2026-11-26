@@ -6,6 +6,8 @@
 #include <stddef.h>
 #include <string.h>
 
+#include <shirudo/string.h>
+
 #include "unit.h"
 #include "upatch.h"
 
@@ -636,6 +638,82 @@ static void observe_mode_matches_the_signed_section(void)
 	EXPECT_EQ(upatch_open_memory(&f, sizeof(f), &u), -EBADMSG);
 }
 
+static void prog_specs_take_a_struct_ops_program_without_a_site(void)
+{
+	struct upatch_prog_entry prog = {};
+	struct prog_spec *specs = NULL;
+	__u8 buf[ONE_PROG_LEN];
+
+	one_raw_tracepoint(buf, 2);
+	prog.role = cpu_to_le32(UPATCH_PROG_ROLE_STRUCT_OPS);
+	memcpy(buf + sizeof(struct upatch_prog_metadata), &prog, sizeof(prog));
+	ASSERT_EQ(prog_specs_parse(buf, sizeof(buf), 2, 1, &specs), 0);
+	ASSERT_TRUE(specs);
+	EXPECT_UEQ(specs[0].role, UPATCH_PROG_ROLE_STRUCT_OPS);
+	prog_specs_free(specs, 1);
+
+	strscpy_literal(prog.target, "tcp_congestion_ops");
+	memcpy(buf + sizeof(struct upatch_prog_metadata), &prog, sizeof(prog));
+	EXPECT_EQ(prog_specs_parse(buf, sizeof(buf), 2, 1, &specs), -EINVAL);
+	EXPECT_FALSE(specs);
+
+	memset(&prog, 0, sizeof(prog));
+	prog.role = cpu_to_le32(UPATCH_PROG_ROLE_STRUCT_OPS);
+	prog.kind = cpu_to_le32(UPATCH_ATTACH_KPROBE);
+	memcpy(buf + sizeof(struct upatch_prog_metadata), &prog, sizeof(prog));
+	EXPECT_EQ(prog_specs_parse(buf, sizeof(buf), 2, 1, &specs), -EINVAL);
+	EXPECT_FALSE(specs);
+}
+
+static void tcx_programs_chain_and_accept_netdev_filters(void)
+{
+	__u8 buf[sizeof(struct upatch_prog_metadata) +
+		 2 * sizeof(struct upatch_prog_entry)] = {};
+	struct upatch_prog_metadata md = {
+		.magic = cpu_to_le32(UPATCH_PROG_MAGIC),
+		.version = cpu_to_le32(UPATCH_PROG_VERSION),
+		.nr_progs = cpu_to_le32(2),
+	};
+	struct upatch_prog_entry p0 = {}, p1 = {};
+	struct prog_spec *specs = NULL;
+
+	/* Two TCX programs sharing device classes in one upatch succeed. */
+	p0.role = cpu_to_le32(UPATCH_PROG_ROLE_ATTACH);
+	p0.kind = cpu_to_le32(UPATCH_ATTACH_TCX_INGRESS);
+	p0.xdp.device_classes = cpu_to_le32(UPATCH_XDP_ALL);
+	strscpy_literal(p0.target, "ifname=eth*");
+
+	p1.role = cpu_to_le32(UPATCH_PROG_ROLE_ATTACH);
+	p1.kind = cpu_to_le32(UPATCH_ATTACH_TCX_EGRESS);
+	p1.xdp.device_classes = cpu_to_le32(UPATCH_XDP_ALL);
+	strscpy_literal(p1.target, "driver=mlx5*");
+
+	memcpy(buf, &md, sizeof(md));
+	memcpy(buf + sizeof(md), &p0, sizeof(p0));
+	memcpy(buf + sizeof(md) + sizeof(p0), &p1, sizeof(p1));
+	ASSERT_EQ(prog_specs_parse(buf, sizeof(buf), 0, 2, &specs), 0);
+	EXPECT_UEQ(specs[0].kind, UPATCH_ATTACH_TCX_INGRESS);
+	EXPECT_UEQ(specs[0].device_classes, UPATCH_XDP_ALL);
+	EXPECT_STREQ(specs[0].target, "ifname=eth*");
+	EXPECT_UEQ(specs[1].kind, UPATCH_ATTACH_TCX_EGRESS);
+	EXPECT_STREQ(specs[1].target, "driver=mlx5*");
+	prog_specs_free(specs, 2);
+
+	/* TCX and XDP sharing a class in one upatch also succeed. */
+	p1.kind = cpu_to_le32(UPATCH_ATTACH_XDP);
+	memcpy(buf + sizeof(md) + sizeof(p0), &p1, sizeof(p1));
+	ASSERT_EQ(prog_specs_parse(buf, sizeof(buf), 0, 2, &specs), 0);
+	EXPECT_UEQ(specs[1].kind, UPATCH_ATTACH_XDP);
+	EXPECT_STREQ(specs[1].target, "driver=mlx5*");
+	prog_specs_free(specs, 2);
+
+	/* Invalid filter syntax is refused. */
+	memset(p0.target, 0, sizeof(p0.target));
+	strscpy_literal(p0.target, "ifname=a/b");
+	memcpy(buf + sizeof(md), &p0, sizeof(p0));
+	EXPECT_EQ(prog_specs_parse(buf, sizeof(buf), 0, 2, &specs), -EINVAL);
+}
+
 static const struct unit_case cases[] = {
 	UNIT_CASE(prog_specs_take_the_signed_counts),
 	UNIT_CASE(prog_specs_refuse_another_header_count),
@@ -659,6 +737,8 @@ static const struct unit_case cases[] = {
 	UNIT_CASE(java_header_carries_no_loader),
 	UNIT_CASE(one_signature_keeps_its_sections_in_one_split),
 	UNIT_CASE(observe_mode_matches_the_signed_section),
+	UNIT_CASE(prog_specs_take_a_struct_ops_program_without_a_site),
+	UNIT_CASE(tcx_programs_chain_and_accept_netdev_filters),
 	{}
 };
 

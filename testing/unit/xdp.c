@@ -375,6 +375,77 @@ static void kernel_discovery_revalidates_devices(void)
 	xfree(devices, count * sizeof(*devices));
 }
 
+static void device_filters_are_validated(void)
+{
+	char long_filter[UPATCH_ATTACH_TARGET_MAX + 2];
+
+	EXPECT_TRUE(xdp_device_filter_valid(""));
+	EXPECT_TRUE(xdp_device_filter_valid("ifname=eth*"));
+	EXPECT_TRUE(xdp_device_filter_valid("ifname=enp?s0f0"));
+	EXPECT_TRUE(xdp_device_filter_valid("driver=mlx5*"));
+	EXPECT_TRUE(xdp_device_filter_valid("driver=virtio_net"));
+
+	EXPECT_FALSE(xdp_device_filter_valid(NULL));
+	EXPECT_FALSE(xdp_device_filter_valid("eth0"));
+	EXPECT_FALSE(xdp_device_filter_valid("ifname="));
+	EXPECT_FALSE(xdp_device_filter_valid("driver="));
+	EXPECT_FALSE(xdp_device_filter_valid("ifname=."));
+	EXPECT_FALSE(xdp_device_filter_valid("ifname=.."));
+	EXPECT_FALSE(xdp_device_filter_valid("driver=."));
+	EXPECT_FALSE(xdp_device_filter_valid("driver=.."));
+	EXPECT_FALSE(xdp_device_filter_valid("ifname=eth0/1"));
+	EXPECT_FALSE(xdp_device_filter_valid("ifname=eth0,eth1"));
+	EXPECT_FALSE(xdp_device_filter_valid("ifname=eth0|eth1"));
+	EXPECT_FALSE(xdp_device_filter_valid("ifname=eth 0"));
+	EXPECT_FALSE(xdp_device_filter_valid("driver=mlx5\n"));
+
+	memcpy(long_filter, "ifname=", 7);
+	memset(long_filter + 7, 'a', sizeof(long_filter) - 8);
+	long_filter[UPATCH_ATTACH_TARGET_MAX - 1] = '\0';
+	EXPECT_TRUE(xdp_device_filter_valid(long_filter));
+	long_filter[UPATCH_ATTACH_TARGET_MAX - 1] = 'a';
+	long_filter[UPATCH_ATTACH_TARGET_MAX] = '\0';
+	EXPECT_FALSE(xdp_device_filter_valid(long_filter));
+}
+
+static void device_globs_match_ifname_and_driver(void)
+{
+	struct xdp_device devs[3] = {};
+
+	memcpy(devs[0].name, "eth0", sizeof("eth0"));
+	memcpy(devs[0].driver, "mlx5_core", sizeof("mlx5_core"));
+	memcpy(devs[0].parent_bus, "pci", sizeof("pci"));
+	devs[0].ifindex = 2;
+
+	memcpy(devs[1].name, "ens3f0", sizeof("ens3f0"));
+	memcpy(devs[1].driver, "ice", sizeof("ice"));
+	memcpy(devs[1].parent_bus, "pci", sizeof("pci"));
+	devs[1].ifindex = 3;
+
+	memcpy(devs[2].name, "lo", sizeof("lo"));
+	devs[2].flags = IFF_LOOPBACK;
+	devs[2].ifindex = 1;
+
+	EXPECT_TRUE(xdp_device_match_glob(&devs[0], ""));
+	EXPECT_TRUE(xdp_device_match_glob(&devs[0], "ifname=eth*"));
+	EXPECT_TRUE(xdp_device_match_glob(&devs[0], "ifname=eth?"));
+	EXPECT_FALSE(xdp_device_match_glob(&devs[0], "ifname=ens*"));
+	EXPECT_TRUE(xdp_device_match_glob(&devs[0], "driver=mlx5*"));
+	EXPECT_TRUE(xdp_device_match_glob(&devs[0], "driver=mlx5_core"));
+	EXPECT_FALSE(xdp_device_match_glob(&devs[0], "driver=ice"));
+
+	EXPECT_TRUE(xdp_device_selected_filtered(devs, 3, 0, UPATCH_XDP_NETWORK,
+						 ""));
+	EXPECT_TRUE(xdp_device_selected_filtered(devs, 3, 0, UPATCH_XDP_NETWORK,
+						 "ifname=eth*"));
+	EXPECT_FALSE(xdp_device_selected_filtered(devs, 3, 1, UPATCH_XDP_NETWORK,
+						  "ifname=eth*"));
+	EXPECT_TRUE(xdp_device_selected_filtered(devs, 3, 1, UPATCH_XDP_NETWORK,
+						 "driver=ice"));
+	EXPECT_FALSE(xdp_device_selected_filtered(devs, 3, 2, UPATCH_XDP_ALL,
+						  "ifname=lo"));
+}
+
 static const struct unit_case cases[] = {
 	UNIT_CASE(classes_are_exclusive),
 	UNIT_CASE(netdevsim_is_virtual_whatever_its_port_says),
@@ -395,6 +466,8 @@ static const struct unit_case cases[] = {
 	UNIT_CASE(link_messages_are_checked),
 	UNIT_CASE(the_network_namespace_is_known),
 	UNIT_CASE(kernel_discovery_revalidates_devices),
+	UNIT_CASE(device_filters_are_validated),
+	UNIT_CASE(device_globs_match_ifname_and_driver),
 	{}
 };
 

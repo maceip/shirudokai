@@ -280,6 +280,12 @@ signed config image.
        ``cgroup_ids`` through ``bpm info data --json``, refuses malformed
        TOML rules in ``gen_policy.py``, and passes the ``bpf_`` Coccinelle
        rules alongside ``web-worker-guard.bpf.c``
+   * - ``t3019-dataplane-tcx-structops``
+     - ``tcx/ingress`` and ``tcx/egress`` sections with named and decimal
+       device classes, ``ifname=`` and ``driver=`` glob filters on TCX and
+       XDP, multi-TCX chaining in one upatch, ``struct_ops`` upatches in
+       ``.struct_ops.link``, and refusal of malformed sections and maps
+       outside ``.struct_ops.link``
    * - ``t3101-target-fixtures``
      - Prebuilt fixtures load and unload, foreign and own-keyring
        fixtures are refused, a map fixture exports

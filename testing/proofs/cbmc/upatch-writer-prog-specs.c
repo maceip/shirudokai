@@ -219,6 +219,7 @@ struct bpf_map {
 	__u32	key_size;
 	__u32	value_size;
 	__u32	max_entries;
+	__u32	map_flags;
 };
 
 /* The programs, two maps of any name and the serializers' output map. */
@@ -282,6 +283,11 @@ __u32 bpf_map__value_size(const struct bpf_map *map)
 __u32 bpf_map__max_entries(const struct bpf_map *map)
 {
 	return map->max_entries;
+}
+
+__u32 bpf_map__map_flags(const struct bpf_map *map)
+{
+	return map->map_flags;
 }
 
 void pr_err(const char *fmt, ...)
