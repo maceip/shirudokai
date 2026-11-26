@@ -1,19 +1,24 @@
 # app-sandbox
 
 The `app-sandbox` package installs the `app-sandbox` upatch, which puts
-applications in sandboxes. A sandbox restricts every task that executed
-one of its files, and the tasks those start, in three things:
+applications, pod workloads and autonomous LLM agents in sandboxes. A
+sandbox restricts every task that executed one of its files (optionally
+narrowed to specific Kubernetes Pod cgroup v2 IDs), and the tasks those
+start, in:
 
 - what it executes: its own files and those of the policies it names;
-- where it connects and sends: the networks it names;
-- which files it creates, renames and opens for writing or truncates:
-  none whose name matches a pattern it denies.
+- which socket families it creates (`inet`, `inet6`, `unix`, `netlink`,
+  `vsock`) and whether it may invoke `ptrace`;
+- where it connects and sends: IPv4/IPv6 CIDR allow and deny lists,
+  TCP/UDP destination port allow and deny lists, and UNIX domain socket
+  path/name denylists;
+- which files it creates, renames, opens for reading, opens for writing
+  or truncates: none whose name matches a pattern it denies.
 
-The package ships sandboxes for Apache httpd and PHP-FPM that keep a web
-application from writing the PHP files it serves, from starting other
-programs and from reaching beyond private networks: what an attacker
-who found a hole in the application does first. Replace them with
-sandboxes for your own applications.
+The package ships default web sandboxes in `sandbox.toml` for Apache
+httpd and PHP-FPM, plus `llm-agent.toml` for autonomous LLM agent
+runtimes. Replace or override them with sandboxes for your own
+applications.
 
 Its tree entry names the PHP2Shell advisories, CVE-2026-109618 and
 CVE-2026-109619, as `fixes`, so that a backend that reads the tree
@@ -44,7 +49,8 @@ The last component of a path may be a pattern, as in
 `/usr/sbin/php-fpm*` for the PHP-FPM of any version: the target labels
 every regular file of the directory that matches it.
 
-`sandbox.toml` gives the rules of the sandbox of that name:
+`sandbox.toml` (or an override such as `llm-agent.toml`) gives the rules
+of the sandbox of that name:
 
 ```toml
 [networks]
@@ -52,42 +58,80 @@ localnet = ["127.0.0.0/8", "10.0.0.0/8", "::1/128"]
 
 [sandbox.apache]
 exec = ["apache-helpers"]
+families = ["inet", "inet6", "unix"]
 network = ["@localnet", "192.0.2.10/32"]
+ports = [80, 443, "tcp/3306", "udp/53"]
+cgroup_ids = [4294967399]
+deny_ptrace = true
 
 [sandbox.apache.deny]
+network = ["169.254.169.254/32"]
+ports = [22, "tcp/25"]
+unix = ["docker.sock", "*/docker.sock"]
 create = ["*.php"]
 rename = ["*.php"]
 write = ["*.php"]
+read = ["*.pem", "*credentials*"]
 ```
 
 | Key | Without it | With it |
 |---|---|---|
+| `cgroup_ids` | Every task carrying the policy bit is confined. | Only tasks whose cgroup v2 ID (`bpf_get_current_cgroup_id()`) matches one of the listed 64-bit IDs are confined by this sandbox on a shared node. |
 | `exec` | The task executes anything. | It executes only files labeled with its own policy or with one of the policy IDs listed, each a `[[upatches.policy]]` table of the Beefile. `exec = []` allows its own files alone. |
-| `network` | The task connects anywhere. | It connects and sends only to the networks listed, IPv4 or IPv6 in CIDR form, or `@<name>` for a list of `[networks]`. An IPv4 network also covers its IPv4-mapped IPv6 form. It creates no raw and no packet socket. `network = []` allows no IP peer. |
+| `families` | Socket families are not filtered (except raw/packet when IP/port rules apply). | `socket()` allows only the listed families (`inet`, `inet6`, `unix`, `netlink`, `vsock`). |
+| `network` | The task connects to any IP address not in `deny.network`. | It connects and sends only to the networks listed, IPv4 or IPv6 in CIDR form, or `@<name>` for a list of `[networks]`. An IPv4 network also covers its IPv4-mapped IPv6 form. It creates no raw and no packet socket. `network = []` allows no IP peer. |
+| `ports` | Any TCP/UDP destination port not in `deny.ports` is allowed. | `connect()` and `sendmsg()` allow only the listed ports or ranges (`443`, `"8000-8080"`, `"tcp/443"`, `"udp/53"`). |
+| `deny_ptrace` | `ptrace` keeps normal kernel checks. | When `true`, `lsm/ptrace_access_check` refuses `ptrace` from the sandbox. |
+| `deny.network` | | Refuses `connect()` and `sendmsg()` to matching IPv4/IPv6 CIDRs (takes precedence over `network`) and blocks raw/packet sockets. |
+| `deny.ports` | | Refuses `connect()` and `sendmsg()` to matching TCP/UDP destination ports or ranges (takes precedence over `ports`). |
+| `deny.unix` | | Refuses `unix_stream_connect` and `unix_may_send` to UNIX sockets matching a basename pattern (no `/`) or full path/abstract `@name` pattern (with `/`). |
 | `deny.create` | | It creates no file, directory, device, symbolic link or hard link with a matching name. |
 | `deny.rename` | | It renames no file from or to a matching name. |
 | `deny.write` | | It opens no file with a matching name for writing and does not truncate one. |
+| `deny.read` | | It opens no file with a matching name for reading (`FMODE_READ`), gated by `read_enforced` so sandboxes without `deny.read` exit immediately on read opens. |
 
-A pattern is matched against the last component of the path. It is the
-name itself, or holds one `*` for any run of bytes, and `?` for any one
-byte, with at most 32 bytes on each side of the `*`.
+A file pattern is matched against the last component of the path. It is
+the name itself, `prefix*suffix` with at most one `*` and up to 32 bytes
+on each side, or `*substring*` (up to 32 bytes, matched within the first
+64 bytes of the name), with `?` matching any one byte.
 
 A script is executed with its interpreter, and the kernel asks for
 both: a sandbox with `exec` runs a script only when the script and its
 interpreter are each labeled with a policy the sandbox allows.
 
-The package holds up to 32 sandboxes with `exec`, 128 networks and 64
-patterns. A task in two sandboxes, one that executed files of both, is
-held to the rules of each.
+The package holds up to 32 sandboxes, 32 pod cgroup IDs, 128 network
+entries, 64 port rules and 64 file/UNIX patterns. A task in two
+sandboxes, one that executed files of both, is held to the rules of
+each.
 
-`gen_policy.py` turns `sandbox.toml` into the `sandbox_policy` variable
-of the upatch when `shirudo bpm build` runs, and fails the build for a
-sandbox the Beefile declares no policy for, a network or a pattern it
-cannot read and a table it does not know. Read back what a build holds
-with:
+## Autonomous LLM agent profile (`llm-agent.toml`)
+
+`llm-agent.toml` confines autonomous LLM agent runtimes (`/usr/local/bin/llm-agent*`):
+
+- restricts socket families to `["inet", "inet6", "unix"]`;
+- blocks cloud IMDS (`169.254.169.254/32` and `fd00:ec2::254/128`);
+- denies reading credential and secret files (`*.pem`, `id_rsa*`,
+  `id_ed25519*`, `.env*`, `*credentials*`, `token`);
+- denies connecting to container-runtime UNIX sockets (`docker.sock`,
+  `*/docker.sock`, `*containerd*`, `crio.sock`);
+- denies `ptrace` (`deny_ptrace = true`).
+
+Build the LLM agent profile with:
 
 ```sh
-shirudo bpm info data app-sandbox-<version>.bee upatches/app-sandbox.upatch
+shirudo bpm build upatches/app-sandbox --version 1.0.0 \
+	--rodata-input sandbox=upatches/app-sandbox/llm-agent.toml \
+	--keys-dir <keys>
+```
+
+`gen_policy.py` turns the input TOML into the `sandbox_policy` variable
+of the upatch when `shirudo bpm build` runs, and fails the build for a
+sandbox the Beefile declares no policy for, a network, port, cgroup ID
+or pattern it cannot read and a table or key it does not know. Read back
+what a build holds with:
+
+```sh
+shirudo bpm info data app-sandbox-<version>.bee upatches/app-sandbox.upatch --json
 ```
 
 ## Build and publish
@@ -147,11 +191,13 @@ walks through it.
   without the label, whether a path or a pattern named it. Load the upatch again after the application is
   installed or upgraded.
 - The file rules name files, not their contents: a descriptor that was
-  open for writing before the task entered the sandbox, or that another
-  process passes to it, still writes.
-- The network rules cover `connect()` and the address of `sendmsg()`
-  and `sendto()` on IPv4 and IPv6 sockets. Other address families pass,
-  and so does what a task receives or accepts.
+  open before the task entered the sandbox, or that another process
+  passes to it, keeps its open mode.
+- The IP network and port rules cover `connect()` and the address of
+  `sendmsg()` and `sendto()` on IPv4 and IPv6 sockets; `families` covers
+  `socket()`, and `deny.unix` covers `unix_stream_connect` and
+  `unix_may_send`. What a task receives or accepts on an already bound
+  listening socket passes.
 - Root outside a sandbox can remove nothing of it, as only shirudo's
   runtime sets the label, but a task that root starts from an unlabeled
   file is in no sandbox.
@@ -162,9 +208,7 @@ The programs keep no state of their own: they read the task's policy
 bits and the rules, which never change after the load, so they are
 right on every preemption model.
 
-A task in no sandbox pays one task-storage lookup at each hook, and
-none when it opens a file for reading. The hooks are the LSM hooks of
-`execve()`, `connect()`, `sendmsg()`, `socket()`, the creation, linking
-and renaming of a directory entry, an open for writing and a change of
-size. A task in a sandbox pays a scan of the rules on top: at most 128
-networks, or 64 patterns of at most 64 bytes.
+A task in no sandbox pays at most one task-storage lookup at an active
+hook, and none on read-only `file_open`, `ptrace_access_check`, UNIX
+socket hooks or non-raw `socket()` unless a loaded sandbox enables the
+corresponding gate in `sandbox_policy`.
