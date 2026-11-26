@@ -58,8 +58,8 @@ Options
      - TCG endorsement policy template: ``l1`` selects the standard
        low-range policy
        (``837197674484b3f81a90cc8d46a5d724fd52d76e06520b64f2a1da1b331469aa``),
-       ``l2`` the high-range B-1/B-2 policy
-       (``b26e7d28d11a50bc53d882bcf5fd3a1a074148bb35d3b4e4cb1c0a9bd416ca11``).
+       ``l2`` the high-range SHA-256 policy, PolicyB
+       (``ca3d0a99a2b93906f7a3342414efcfb3a385d44cd1fd459089d19b5071c0b7a0``).
        Defaults to ``l1`` for SPKI inputs and to the embedded policy for
        ``TPM2B_PUBLIC`` inputs.
    * - ``--json``
