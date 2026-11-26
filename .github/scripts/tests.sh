@@ -65,6 +65,9 @@ setup() {
 	fi
 	testing/vm/kernel-artifact.sh stage "$KERNEL_CI_ARTIFACT_DIR" || exit 1
 
+	# shellcheck source=testing/vm/arch.sh
+	. testing/vm/arch.sh
+
 	# spatch opens libpython3.X.so by that name for the Python of its
 	# rules, and only the -dev package installs it.
 	set -- rpm coccinelle libpython3-dev
@@ -74,7 +77,7 @@ setup() {
 	if [ "${VM:-1}" != 0 ]; then
 		set -- "$@" autoconf autoconf-archive automake cloud-image-utils \
 			dracut-core file isc-dhcp-client libguestfs-tools libltdl-dev \
-			libtool libzstd-dev qemu-system-x86 qemu-utils swtpm \
+			libtool libzstd-dev "$TEST_VM_ARCH_QEMU_DEB" qemu-utils swtpm \
 			swtpm-tools tpm2-tools libtss2-tcti-swtpm0t64
 	fi
 	mkdir -p build
