@@ -85,7 +85,7 @@ static int render(const char *directory, const char *nonce)
 	ret = config_update_open(directory, &ops, NULL, &update);
 	if (!ret)
 		ret = attest_evidence_config(bytes, nonce_length,
-					     CHAIN_PCR_MASK,
+					     CHAIN_PCR_MASK, false,
 					     NULL, &update, &document,
 					     &length, &capacity);
 	if (!ret)

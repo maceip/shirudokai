@@ -638,7 +638,7 @@ int main(int argc, char **argv)
 			return 2;
 		}
 		ret = attest_evidence_config(nonce, nonce_len,
-					     ATTEST_PCR_DEFAULT,
+					     ATTEST_PCR_DEFAULT, false,
 					     argc == 4 ? &challenge : NULL,
 					     NULL, &doc, &len, &cap);
 		if (ret) {

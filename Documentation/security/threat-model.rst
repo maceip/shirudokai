@@ -1922,8 +1922,8 @@ R10 Endorsement key trust
    unless the certificate chains to the issuers given with
    ``--ek-ca``, the key matches a cloud-published endorsement public key
    given with ``--ek-pub`` (PEM or DER SPKI or raw/base64
-   ``TPM2B_PUBLIC`` from AWS NitroTPM, GCP Shielded VM or Azure Trusted
-   Launch), the key is pinned with ``--ek-name`` from an inventory or
+   ``TPM2B_PUBLIC`` from AWS NitroTPM or GCP Shielded VM; Azure
+   publishes none), the key is pinned with ``--ek-name`` from an inventory or
    ``shirudo attest ek-name``, or the operator waives the check with
    ``--trust-presented-ek``, which proves only that the same party
    answers each time. Virtual TPMs usually have no in-band certificate;
