@@ -67,17 +67,17 @@ repositories from its signed config image and refuses local key changes.
 kernel-cve
 ----------
 
-:src:`upatches/kernel-cve/` holds three detectors, each in
-``sources/<slug>/observability/``, a ``vmlinux.h``, ``manifest.json``
-with one record per detector, and one Beefile per detector,
-``<detector>.bee``. The manifest names the kernel the detectors were
-loaded on, ``7.2.0-shirudo-7.2``.
+:src:`upatches/kernel-cve/` holds four detectors in
+``sources/<slug>/observability/``, two mitigations in
+``sources/<slug>/mitigation/``, ``manifest.json``, and one Beefile per
+shield, ``<shield>.bee``. Each source compiles with CO-RE against the
+target's ``vmlinux.h`` and maps ``__x86_64__``, ``__aarch64__`` and
+``__riscv`` to the ``__TARGET_ARCH_*`` macro ``bpf_tracing.h`` reads.
 
-Each Beefile builds a package named after its detector with one upatch
+Each Beefile builds a package named after its shield with one upatch
 and one ``[upatches.tree]`` entry of the same name. The entry's
-``fixes`` names the detector's CVE, and its selector the kernel of the
-manifest: release prefix ``7.2``, its build ID, ``x86_64`` and the
-Kconfig option of the driver or protocol the detector watches. They are
+``fixes`` names the CVE, and its selector names the Kconfig option of
+the driver, qdisc, protocol or subsystem the shield guards. They are
 the shields :src:`tools/put-shields` publishes, as
 :doc:`/upatches/publish/publishing` shows.
 
@@ -91,6 +91,10 @@ the shields :src:`tools/put-shields` publishes, as
    * - ``cve-2025-71093-e1000-tbi-detector.bpf.c``
      - ``kprobe/e1000_tbi_should_accept``
      - the frame length is 0
+   * - ``cve-2026-31431-copyfail-detector.bpf.c``
+     - ``lsm/socket_sendmsg``, ``fexit/aead_recvmsg``
+     - an ``AF_ALG`` socket fed by ``MSG_SPLICE_PAGES`` fails in
+       ``aead_recvmsg``
    * - ``cve-2026-31675-netem-detector.bpf.c``
      - ``kprobe/netem_enqueue``
      - the packet's linear head is empty
@@ -99,32 +103,30 @@ the shields :src:`tools/put-shields` publishes, as
      - ``n + 1`` exceeds 127, the bound the fix introduces
 
 Each detector counts every call in a per-CPU ``activity`` counter and the
-calls that match its predicate in ``hits``. None of them refuses
-anything. They are ``kprobe`` programs and define
-``__TARGET_ARCH_x86``, so they need a target with ``CONFIG_KPROBES`` and
-``CONFIG_KPROBE_EVENTS`` on x86-64. ``manifest.json`` marks every
-predicate as ``source_derived_unvalidated``: derived from the fix, not
+calls that match its predicate in ``hits`` with atomic increments safe
+under preemptible RCU. None of them refuses anything. The ``kprobe``
+detectors need a target with ``CONFIG_KPROBES`` and
+``CONFIG_KPROBE_EVENTS``. ``manifest.json`` marks the campaign
+predicates as ``source_derived_unvalidated``: derived from the fix, not
 checked against an exploit.
 
-:doc:`/upatches/learn/kernel-fix-tutorial` takes the third detector from its fix
+:doc:`/upatches/learn/kernel-fix-tutorial` takes the RPL detector from its fix
 to a package, as an ``fentry`` program.
 
-The directory also holds a mitigation, which the manifest does not
-list: ``cve-2026-31431-af-alg-block.bee`` builds
+The directory also holds two mitigations for CVE-2026-31431:
+``cve-2026-31431-af-alg-block.bee`` builds
 ``sources/cve-2026-31431-crypto-algif-aead-copy-fail/mitigation/cve-2026-31431-af-alg-block.bpf.c``
-into a package of the same shape, with ``fixes`` naming CVE-2026-31431.
-Its one program, at ``lsm/socket_create``, refuses every ``AF_ALG``
-socket with ``EPERM``. That keeps the ``algif_aead`` code the CVE is in
-out of reach, and with it every other use of the kernel's crypto
-algorithms through sockets, so a target that needs those cannot take
-it. The program reads only the hook's arguments, keeps no state and
-loads on every architecture; its selector is the Kconfig option
-``CONFIG_CRYPTO_USER_API_AEAD`` alone. :src:`tools/put-shields`
-publishes it with the detectors. Beside the source a reproducer,
-``reproducer/cve-2026-31431-repro.py``, splices a file's page cache
-through a pipe into an ``AF_ALG`` aead socket and reports whether the
-bug corrupted it; ``t3115-af-alg-block`` drives it to check the
-mitigation refuses the socket.
+to refuse every ``AF_ALG`` socket at ``lsm/socket_create`` with
+``EPERM``, while ``cve-2026-31431-alg-splice-block.bee`` builds
+``sources/cve-2026-31431-crypto-algif-aead-copy-fail/mitigation/cve-2026-31431-alg-splice-block.bpf.c``
+to refuse only ``MSG_SPLICE_PAGES`` sends on ``AF_ALG`` sockets at
+``lsm/socket_sendmsg`` with ``EACCES``. Both select
+``CONFIG_CRYPTO_USER_API_AEAD`` alone and load on every architecture.
+:src:`tools/put-shields` publishes them with the detectors. Beside the
+sources, ``reproducer/cve-2026-31431-repro.py`` splices a file's page
+cache through a pipe into an ``AF_ALG`` aead socket and reports whether
+the bug corrupted it; ``t3115-af-alg-block`` drives it to check the
+socket mitigation.
 
 app-sandbox
 -----------
