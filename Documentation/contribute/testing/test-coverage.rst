@@ -255,6 +255,14 @@ signed config image.
        unload directive inspected by ``bpm info`` and ``upatch info``,
        maps ``__x86_64__``, ``__aarch64__`` and ``__riscv`` to
        ``__TARGET_ARCH_*``, and passes the ``bpf_`` Coccinelle rules
+   * - ``t3017-runtime-shields``
+     - ``SqlLexer`` passes its deterministic state-machine self-tests
+       without external dependencies, ``java-runtime-guard`` builds a
+       signed ``.bee`` package with pure JDK tools and passes
+       ``RuntimeGuardTest`` under ``-javaagent`` across JNDI,
+       deserialization and shell guards in observe and enforce modes, and
+       ``web-worker-guard`` builds a signed BPF LSM ``.bee`` package that
+       passes the ``bpf_`` Coccinelle rules
    * - ``t3101-target-fixtures``
      - Prebuilt fixtures load and unload, foreign and own-keyring
        fixtures are refused, a map fixture exports
