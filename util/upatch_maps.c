@@ -2479,3 +2479,184 @@ out:
 		ringbuf_batch_free(out);
 	return ret;
 }
+
+static bool shield_btf_uint_width(const struct btf *btf, __u32 type_id,
+				  __u32 *width_out)
+{
+	const struct btf_type *t;
+	__u32 enc;
+
+	if (!btf || !type_id)
+		return false;
+	t = btf__type_by_id(btf, btf_unwrap(btf, type_id));
+	if (!t || BTF_INFO_KIND(t->info) != BTF_KIND_INT)
+		return false;
+	if (t->size != 1 && t->size != 2 && t->size != 4 && t->size != 8)
+		return false;
+	enc = *(const __u32 *)(t + 1);
+	if ((BTF_INT_ENCODING(enc) & BTF_INT_SIGNED) ||
+	    BTF_INT_OFFSET(enc) != 0 || BTF_INT_BITS(enc) != t->size * 8)
+		return false;
+	*width_out = t->size;
+	return true;
+}
+
+static __u64 shield_sum_percpu_field(const struct map_view *v,
+				     const void *values_per_cpu,
+				     __u32 byte_off, __u32 width)
+{
+	__u32 stride = upatch_map_value_stride(v), cpu, b;
+	__u64 sum = 0;
+
+	for (cpu = 0; cpu < v->n_cpus; cpu++) {
+		const __u8 *p = (const __u8 *)values_per_cpu +
+				(size_t)cpu * stride + byte_off;
+		__u64 one = 0;
+
+		for (b = 0; b < width; b++)
+			one |= (__u64)p[b] << (8 * b);
+		sum += one;
+	}
+	return sum;
+}
+
+static int shield_summary_from_struct(const struct map_view *v,
+				      const struct btf_type *st,
+				      struct shield_hits_summary *out)
+{
+	const struct btf_member *m = (const struct btf_member *)(st + 1);
+	__u32 hits_off = 0, hits_w = 0, act_off = 0, act_w = 0, i;
+	int idx, vlen = BTF_INFO_VLEN(st->info);
+
+	for (idx = 0; idx < vlen; idx++) {
+		__u32 bit_off = BTF_INFO_KFLAG(st->info) ?
+				BTF_MEMBER_BIT_OFFSET(m[idx].offset) :
+				m[idx].offset;
+		__u32 bit_sz = BTF_INFO_KFLAG(st->info) ?
+			       BTF_MEMBER_BITFIELD_SIZE(m[idx].offset) : 0;
+		const char *fname = btf__name_by_offset(v->btf, m[idx].name_off);
+		__u32 byte_off = bit_off / 8, w = 0, end;
+
+		if (!fname)
+			continue;
+		if (strcmp(fname, "hits") != 0 &&
+		    strcmp(fname, "activity") != 0)
+			continue;
+		if (bit_sz || bit_off % 8 != 0 ||
+		    !shield_btf_uint_width(v->btf, m[idx].type, &w) ||
+		    check_add_overflow(byte_off, w, &end) ||
+		    end > v->value_size)
+			return -EOPNOTSUPP;
+		if (strcmp(fname, "hits") == 0) {
+			out->has_hits = true;
+			hits_off = byte_off;
+			hits_w = w;
+		} else {
+			out->has_activity = true;
+			act_off = byte_off;
+			act_w = w;
+		}
+	}
+	if (!out->has_hits && !out->has_activity)
+		return -EOPNOTSUPP;
+	for (i = 0; i < v->n_entries; i++) {
+		if (!v->entries || !v->entries[i].value)
+			return -EINVAL;
+		if (out->has_hits)
+			out->hits += shield_sum_percpu_field(v,
+							     v->entries[i].value,
+							     hits_off, hits_w);
+		if (out->has_activity)
+			out->activity += shield_sum_percpu_field(v,
+								 v->entries[i].value,
+								 act_off, act_w);
+	}
+	return 0;
+}
+
+int upatch_shield_hits_summary(const struct map_view *v,
+			       struct shield_hits_summary *out)
+{
+	bool is_hits, is_activity, is_stats;
+	__u32 stride, i;
+
+	if (!v || !out)
+		return -EINVAL;
+	memset(out, 0, sizeof(*out));
+	is_hits = strcmp(v->name, "hits") == 0;
+	is_activity = strcmp(v->name, "activity") == 0;
+	is_stats = strcmp(v->name, "shield_stats") == 0;
+	if (!is_hits && !is_activity && !is_stats)
+		return -ENOENT;
+	if (v->skipped || v->serialized || v->truncated ||
+	    !upatch_map_is_percpu(v->type) || !v->n_cpus)
+		return -EOPNOTSUPP;
+	stride = upatch_map_value_stride(v);
+	if (stride < v->value_size)
+		return -EINVAL;
+
+	if (is_stats && v->btf && v->value_type_id) {
+		const struct btf_type *t;
+
+		t = btf__type_by_id(v->btf, btf_unwrap(v->btf, v->value_type_id));
+		if (t && BTF_INFO_KIND(t->info) == BTF_KIND_STRUCT)
+			return shield_summary_from_struct(v, t, out);
+	}
+
+	if (v->value_size != 1 && v->value_size != 2 &&
+	    v->value_size != 4 && v->value_size != 8)
+		return -EOPNOTSUPP;
+	if (v->btf && v->value_type_id) {
+		__u32 w = 0;
+
+		if (!shield_btf_uint_width(v->btf, v->value_type_id, &w) ||
+		    w != v->value_size)
+			return -EOPNOTSUPP;
+	}
+
+	if (is_hits || is_activity) {
+		__u64 total = 0;
+
+		for (i = 0; i < v->n_entries; i++) {
+			if (!v->entries || !v->entries[i].value)
+				return -EINVAL;
+			total += shield_sum_percpu_field(v, v->entries[i].value,
+							 0, v->value_size);
+		}
+		if (is_hits) {
+			out->has_hits = true;
+			out->hits = total;
+		} else {
+			out->has_activity = true;
+			out->activity = total;
+		}
+		return 0;
+	}
+
+	if (!v->max_entries || v->max_entries > 2 || v->n_entries > 2)
+		return -EOPNOTSUPP;
+	out->has_hits = true;
+	if (v->max_entries == 2)
+		out->has_activity = true;
+	for (i = 0; i < v->n_entries; i++) {
+		__u32 slot = i;
+		__u64 val;
+
+		if (!v->entries || !v->entries[i].value)
+			return -EINVAL;
+		if (v->entries[i].key && v->key_size == sizeof(__u32))
+			memcpy(&slot, v->entries[i].key, sizeof(slot));
+		val = shield_sum_percpu_field(v, v->entries[i].value, 0,
+					      v->value_size);
+		if (slot == 0) {
+			out->has_hits = true;
+			out->hits += val;
+		} else if (slot == 1) {
+			out->has_activity = true;
+			out->activity += val;
+		} else {
+			return -EOPNOTSUPP;
+		}
+	}
+	return 0;
+}

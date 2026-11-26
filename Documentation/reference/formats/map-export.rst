@@ -107,9 +107,17 @@ Signal selection
      - Export
    * - Has a decoder
      - The signal the decoder declares, log or metric.
-   * - No decoder, unsigned per-CPU integer value
-     - Classified as a metric. Metrics come only from decoders, so the
-       export fails with ``ENODATA``.
+   * - No decoder, per-CPU shield counter map (``hits``, ``activity`` or
+       ``shield_stats``)
+     - Classified as a metric and exported natively as cumulative
+       monotonic ``Sum`` metrics ``shirudo.shield.hits`` and/or
+       ``shirudo.shield.activity`` (unit ``1``, ``startTimeUnixNano``
+       from the pin directory creation time, with attributes
+       ``shirudo.upatch.name``, ``shirudo.upatch.location``,
+       ``shirudo.map.name`` and ``shirudo.upatch.payload_sha256``).
+   * - No decoder, any other unsigned per-CPU integer value
+     - Classified as a metric. Metrics for non-shield maps come only
+       from decoders, so the export fails with ``ENODATA``.
    * - No decoder, any other map
      - Log record with the undecoded body.
 

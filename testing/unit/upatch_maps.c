@@ -7,6 +7,7 @@
  */
 
 #include <errno.h>
+#include <linux/bpf.h>
 #include <linux/btf.h>
 #include <string.h>
 
@@ -230,10 +231,115 @@ static void ringbuf_batch_bounding_and_validation(void)
 				      false, &batch), -EINVAL);
 }
 
+struct shield_stats_val {
+	__u64	hits;
+	__u64	activity;
+};
+
+static void shield_hits_summary_percpu_and_struct(void)
+{
+	struct shield_hits_summary sum = {};
+	struct map_entry entries[2] = {};
+	struct map_view v = {};
+	__u32 k0 = 0, k1 = 1;
+	__u8 cpu_u32_0[16] = {}, cpu_u32_1[16] = {};
+	struct shield_stats_val st_cpu[2] = {
+		{ .hits = 11, .activity = 100 },
+		{ .hits = 29, .activity = 250 },
+	};
+	__u32 c0 = 7, c1 = 9, a0 = 30, a1 = 12, poison = 0xdeadbeef;
+	int u32_id, s32_id, u64_id, st_id;
+	struct btf *btf;
+
+	memcpy(cpu_u32_0, &c0, 4);
+	memcpy(cpu_u32_0 + 4, &poison, 4);
+	memcpy(cpu_u32_0 + 8, &c1, 4);
+	memcpy(cpu_u32_1, &a0, 4);
+	memcpy(cpu_u32_1 + 8, &a1, 4);
+
+	btf = btf__new_empty();
+	ASSERT_TRUE(btf);
+	u32_id = btf__add_int(btf, "__u32", 4, 0);
+	s32_id = btf__add_int(btf, "__s32", 4, BTF_INT_SIGNED);
+	u64_id = btf__add_int(btf, "__u64", 8, 0);
+	st_id = btf__add_struct(btf, "shield_stats_val", sizeof(st_cpu[0]));
+	ASSERT_TRUE(u32_id > 0 && s32_id > 0 && u64_id > 0 && st_id > 0);
+	ASSERT_EQ(btf__add_field(btf, "hits", u64_id, 0, 0), 0);
+	ASSERT_EQ(btf__add_field(btf, "activity", u64_id, 64, 0), 0);
+
+	entries[0].key = &k0;
+	entries[0].value = cpu_u32_0;
+	entries[1].key = &k1;
+	entries[1].value = cpu_u32_1;
+
+	v.type = BPF_MAP_TYPE_PERCPU_ARRAY;
+	v.type_name = "percpu_array";
+	v.key_size = 4;
+	v.value_size = 4;
+	v.value_stride = 8;
+	v.max_entries = 1;
+	v.n_entries = 1;
+	v.n_cpus = 2;
+	v.btf = btf;
+	v.key_type_id = (__u32)u32_id;
+	v.value_type_id = (__u32)u32_id;
+	v.entries = entries;
+
+	/* Standard per-CPU `hits` and `activity` maps sum across CPUs. */
+	memcpy(v.name, "hits", 5);
+	ASSERT_EQ(upatch_shield_hits_summary(&v, &sum), 0);
+	ASSERT_TRUE(sum.has_hits && !sum.has_activity);
+	ASSERT_UEQ(sum.hits, 16u);
+
+	memcpy(v.name, "activity", 9);
+	entries[0].value = cpu_u32_1;
+	ASSERT_EQ(upatch_shield_hits_summary(&v, &sum), 0);
+	ASSERT_TRUE(!sum.has_hits && sum.has_activity);
+	ASSERT_UEQ(sum.activity, 42u);
+	entries[0].value = cpu_u32_0;
+
+	/* Non-shield map names return -ENOENT, preserving generic policy. */
+	memcpy(v.name, "hits_total", 11);
+	ASSERT_EQ(upatch_shield_hits_summary(&v, &sum), -ENOENT);
+
+	/* Signed values and non-per-CPU maps are rejected. */
+	memcpy(v.name, "hits", 5);
+	v.value_type_id = (__u32)s32_id;
+	ASSERT_EQ(upatch_shield_hits_summary(&v, &sum), -EOPNOTSUPP);
+	v.value_type_id = (__u32)u32_id;
+	v.type = BPF_MAP_TYPE_ARRAY;
+	ASSERT_EQ(upatch_shield_hits_summary(&v, &sum), -EOPNOTSUPP);
+	v.type = BPF_MAP_TYPE_PERCPU_ARRAY;
+
+	/* 2-slot scalar `shield_stats` array exports hits + activity. */
+	memcpy(v.name, "shield_stats", 13);
+	v.max_entries = 2;
+	v.n_entries = 2;
+	ASSERT_EQ(upatch_shield_hits_summary(&v, &sum), 0);
+	ASSERT_TRUE(sum.has_hits && sum.has_activity);
+	ASSERT_UEQ(sum.hits, 16u);
+	ASSERT_UEQ(sum.activity, 42u);
+
+	/* BTF struct `shield_stats` sums both fields across CPUs. */
+	entries[0].value = st_cpu;
+	v.max_entries = 1;
+	v.n_entries = 1;
+	v.value_size = sizeof(st_cpu[0]);
+	v.value_stride = sizeof(st_cpu[0]);
+	v.value_type_id = (__u32)st_id;
+	ASSERT_EQ(upatch_shield_hits_summary(&v, &sum), 0);
+	ASSERT_TRUE(sum.has_hits && sum.has_activity);
+	ASSERT_UEQ(sum.hits, 40u);
+	ASSERT_UEQ(sum.activity, 350u);
+
+	btf__free(btf);
+}
+
 static const struct unit_case cases[] = {
 	UNIT_CASE(ringbuf_btf_resolve_and_format),
 	UNIT_CASE(ringbuf_untyped_and_short_records),
 	UNIT_CASE(ringbuf_batch_bounding_and_validation),
+	UNIT_CASE(shield_hits_summary_percpu_and_struct),
 	{}
 };
 
