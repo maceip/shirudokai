@@ -8,9 +8,17 @@
 #       --keys-dir <keys>
 
 [networks]
+# Instance metadata of AWS, Azure, GCP and OpenStack at 169.254.169.254,
+# the ECS task and EKS Pod Identity credential endpoints, Alibaba Cloud
+# and Oracle Cloud.
 cloud_imds = [
 	"169.254.169.254/32",
 	"fd00:ec2::254/128",
+	"169.254.170.2/32",
+	"169.254.170.23/32",
+	"fd00:ec2::23/128",
+	"100.100.100.200/32",
+	"192.0.0.192/32",
 ]
 
 [sandbox.llm-agent]

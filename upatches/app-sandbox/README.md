@@ -76,7 +76,7 @@ read = ["*.pem", "*credentials*"]
 
 | Key | Without it | With it |
 |---|---|---|
-| `cgroup_ids` | Every task carrying the policy bit is confined. | Only tasks whose cgroup v2 ID (`bpf_get_current_cgroup_id()`) matches one of the listed 64-bit IDs are confined by this sandbox on a shared node. |
+| `cgroup_ids` | Every task carrying the policy bit is confined. | Only tasks in one of the listed cgroups, or below one, are confined by this sandbox on a shared node. Each entry is the 64-bit ID of a cgroup v2 directory, a Pod's or a container's, which is its inode number (`stat -c %i /sys/fs/cgroup/<path>`). The task's own cgroup and its ancestors down to 12 levels below the root are compared; a task of this policy in no listed cgroup, or under one nested deeper than that, is **not** confined. The IDs are signed into the package and a cgroup gets a new one each time it is created, so a restarted Pod needs a package built with its new ID. |
 | `exec` | The task executes anything. | It executes only files labeled with its own policy or with one of the policy IDs listed, each a `[[upatches.policy]]` table of the Beefile. `exec = []` allows its own files alone. |
 | `families` | Socket families are not filtered (except raw/packet when IP/port rules apply). | `socket()` allows only the listed families (`inet`, `inet6`, `unix`, `netlink`, `vsock`). |
 | `network` | The task connects to any IP address not in `deny.network`. | It connects and sends only to the networks listed, IPv4 or IPv6 in CIDR form, or `@<name>` for a list of `[networks]`. An IPv4 network also covers its IPv4-mapped IPv6 form. It creates no raw and no packet socket. `network = []` allows no IP peer. |
@@ -109,12 +109,21 @@ each.
 `llm-agent.toml` confines autonomous LLM agent runtimes (`/usr/local/bin/llm-agent*`):
 
 - restricts socket families to `["inet", "inet6", "unix"]`;
-- blocks cloud IMDS (`169.254.169.254/32` and `fd00:ec2::254/128`);
+- blocks the cloud metadata and credential endpoints: instance metadata
+  (`169.254.169.254/32`, `fd00:ec2::254/128`), the ECS task and EKS Pod
+  Identity endpoints (`169.254.170.2/32`, `169.254.170.23/32`,
+  `fd00:ec2::23/128`), Alibaba Cloud (`100.100.100.200/32`) and Oracle
+  Cloud (`192.0.0.192/32`);
 - denies reading credential and secret files (`*.pem`, `id_rsa*`,
   `id_ed25519*`, `.env*`, `*credentials*`, `token`);
 - denies connecting to container-runtime UNIX sockets (`docker.sock`,
   `*/docker.sock`, `*containerd*`, `crio.sock`);
 - denies `ptrace` (`deny_ptrace = true`).
+
+It has no `exec` rule, so the agent executes any file. A package built
+from this input holds the `llm-agent` sandbox alone: the Apache and
+PHP-FPM sandboxes of `sandbox.toml` are not in it, and a target that
+takes it in place of the default package no longer confines them.
 
 Build the LLM agent profile with:
 
