@@ -780,26 +780,40 @@ out:
 
 static void *fips_provider;
 
+/*
+ * The fips provider holds the algorithms and nothing that reads a key
+ * or a certificate from DER or PEM: those decoders are the base
+ * provider's, and with the default provider out of use nothing else
+ * has them. Both stay loaded for the life of the process.
+ */
 int crypto_fips_init(void)
 {
-	void *prov;
+	void *fips, *base;
 
 	if (fips_provider && crypto_fips_enabled())
 		return 0;
-	prov = OSSL_PROVIDER_load(NULL, "fips");
-	if (!prov) {
+	fips = OSSL_PROVIDER_load(NULL, "fips");
+	if (!fips) {
 		openssl_complain("OSSL_PROVIDER_load(fips)");
 		ERR_clear_error();
+		return -ENOPKG;
+	}
+	base = OSSL_PROVIDER_load(NULL, "base");
+	if (!base) {
+		openssl_complain("OSSL_PROVIDER_load(base)");
+		ERR_clear_error();
+		OSSL_PROVIDER_unload(fips);
 		return -ENOPKG;
 	}
 	if (EVP_default_properties_enable_fips(NULL, 1) != 1 ||
 	    EVP_default_properties_is_fips_enabled(NULL) != 1) {
 		openssl_complain("EVP_default_properties_enable_fips");
 		ERR_clear_error();
-		OSSL_PROVIDER_unload(prov);
+		OSSL_PROVIDER_unload(base);
+		OSSL_PROVIDER_unload(fips);
 		return -ENOPKG;
 	}
-	fips_provider = prov;
+	fips_provider = fips;
 	return 0;
 }
 
