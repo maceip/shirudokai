@@ -156,8 +156,14 @@ ifeq ($(COVERAGE),1)
 CFLAGS_BASE += --coverage -fprofile-abs-path -fprofile-update=atomic
 endif
 
+# OpenSSL's FIPS provider is a module the library loads at run time.
+# The target links a static OpenSSL built with no-module, which can load
+# none, so a target built with FIPS=1 would refuse to start.
 FIPS ?= 0
 ifeq ($(FIPS),1)
+ifeq ($(PROFILE),target)
+$(error FIPS=1 is not supported for the static target: its OpenSSL cannot load the FIPS provider)
+endif
 CFLAGS_BASE += -DSHIRUDO_FIPS=1
 endif
 
