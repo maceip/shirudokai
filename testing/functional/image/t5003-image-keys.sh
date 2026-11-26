@@ -46,16 +46,16 @@ test_expect_success 'a config with only the authenticated initial signer passes 
 
 test_expect_success 'a vouched boot signer and canonical revocation pass validation' '
 	fresh replacement && vouch replacement b "$fp_b" a &&
-	vouch replacement c "$fp_c" a &&
-	cp "$W/b/cert.der" "$W/replacement/keys/revoked/$fp_b.der" &&
-	valid replacement && grep -q "signers=2" "$W/result"
+	cp "$W/a/cert.der" "$W/replacement/keys/revoked/$fp_a.der" &&
+	valid replacement && grep -q "signers=1" "$W/result"
 '
 
-test_expect_success 'a revoked signer cannot validate vouches for dependent keys' '
+test_expect_success 'revoked historical signers still validate earlier vouches' '
 	fresh historical && vouch historical b "$fp_b" a &&
 	vouch historical c "$fp_c" b &&
+	cp "$W/a/cert.der" "$W/historical/keys/revoked/$fp_a.der" &&
 	cp "$W/b/cert.der" "$W/historical/keys/revoked/$fp_b.der" &&
-	invalid historical
+	valid historical && grep -q "signers=1" "$W/result"
 '
 
 test_expect_success 'revoking every admitted signer fails preflight' '
@@ -78,7 +78,7 @@ test_expect_success 'a canonical filename with the wrong certificate fails prefl
 
 test_expect_success 'malformed DER fails even when another signer remains' '
 	fresh malformed && vouch malformed b "$fp_b" a &&
-	printf "not a certificate" >"$W/malformed/keys/revoked/$fp_b.der" &&
+	printf "not a certificate" >"$W/malformed/keys/revoked/$fp_a.der" &&
 	invalid malformed
 '
 

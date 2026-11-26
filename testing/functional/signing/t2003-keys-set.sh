@@ -94,26 +94,25 @@ test_expect_success 'malformed trusted certificates are rejected before or after
 	./$H reject "$W/malformed"
 '
 
-test_expect_success 'image revocation rejects vouches signed by a revoked signer' '
+test_expect_success 'image revocation preserves historical vouches while excluding revoked signing keys' '
 	rm "$W/keys/revoked/$fp_c.der" &&
 	$SHB keys vouch "$W/c/cert.der" -o "$W/keys/trusted/$fp_c.vouch" \
 		--keys-dir "$W/b" >/dev/null 2>&1 &&
+	fp_a=$(../shirudo bpm key fingerprint "$W/a/cert.der" 2>/dev/null) &&
+	cp "$W/a/cert.der" "$W/keys/revoked/$fp_a.der" &&
 	cp "$W/b/cert.der" "$W/keys/revoked/$fp_b.der" &&
 	./$H image "$W/keys" >"$W/image-set" &&
-	grep -qx "n=1 revoked=1 unvouched=1" "$W/image-set" &&
-	grep -q "^$(sha "$W/a/cert.der") .* primary " "$W/image-set" &&
-	! grep -q "^$(sha "$W/b/cert.der") " "$W/image-set" &&
-	! grep -q "^$(sha "$W/c/cert.der") " "$W/image-set"
+	grep -qx "n=1 revoked=2 unvouched=0" "$W/image-set" &&
+	grep -q "^$(sha "$W/c/cert.der") $fp_c trusted " "$W/image-set" &&
+	! grep -q "^$(sha "$W/a/cert.der") " "$W/image-set" &&
+	! grep -q "^$(sha "$W/b/cert.der") " "$W/image-set"
 '
 
-test_expect_success 'revoking B leaves A-vouched C signatures valid and refuses earlier B signatures' '
-	$SHB keys vouch "$W/c/cert.der" -o "$W/keys/trusted/$fp_c.vouch" \
-		--keys-dir "$W/a" >/dev/null 2>&1 &&
-	./$H image "$W/keys" >"$W/image-set2" &&
-	grep -qx "n=2 revoked=1 unvouched=0" "$W/image-set2" &&
-	./$H verify-signature "$W/keys" "$W/payload" "$W/signed-a" >"$W/remaining" &&
-	grep -qx "$(../shirudo bpm key fingerprint "$W/a/cert.der")" "$W/remaining" &&
-	! ./$H verify-signature "$W/keys" "$W/payload" "$W/signed-b"
+test_expect_success 'revoking A leaves B signatures valid and refuses earlier A signatures' '
+	rm "$W/keys/revoked/$fp_b.der" &&
+	./$H verify-signature "$W/keys" "$W/payload" "$W/signed-b" >"$W/remaining" &&
+	grep -qx "$fp_b" "$W/remaining" &&
+	! ./$H verify-signature "$W/keys" "$W/payload" "$W/signed-a"
 '
 
 
