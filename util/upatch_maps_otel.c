@@ -173,12 +173,18 @@ int upatch_maps_otel_classify(const struct map_view *v,
 			      enum otel_signal *signal,
 			      char *reason, size_t reason_sz)
 {
+	struct shield_hits_summary shield;
 	struct metric_type mt;
 	const char *why;
 
 	if (!v || !signal)
 		return -EINVAL;
 	*signal = OTEL_LOG;
+	if (upatch_shield_hits_summary(v, &shield) == 0) {
+		*signal = OTEL_METRIC;
+		return strscpy(reason, "trusted shield counter map",
+			       reason_sz) < 0 ? -E2BIG : 0;
+	}
 	why = otel_log_reason(v, &mt);
 	if (why)
 		return strscpy(reason, why, reason_sz) < 0 ? -E2BIG : 0;
@@ -546,6 +552,83 @@ int upatch_maps_otel_build_log_file(const char *path,
 	return build_log_payload(path, v, 0, out, out_len);
 }
 
+static void emit_shield_counter_metric(struct json_emit *e,
+				       const struct map_view *v,
+				       const char *metric_name,
+				       __u64 value, const char *now_ns)
+{
+	char val_str[32], start_str[32];
+	char payload_hex[2 * UPATCH_PAYLOAD_HASH_LEN + 1];
+
+	u64_decimal(value, val_str);
+	json_obj_open(e);
+	json_kv_string(e, "name", metric_name);
+	json_kv_string(e, "unit", "1");
+	json_obj_open_key(e, "sum");
+	json_kv_int(e, "aggregationTemporality", 2);
+	json_kv_bool(e, "isMonotonic", true);
+	json_arr_open(e, "dataPoints");
+	json_obj_open(e);
+	if (v->lifetime_start_ns) {
+		u64_decimal(v->lifetime_start_ns, start_str);
+		json_kv_string(e, "startTimeUnixNano", start_str);
+	}
+	json_kv_string(e, "timeUnixNano", now_ns);
+	json_kv_string(e, "asInt", val_str);
+	json_arr_open(e, "attributes");
+	otlp_kv_string(e, "shirudo.upatch.name", v->upatch);
+	otlp_kv_string(e, "shirudo.upatch.location", v->location);
+	otlp_kv_string(e, "shirudo.map.name", v->name);
+	if (v->has_payload) {
+		hex_encode(v->payload, sizeof(v->payload), payload_hex);
+		otlp_kv_string(e, "shirudo.upatch.payload_sha256", payload_hex);
+	}
+	json_arr_close(e);
+	json_obj_close(e);
+	json_arr_close(e);
+	json_obj_close(e);
+	json_obj_close(e);
+}
+
+int upatch_maps_otel_build_shield_metrics(const struct map_view *v,
+					  char **out, size_t *out_len)
+{
+	struct shield_hits_summary shield;
+	struct json_emit e = {};
+	char now_ns[32];
+	char *buf;
+	int ret;
+
+	if (!v || !out || !out_len)
+		return -EINVAL;
+	ret = upatch_shield_hits_summary(v, &shield);
+	if (ret)
+		return ret;
+	buf = xmalloc(JSON_MAX_BYTES);
+	if (!buf)
+		return -ENOMEM;
+	u64_decimal(realtime_ns(), now_ns);
+	e.buf = buf;
+	e.cap = JSON_MAX_BYTES;
+	otlp_open(&e, "resourceMetrics", "scopeMetrics", "shirudo.upatch.maps");
+	json_arr_open(&e, "metrics");
+	if (shield.has_hits)
+		emit_shield_counter_metric(&e, v, "shirudo.shield.hits",
+					   shield.hits, now_ns);
+	if (shield.has_activity)
+		emit_shield_counter_metric(&e, v, "shirudo.shield.activity",
+					   shield.activity, now_ns);
+	json_arr_close(&e);
+	otlp_close(&e);
+	if (e.err) {
+		xfree(buf, JSON_MAX_BYTES);
+		return e.err;
+	}
+	*out = buf;
+	*out_len = e.len;
+	return 0;
+}
+
 static int build_metric_decoded_payload(const char *path,
 					const struct map_view *v,
 					char **out, size_t *out_len)
@@ -558,6 +641,13 @@ static int build_metric_decoded_payload(const char *path,
 	ret = path ? upatch_decode_map_file_json(path, v,
 							&decoded, &decoded_len) :
 		upatch_decode_map_json(v, &decoded, &decoded_len);
+	if (ret == -ENODATA && !path) {
+		struct shield_hits_summary shield;
+
+		if (upatch_shield_hits_summary(v, &shield) == 0)
+			return upatch_maps_otel_build_shield_metrics(v, out,
+								     out_len);
+	}
 	if (ret)
 		return ret;
 	decoded_buf = decoded;

@@ -177,4 +177,14 @@ int  upatch_ringbuf_read(const char *upatch, const char *map,
 			 __u32 max_records, __u32 timeout_ms, bool json,
 			 struct ringbuf_batch *out);
 
+struct shield_hits_summary {
+	bool	has_hits;
+	bool	has_activity;
+	__u64	hits;
+	__u64	activity;
+};
+
+int  upatch_shield_hits_summary(const struct map_view *v,
+				struct shield_hits_summary *out);
+
 #endif /* SHIRUDO_UTIL_UPATCH_MAPS_H */
