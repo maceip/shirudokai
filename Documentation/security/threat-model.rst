@@ -1735,7 +1735,7 @@ undo the seal (T3).
    private bpffs; ``ENOMEM`` from a creation by shirudo that cannot be
    recorded
 :Counters: ``ObjGet``, ``MapFdWrite``, ``LoadNotLoader``, ``BpfCommand``
-:Tests: ``t5006``
+:Tests: ``t5006``, ``t6160``
 :Residual: R25
 
 Residual risks
