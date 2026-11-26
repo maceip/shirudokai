@@ -20,6 +20,8 @@
 #include <openssl/evp.h>
 
 #include <linux/bpf.h>
+#include <linux/btf.h>
+#include <bpf/btf.h>
 #include <bpf/libbpf.h>
 
 #include <shirudo/misc.h>
@@ -1986,6 +1988,95 @@ static int write_artifact(const char *out_path, const struct upatch_header *hdr,
 }
 
 /*
+ * In observe mode, rewrite `const volatile __u32 shirudo_observe_mode` in
+ * .rodata to 1 before loader generation so the signed loader data and
+ * payload_sha256 cover the rewritten value.
+ */
+static int rewrite_observe_rodata(struct bpf_object *obj)
+{
+	const struct btf_var_secinfo *vars;
+	__le32 mode_val = cpu_to_le32(1);
+	const struct btf_type *sec;
+	struct bpf_map *rodata;
+	const struct btf *btf;
+	const __u8 *init_val;
+	size_t rodata_sz = 0;
+	bool found = false;
+	__s32 sec_id;
+	__u8 *copy;
+	__u32 i;
+	int err;
+
+	rodata = find_rodata(obj);
+	btf = bpf_object__btf(obj);
+	if (!rodata || !btf)
+		return 0;
+	sec_id = btf__find_by_name_kind(btf, ".rodata", BTF_KIND_DATASEC);
+	if (sec_id <= 0)
+		return 0;
+	sec = btf__type_by_id(btf, (__u32)sec_id);
+	if (!sec || BTF_INFO_KIND(sec->info) != BTF_KIND_DATASEC)
+		return -EINVAL;
+	init_val = bpf_map__initial_value(rodata, &rodata_sz);
+	if (!init_val || rodata_sz < sec->size)
+		return -EINVAL;
+	vars = (const struct btf_var_secinfo *)(sec + 1);
+	for (i = 0; i < BTF_INFO_VLEN(sec->info); i++) {
+		const struct btf_type *var, *vt;
+		__u32 off, sz, end, tid, depth;
+		const char *name;
+
+		var = btf__type_by_id(btf, vars[i].type);
+		if (!var || BTF_INFO_KIND(var->info) != BTF_KIND_VAR)
+			continue;
+		name = btf__name_by_offset(btf, var->name_off);
+		if (!name || strcmp(name, "shirudo_observe_mode") != 0)
+			continue;
+		if (found)
+			return -EEXIST;
+		off = vars[i].offset;
+		sz = vars[i].size;
+		tid = var->type;
+		for (depth = 0; depth < 8 && tid; depth++) {
+			vt = btf__type_by_id(btf, tid);
+			if (!vt)
+				break;
+			if (BTF_INFO_KIND(vt->info) == BTF_KIND_TYPEDEF ||
+			    BTF_INFO_KIND(vt->info) == BTF_KIND_VOLATILE ||
+			    BTF_INFO_KIND(vt->info) == BTF_KIND_CONST ||
+			    BTF_INFO_KIND(vt->info) == BTF_KIND_RESTRICT ||
+			    BTF_INFO_KIND(vt->info) == BTF_KIND_TYPE_TAG)
+				tid = vt->type;
+			else
+				break;
+		}
+		vt = btf__type_by_id(btf, tid);
+		if (sz != sizeof(__u32) || !vt ||
+		    (BTF_INFO_KIND(vt->info) != BTF_KIND_INT &&
+		     BTF_INFO_KIND(vt->info) != BTF_KIND_ENUM) ||
+		    vt->size != sizeof(__u32)) {
+			pr_err("shirudo_observe_mode in .rodata must be a 32-bit integer");
+			return -EINVAL;
+		}
+		if (check_add_overflow(off, sz, &end) || end > rodata_sz)
+			return -EINVAL;
+		copy = xmalloc(rodata_sz);
+		if (!copy)
+			return -ENOMEM;
+		memcpy(copy, init_val, rodata_sz);
+		memcpy(copy + off, &mode_val, sizeof(mode_val));
+		err = bpf_map__set_initial_value(rodata, copy, rodata_sz);
+		xfree(copy, rodata_sz);
+		if (err) {
+			pr_err("set_initial_value(.rodata): %d", err);
+			return err;
+		}
+		found = true;
+	}
+	return 0;
+}
+
+/*
  * Takes ownership of obj. src_path anchors relative decoder paths;
  * NULL for a .bpf.o input or an unload directive.
  */
@@ -1999,6 +2090,7 @@ static int finalize_object(struct bpf_object *obj, const char *out_path,
 	struct signed_section sections[UPATCH_SIGNED_SECTIONS_MAX];
 	__u32 loader_off, sig_off, data_off, data_len, attach_meta_len = 0;
 	__u32 decoder_blob_len = 0, signed_data_len = 0, nr_sections = 0;
+	__le32 signed_mode = cpu_to_le32(UPATCH_MODE_OBSERVE);
 	char signed_name[UPATCH_NAME_MAX] = {};
 	__u32 nr_maps = 0, nr_progs = 0;
 	__u32 rodata_data_off = 0;
@@ -2052,6 +2144,11 @@ static int finalize_object(struct bpf_object *obj, const char *out_path,
 		free_decoder_set(&decoders);
 		if (err)
 			goto out;
+		if (flags & DIRECTIVE_OBSERVE) {
+			err = rewrite_observe_rodata(obj);
+			if (err)
+				goto out;
+		}
 	}
 
 	opts.gen_hash = true;
@@ -2113,6 +2210,11 @@ static int finalize_object(struct bpf_object *obj, const char *out_path,
 			sections[nr_sections++] = (struct signed_section){
 				UPATCH_SECTION_POLICY_LABELS,
 				policy_labels, policy_labels_len,
+			};
+		if (flags & DIRECTIVE_OBSERVE)
+			sections[nr_sections++] = (struct signed_section){
+				UPATCH_SECTION_MODE, &signed_mode,
+				sizeof(signed_mode),
 			};
 	}
 	err = compose_signed_data(opts.data, (__u32)opts.data_sz, sections,
@@ -2185,11 +2287,12 @@ static int finalize_object(struct bpf_object *obj, const char *out_path,
 		goto out;
 
 	pr_info("wrote %s (insns=%u sig=%zu data=%u sections=%u maps=%u "
-		"progs=%u decoders=%u name=%s%s)",
+		"progs=%u decoders=%u name=%s%s%s)",
 		out_path, opts.insns_sz, sio.signature_sz, data_len,
 		nr_sections, nr_maps, nr_progs, nr_decoders,
 		upatch_name,
-		(flags & DIRECTIVE_UNLOAD) ? " UNLOAD" : "");
+		(flags & DIRECTIVE_UNLOAD) ? " UNLOAD" : "",
+		(flags & DIRECTIVE_OBSERVE) ? " OBSERVE" : "");
 out:
 	xfree(loader_data_buf, loader_data_len);
 	free_decoder_set(&decoders);
@@ -2211,11 +2314,11 @@ static int check_upatch_name(const char *name)
 	return -EINVAL;
 }
 
-int build_package_load(const char *bpf_o, const char *src_path,
-		       const char *out_path, const char *upatch_name,
-		       const struct upatch_policy_label_entry *policies,
-		       __u32 nr_policies,
-		       const char *pkey_path, const char *cert_path)
+int build_package_load_mode(const char *bpf_o, const char *src_path,
+			    const char *out_path, const char *upatch_name,
+			    const struct upatch_policy_label_entry *policies,
+			    __u32 nr_policies, bool observe,
+			    const char *pkey_path, const char *cert_path)
 {
 	__u32 label_len = 0, policy_map_idx = 0, socket_policy_map_idx = 0;
 	struct upatch_policy_label_header *label_blob = NULL;
@@ -2309,7 +2412,8 @@ int build_package_load(const char *bpf_o, const char *src_path,
 		memcpy(label_blob + 1, policies,
 		       label_len - sizeof(*label_blob));
 	}
-	err = finalize_object(obj, out_path, upatch_name, 0, NULL, src_path,
+	err = finalize_object(obj, out_path, upatch_name,
+			      observe ? DIRECTIVE_OBSERVE : 0, NULL, src_path,
 			      label_blob, label_len, pkey_path, cert_path);
 	obj = NULL;
 out:
@@ -2317,6 +2421,17 @@ out:
 	xfree(label_blob, label_len);
 	unregister_target_attach_types(handler_ids);
 	return err;
+}
+
+int build_package_load(const char *bpf_o, const char *src_path,
+		       const char *out_path, const char *upatch_name,
+		       const struct upatch_policy_label_entry *policies,
+		       __u32 nr_policies,
+		       const char *pkey_path, const char *cert_path)
+{
+	return build_package_load_mode(bpf_o, src_path, out_path, upatch_name,
+				       policies, nr_policies, false, pkey_path,
+				       cert_path);
 }
 
 /* Locate the BPF .rodata map. libbpf names it "<objname>.rodata". */

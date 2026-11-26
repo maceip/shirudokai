@@ -46,6 +46,7 @@ enum build_opt {
 	BUILD_UNLOAD,
 	BUILD_PAYLOAD_SHA256,
 	BUILD_JAVA,
+	BUILD_OBSERVE,
 	BUILD_EMIT_ARTIFACTS,
 };
 
@@ -76,6 +77,9 @@ static const struct opt_spec build_opts[] = {
 	[BUILD_JAVA] = { "--java", 0, 0, NULL,
 		"with --unload and --payload-sha256, sign the directive of a "
 		"Java upatch, which the archive tells otherwise" },
+	[BUILD_OBSERVE] = { "--observe", 0, 0, NULL,
+		"sign the BPF load upatch in observe mode and set "
+		"shirudo_observe_mode in .rodata to 1 before signing" },
 	[BUILD_EMIT_ARTIFACTS] = { "--emit-artifacts", 0, 0, NULL,
 		"keep the compiled .bpf.o beside the .upatch and print each "
 		"path written" },
@@ -86,7 +90,7 @@ static const struct help_section build_sections[] = {
 };
 
 static const struct help build_help = {
-	.usage	    = "shirudo build <input.bpf.c|.bpf.o|.jar> "
+	.usage	    = "shirudo build [--observe] <input.bpf.c|.bpf.o|.jar> "
 		      "[-o <output.upatch>] [options]\n"
 		      "       shirudo build --unload <upatch-name> "
 		      "[-o <output.upatch>] [options]",
@@ -200,6 +204,7 @@ int main(int argc, char **argv)
 	char name_buf[256];
 	const char *bpf_o;
 	int emit_artifacts = 0;
+	bool observe = false;
 	bool java = false;
 	int pkey_explicit = 0;
 	int cert_explicit = 0;
@@ -256,6 +261,9 @@ int main(int argc, char **argv)
 		case BUILD_JAVA:
 			java = true;
 			break;
+		case BUILD_OBSERVE:
+			observe = true;
+			break;
 		case BUILD_EMIT_ARTIFACTS:
 			emit_artifacts = 1;
 			break;
@@ -283,6 +291,10 @@ int main(int argc, char **argv)
 	}
 	if (java && (!unload_name || !payload_sha256_hex)) {
 		opt_usage(&p, "--java takes --unload and --payload-sha256");
+		return EXIT_USAGE;
+	}
+	if (observe && unload_name) {
+		opt_usage(&p, "--observe cannot be used with --unload");
 		return EXIT_USAGE;
 	}
 
@@ -404,6 +416,10 @@ int main(int argc, char **argv)
 	}
 
 	if (name_has_suffix(input, strlen(input), ".jar")) {
+		if (observe) {
+			opt_usage(&p, "--observe takes a BPF input");
+			return EXIT_USAGE;
+		}
 		ret = build_package_java_load(input, output, name, pkey, cert);
 		if (ret == 0 && emit_artifacts)
 			printf("emitted:\n  upatch: %s\n", output);
@@ -453,8 +469,8 @@ int main(int argc, char **argv)
 		return 2;
 	}
 
-	ret = build_package_load(bpf_o, src_path, output, name,
-				 NULL, 0, pkey, cert);
+	ret = build_package_load_mode(bpf_o, src_path, output, name,
+				      NULL, 0, observe, pkey, cert);
 
 	if (temp_bpf_o) {
 		unlink(temp_bpf_o);

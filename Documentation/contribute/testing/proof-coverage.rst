@@ -738,7 +738,7 @@ or shorter, and "lengths 0 to 6" every input of each of those lengths.
        or with attach metadata of 1 to 8 bytes
      - The reader finds each section where the writer put it, at an
        8-byte boundary, with its bytes and length, the loader's data in
-       front and zeros between; a count of 0 or above 8 and data past what
+       front and zeros between; a count of 0 or above 9 and data past what
        a length field holds are refused, with nothing written
    * - ``upatch-writer-load``
      - The four sections of a load, through the same two functions
