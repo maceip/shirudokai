@@ -210,27 +210,37 @@ nothing.
 
 DNS over TCP, TLS and HTTPS is not parsed; the resolvers are on the
 watch list instead, and DNS on ports other than 53 is not looked at.
-IPv6 extension headers are not walked. Forwarded traffic does not pass
-the cgroup hooks and is not counted.
+UDP DNS packets past the 1232-byte budget, IPv4 fragments, IPv6 packets
+with extension headers, non-zero opcodes or RCODEs, truncated (`TC = 1`)
+responses, non-`IN` classes, mismatched response question names/types/classes,
+answers whose type or class does not match the query, and responses
+arriving past the 10-second request TTL are rejected and counted in
+`obs_i_dns_dbg` rather than recorded; at most 75 answers per response
+are inspected (`DNS_DBG_RESP_ANSWER_CAP` counts responses past that
+cap). Forwarded traffic does not pass the cgroup hooks and is not
+counted.
 
 ## Open work
 
-The DNS parser correlates a UDP response with its request by network
-namespace, addresses, ports and transaction ID. It does not yet:
+The DNS wire parser (`obs_dns_parse.h`, shared with `testing/unit/dns_obs.c`)
+validates IPv4/IPv6/UDP framing, compression pointer bounds, question
+correlation, response flags, answer type/class matching, request expiry
+and pending-table counters in user space and in BPF:
 
-- [ ] compare the response's question name, case-insensitively, and its
+- [x] compare the response's question name, case-insensitively, and its
       class with the request's;
-- [ ] check the response's opcode, RCODE and TC bits, and decide whether a
-      truncated response yields no record or a partial one;
-- [ ] keep A answers to A queries and AAAA answers to AAAA queries;
-- [ ] age out pending requests, so a late response cannot match a later
-      reuse of the same flow and ID;
-- [ ] reject IP fragments, check the IP and UDP lengths against the packet
+- [x] check the response's opcode, RCODE and TC bits, rejecting truncated
+      responses without recording partial answers;
+- [x] keep A answers to A queries and AAAA answers to AAAA queries;
+- [x] age out pending requests after 10 seconds (`sent_ns`), so a late
+      response cannot match a later reuse of the same flow and ID;
+- [x] reject IP fragments, check the IP and UDP lengths against the packet
       and hold the 1232-byte parsing budget on the packet itself;
-- [ ] walk IPv6 extension headers, or reject packets that carry one;
-- [ ] bound every compression pointer it skips, against loops and
-      out-of-packet targets;
-- [ ] count a full pending table, LRU displacement, stale responses and
+- [x] reject IPv6 packets that carry extension headers;
+- [x] bound every compression pointer skipped or matched, against loops,
+      header offsets and out-of-packet targets;
+- [x] count a full pending table, LRU displacement, stale responses and
       answers past its cap of 75, instead of dropping them silently;
-- [ ] cover malformed packets on the target, which needs a live packet
-      harness; `dns_obs_matrix.py` in shirudo's tests only builds them.
+- [x] cover malformed packets in the host unit suite `testing/unit/dns_obs.c`
+      against the shared wire parser `obs_dns_parse.h`; a live raw-frame
+      injection harness on the target VM remains optional follow-up work.

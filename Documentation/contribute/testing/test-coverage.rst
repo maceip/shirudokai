@@ -286,6 +286,9 @@ signed config image.
        XDP, multi-TCX chaining in one upatch, ``struct_ops`` upatches in
        ``.struct_ops.link``, and refusal of malformed sections and maps
        outside ``.struct_ops.link``
+   * - ``t3020-kernel-obs-dns``
+     - ``bpm build`` compiles and signs ``upatches/kernel-obs`` with its
+       DNS wire parser, decoders and ``.rodata`` watch inputs
    * - ``t3101-target-fixtures``
      - Prebuilt fixtures load and unload, foreign and own-keyring
        fixtures are refused, a map fixture exports
@@ -1139,7 +1142,13 @@ missing or empty ``Premain-Class``, one outside the main section, and
 every truncation and byte flip of a jar. ``quote_check`` covers the rows of
 ``shirudo-quote-check`` in :src:`tools/quote-check/row.c`, on quotes a
 software P-256 key signs: every reject reason, the signer's qualified
-name, the empty PCR selection and the base64 of each field. The other
+name, the empty PCR selection and the base64 of each field. ``dns_obs``
+covers the shared DNS wire parser in
+:src:`upatches/kernel-obs/obs_dns_parse.h`: IPv4 and IPv6 transport
+framing, fragment and extension-header rejection, the 1232-byte UDP
+budget, compression pointer bounds, question correlation, response flags,
+answer type and class filtering, request expiry and pending-table
+counters. The other
 modules are reached through the test helpers, the fuzz targets and the binaries
 the functional tests run.
 
