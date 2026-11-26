@@ -31,7 +31,7 @@
 #define BTF_MAX_UNWRAP	32
 
 static __printf(3, 4) int abi_fail(char *detail, size_t detail_sz,
-				    const char *fmt, ...)
+				   const char *fmt, ...)
 {
 	va_list ap;
 
@@ -101,22 +101,19 @@ static bool is_byte_int(const struct btf_type *t)
 	       btf_int_offset(t) == 0 && btf_int_bits(t) == 8;
 }
 
-int kernel_abi_validate_btf(const struct btf *btf,
-			    char *detail, size_t detail_sz)
+static bool has_func(const struct btf *btf, const char *name)
 {
-	const struct btf_member *sha, *excl_prog_sha, *sig;
-	const struct btf_member *keyring_serial, *keyring_type, *verdict;
-	const struct btf_type *map, *aux, *sha_type, *elem_type;
-	const struct btf_type *excl_type, *sig_type, *member_type;
+	return btf__find_by_name_kind(btf, name, BTF_KIND_FUNC) > 0;
+}
+
+static int validate_bpf_map_btf(const struct btf *btf,
+				char *detail, size_t detail_sz)
+{
+	const struct btf_type *map, *sha_type, *elem_type, *excl_type;
+	const struct btf_member *sha, *excl_prog_sha;
 	const struct btf_array *array;
 	__u32 member_idx;
-	int map_id, aux_id;
-
-	if (detail && detail_sz)
-		detail[0] = '\0';
-	if (!btf)
-		return abi_fail(detail, detail_sz,
-				"kernel BTF is unavailable; boot a shirudo-patched kernel");
+	int map_id;
 
 	map_id = btf__find_by_name_kind(btf, "bpf_map", BTF_KIND_STRUCT);
 	if (map_id < 0)
@@ -140,8 +137,7 @@ int kernel_abi_validate_btf(const struct btf *btf,
 				"struct bpf_map.sha must have type u8[32]");
 	array = btf_array(sha_type);
 	elem_type = unwrap_type(btf, array->type);
-	if (array->nelems != MAP_SHA_SIZE ||
-	    !is_unsigned_int(elem_type, 1))
+	if (array->nelems != MAP_SHA_SIZE || !is_unsigned_int(elem_type, 1))
 		return abi_fail(detail, detail_sz,
 				"struct bpf_map.sha must have type u8[32]");
 
@@ -160,6 +156,16 @@ int kernel_abi_validate_btf(const struct btf *btf,
 	if (!is_byte_int(elem_type))
 		return abi_fail(detail, detail_sz,
 				"struct bpf_map.excl_prog_sha must point to a byte");
+	return 0;
+}
+
+static int validate_bpf_prog_aux_btf(const struct btf *btf,
+				     char *detail, size_t detail_sz)
+{
+	const struct btf_member *keyring_serial, *keyring_type, *verdict, *sig;
+	const struct btf_type *aux, *sig_type, *member_type;
+	__u32 member_idx;
+	int aux_id;
 
 	aux_id = btf__find_by_name_kind(btf, "bpf_prog_aux", BTF_KIND_STRUCT);
 	if (aux_id < 0)
@@ -179,13 +185,16 @@ int kernel_abi_validate_btf(const struct btf *btf,
 		return abi_fail(detail, detail_sz,
 				"struct bpf_prog_aux.sig must have struct type");
 
-	keyring_serial = find_member(btf, sig_type, "keyring_serial", &member_idx);
-	member_type = keyring_serial ? unwrap_type(btf, keyring_serial->type) : NULL;
+	keyring_serial = find_member(btf, sig_type, "keyring_serial",
+				     &member_idx);
+	member_type = keyring_serial ?
+		unwrap_type(btf, keyring_serial->type) : NULL;
 	if (!keyring_serial || !is_signed_int(member_type, 4))
 		return abi_fail(detail, detail_sz,
 				"struct bpf_prog_aux.sig.keyring_serial must have type s32");
 	keyring_type = find_member(btf, sig_type, "keyring_type", &member_idx);
-	member_type = keyring_type ? unwrap_type(btf, keyring_type->type) : NULL;
+	member_type = keyring_type ?
+		unwrap_type(btf, keyring_type->type) : NULL;
 	if (!keyring_type || !is_unsigned_int(member_type, 1))
 		return abi_fail(detail, detail_sz,
 				"struct bpf_prog_aux.sig.keyring_type must have type u8");
@@ -194,10 +203,31 @@ int kernel_abi_validate_btf(const struct btf *btf,
 	if (!verdict || !is_unsigned_int(member_type, 1))
 		return abi_fail(detail, detail_sz,
 				"struct bpf_prog_aux.sig.verdict must have type u8");
-	if (btf__find_by_name_kind(btf, "bpf_lsm_tpm_command", BTF_KIND_FUNC) < 0)
+	return 0;
+}
+
+int kernel_abi_validate_btf(const struct btf *btf,
+			    char *detail, size_t detail_sz)
+{
+	int ret;
+
+	if (detail && detail_sz)
+		detail[0] = '\0';
+	if (!btf)
+		return abi_fail(detail, detail_sz,
+				"kernel BTF is unavailable; boot a shirudo-patched kernel");
+	ret = validate_bpf_map_btf(btf, detail, detail_sz);
+	if (ret)
+		return ret;
+	ret = validate_bpf_prog_aux_btf(btf, detail, detail_sz);
+	if (ret)
+		return ret;
+	if (!has_func(btf, "bpf_lsm_tpm_command"))
 		return abi_fail(detail, detail_sz,
 				"tpm_command LSM hook is missing; boot a Shirudo-patched kernel");
-
+	if (!has_func(btf, "bpf_lsm_mm_read_access"))
+		return abi_fail(detail, detail_sz,
+				"mm_read_access LSM hook is missing; boot a shirudo-patched kernel");
 	return 0;
 }
 
@@ -217,6 +247,221 @@ int kernel_abi_check(char *detail, size_t detail_sz)
 				strerror((int)-err));
 
 	ret = kernel_abi_validate_btf(btf, detail, detail_sz);
+	btf__free(btf);
+	return ret;
+}
+
+const char *kernel_patch_readiness_name(enum kernel_patch_readiness readiness)
+{
+	switch (readiness) {
+	case KERNEL_PATCH_BTF_READY:
+		return "btf_ready";
+	case KERNEL_PATCH_RUNTIME_ONLY:
+		return "runtime_only";
+	case KERNEL_PATCH_MISSING:
+	default:
+		return "missing";
+	}
+}
+
+static __printf(5, 6) void
+set_patch(struct kernel_patch_status *out, enum kernel_patch_id id,
+	  __u32 number, const char *name,
+	  const char *fmt, ...)
+{
+	struct kernel_patch_entry *e = &out->patches[id];
+	va_list ap;
+
+	e->number = number;
+	e->name = name;
+	va_start(ap, fmt);
+	if (vstrsprintf(e->detail, sizeof(e->detail), fmt, ap) < 0)
+		strscpy_literal(e->detail, "?");
+	va_end(ap);
+}
+
+static void record_patch(struct kernel_patch_status *out,
+			 enum kernel_patch_id id,
+			 enum kernel_patch_readiness readiness)
+{
+	out->patches[id].readiness = readiness;
+	if (readiness == KERNEL_PATCH_BTF_READY)
+		out->n_btf_ready++;
+	else if (readiness == KERNEL_PATCH_RUNTIME_ONLY)
+		out->n_runtime_only++;
+	else
+		out->n_missing++;
+}
+
+static bool has_dentry_parent(const struct btf *btf)
+{
+	const struct btf_type *dentry, *ptr, *target;
+	const struct btf_member *parent;
+	__u32 member_idx;
+	int dentry_id;
+
+	dentry_id = btf__find_by_name_kind(btf, "dentry", BTF_KIND_STRUCT);
+	if (dentry_id < 0)
+		return false;
+	dentry = btf__type_by_id(btf, (__u32)dentry_id);
+	if (!dentry)
+		return false;
+	parent = find_member(btf, dentry, "d_parent", &member_idx);
+	if (!parent || btf_member_bitfield_size(dentry, member_idx) != 0)
+		return false;
+	ptr = unwrap_type(btf, parent->type);
+	if (!ptr || !btf_is_ptr(ptr))
+		return false;
+	target = unwrap_type(btf, ptr->type);
+	return target == dentry;
+}
+
+static void check_sleepable_inode_patch(const struct btf *btf,
+					struct kernel_patch_status *out)
+{
+	static const char *const sleepable_hooks[] = {
+		"inode_copy_up",
+		"inode_file_setattr",
+		"inode_link",
+		"inode_mkdir",
+		"inode_remove_acl",
+		"inode_set_acl",
+	};
+	char missing[KERNEL_ABI_DETAIL_MAX] = "";
+	char fn[LSM_HOOK_NAME_MAX + 8];
+	size_t i, n_missing = 0, len = 0;
+	int ret;
+
+	for (i = 0; i < ARRAY_SIZE(sleepable_hooks); i++) {
+		if (strsprintf(fn, sizeof(fn), "bpf_lsm_%s",
+			       sleepable_hooks[i]) >= 0 && has_func(btf, fn))
+			continue;
+		ret = strsprintf(missing + len, sizeof(missing) - len, "%s%s",
+				 n_missing ? ", " : "", sleepable_hooks[i]);
+		if (ret > 0)
+			len += (size_t)ret;
+		n_missing++;
+	}
+	if (!n_missing) {
+		set_patch(out, KERNEL_PATCH_0022_SLEEPABLE_INODE, 22,
+			  "sleepable_inode_hooks",
+			  "6 inode LSM hooks present; sleepable set verified at attach");
+		record_patch(out, KERNEL_PATCH_0022_SLEEPABLE_INODE,
+			     KERNEL_PATCH_RUNTIME_ONLY);
+		return;
+	}
+	set_patch(out, KERNEL_PATCH_0022_SLEEPABLE_INODE, 22,
+		  "sleepable_inode_hooks", "missing LSM hook%s: %s",
+		  n_missing > 1 ? "s" : "", missing);
+	record_patch(out, KERNEL_PATCH_0022_SLEEPABLE_INODE,
+		     KERNEL_PATCH_MISSING);
+}
+
+int kernel_abi_patch_status_btf(const struct btf *btf,
+				struct kernel_patch_status *out)
+{
+	static const struct {
+		__u32		number;
+		const char	*name;
+	} meta[KERNEL_PATCH__MAX] = {
+		[KERNEL_PATCH_0020_TPM_COMMAND] = { 20, "tpm_command" },
+		[KERNEL_PATCH_0021_XATTR_UNPRIV] = { 21, "security_bpf_xattr" },
+		[KERNEL_PATCH_0022_SLEEPABLE_INODE] = {
+			22, "sleepable_inode_hooks",
+		},
+		[KERNEL_PATCH_0023_TRUSTED_D_PARENT] = {
+			23, "trusted_dentry_parent",
+		},
+		[KERNEL_PATCH_0024_MM_READ_ACCESS] = { 24, "mm_read_access" },
+	};
+	size_t i;
+
+	if (!out)
+		return -EINVAL;
+	*out = (struct kernel_patch_status){};
+	if (!btf) {
+		for (i = 0; i < KERNEL_PATCH__MAX; i++) {
+			set_patch(out, (enum kernel_patch_id)i,
+				  meta[i].number, meta[i].name,
+				  "kernel BTF is unavailable");
+			record_patch(out, (enum kernel_patch_id)i,
+				     KERNEL_PATCH_MISSING);
+		}
+		return -EOPNOTSUPP;
+	}
+
+	out->signed_loader_abi = validate_bpf_map_btf(btf, NULL, 0) == 0 &&
+				 validate_bpf_prog_aux_btf(btf, NULL, 0) == 0;
+
+	if (has_func(btf, "bpf_lsm_tpm_command")) {
+		set_patch(out, KERNEL_PATCH_0020_TPM_COMMAND, 20, "tpm_command",
+			  "bpf_lsm_tpm_command present");
+		record_patch(out, KERNEL_PATCH_0020_TPM_COMMAND,
+			     KERNEL_PATCH_BTF_READY);
+	} else {
+		set_patch(out, KERNEL_PATCH_0020_TPM_COMMAND, 20, "tpm_command",
+			  "bpf_lsm_tpm_command missing");
+		record_patch(out, KERNEL_PATCH_0020_TPM_COMMAND,
+			     KERNEL_PATCH_MISSING);
+	}
+
+	if (has_func(btf, "bpf_get_dentry_xattr") &&
+	    has_func(btf, "bpf_get_file_xattr")) {
+		set_patch(out, KERNEL_PATCH_0021_XATTR_UNPRIV, 21,
+			  "security_bpf_xattr",
+			  "xattr kfuncs present; permission bypass verified at runtime");
+		record_patch(out, KERNEL_PATCH_0021_XATTR_UNPRIV,
+			     KERNEL_PATCH_RUNTIME_ONLY);
+	} else {
+		set_patch(out, KERNEL_PATCH_0021_XATTR_UNPRIV, 21,
+			  "security_bpf_xattr",
+			  "bpf_get_dentry_xattr or bpf_get_file_xattr missing");
+		record_patch(out, KERNEL_PATCH_0021_XATTR_UNPRIV,
+			     KERNEL_PATCH_MISSING);
+	}
+
+	check_sleepable_inode_patch(btf, out);
+
+	if (has_dentry_parent(btf) && has_func(btf, "bpf_get_dentry_xattr")) {
+		set_patch(out, KERNEL_PATCH_0023_TRUSTED_D_PARENT, 23,
+			  "trusted_dentry_parent",
+			  "dentry.d_parent present; verifier trust verified at attach");
+		record_patch(out, KERNEL_PATCH_0023_TRUSTED_D_PARENT,
+			     KERNEL_PATCH_RUNTIME_ONLY);
+	} else {
+		set_patch(out, KERNEL_PATCH_0023_TRUSTED_D_PARENT, 23,
+			  "trusted_dentry_parent",
+			  "struct dentry.d_parent or bpf_get_dentry_xattr missing");
+		record_patch(out, KERNEL_PATCH_0023_TRUSTED_D_PARENT,
+			     KERNEL_PATCH_MISSING);
+	}
+
+	if (has_func(btf, "bpf_lsm_mm_read_access")) {
+		set_patch(out, KERNEL_PATCH_0024_MM_READ_ACCESS, 24,
+			  "mm_read_access", "bpf_lsm_mm_read_access present");
+		record_patch(out, KERNEL_PATCH_0024_MM_READ_ACCESS,
+			     KERNEL_PATCH_BTF_READY);
+	} else {
+		set_patch(out, KERNEL_PATCH_0024_MM_READ_ACCESS, 24,
+			  "mm_read_access", "bpf_lsm_mm_read_access missing");
+		record_patch(out, KERNEL_PATCH_0024_MM_READ_ACCESS,
+			     KERNEL_PATCH_MISSING);
+	}
+
+	return out->signed_loader_abi && out->n_missing == 0 ? 0 : -EOPNOTSUPP;
+}
+
+int kernel_abi_patch_status(struct kernel_patch_status *out)
+{
+	struct btf *btf;
+	int ret;
+
+	if (!out)
+		return -EINVAL;
+	btf = btf__load_vmlinux_btf();
+	if (libbpf_get_error(btf))
+		return kernel_abi_patch_status_btf(NULL, out);
+	ret = kernel_abi_patch_status_btf(btf, out);
 	btf__free(btf);
 	return ret;
 }
@@ -287,8 +532,7 @@ int kernel_abi_validate_lsm_hooks(const struct btf *btf,
 				"kernel BTF is unavailable; boot a shirudo-patched kernel");
 	for (i = 0; i < hooks->n; i++) {
 		if (strsprintf(function, sizeof(function), "bpf_lsm_%s",
-			       hooks->name[i]) >= 0 &&
-		    btf__find_by_name_kind(btf, function, BTF_KIND_FUNC) > 0)
+			       hooks->name[i]) >= 0 && has_func(btf, function))
 			continue;
 		ret = strsprintf(missing + len, sizeof(missing) - len, "%s%s",
 				 n_missing ? ", " : "", hooks->name[i]);

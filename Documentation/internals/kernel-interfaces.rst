@@ -107,10 +107,15 @@ BTF and requires:
      - ``u8``
    * - ``struct bpf_prog_aux.sig.verdict``
      - ``u8``
+   * - ``bpf_lsm_tpm_command``, ``bpf_lsm_mm_read_access``
+     - BTF functions of carried patches ``0020`` and ``0024``
 
 The pre-flight runs it as ``signed_loader_kernel_abi``, and every
 ``upatch load`` and ``upatch unload`` without ``--no-precheck`` runs it
 before ``BPF_PROG_LOAD``. A failure is ``kernel_abi_unsupported``.
+``kernel_abi_patch_status()`` evaluates the signed-loader ABI and the
+BTF prerequisites of carried patches ``0020`` to ``0024`` together for
+release-kernel qualification.
 Beside it the pre-flight runs ``kernel_lsm_hooks``: it reads the hooks
 of every ``lsm`` and ``lsm.s`` program from the embedded ``bpf2`` and
 ``seal`` objects and refuses a kernel whose BTF has no
