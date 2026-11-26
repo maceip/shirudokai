@@ -32,13 +32,14 @@ loads the artifact. For a loaded upatch as the kernel holds it, use
 The human output has these parts:
 
 - the file, name, type (``LOAD`` or ``UNLOAD-directive``), payload type,
-  format version, payload digest and size
+  mode (``enforce`` or ``observe``), format version, payload digest and
+  size
 - the loader: offset and length of its instructions, the log buffer
   size, its metadata and its data
 - the signature: offset and length
 - the signed sections: the name, the length of the attach metadata, for
-  a Java load the length of its agent jar and, for a directive, the
-  expected payload digest
+  a Java load the length of its agent jar, any signed mode and, for a
+  directive, the expected payload digest
 - the decoders: target upatch and map, language and API version, input
   format, export signal (``log`` or ``metric``) and source
 
@@ -64,7 +65,7 @@ Options
      - none
      - off
      - Print one JSON object: ``schema``, ``path``, ``name``, ``type``,
-       ``payload_type``, ``version``, ``payload_sha256``,
+       ``payload_type``, ``mode``, ``version``, ``payload_sha256``,
        ``loader_insns_len``, ``signature_len``, ``data_len``,
        ``log_buf_sz``, ``file_size``, ``signed_name``,
        ``attach_metadata_len``, ``jar_len`` (0 but for a Java load),
@@ -99,6 +100,7 @@ Describe an artifact:
    Name:                  basic
    Type:                  LOAD
    Payload type:          bpf
+   Mode:                  enforce
    Version:               1
    Payload sha256:        46f3d9f5f6568bddb7692cad28e99a86a3104192d8a2251f9ef9ec6d593c2035
    File size:             8661 bytes
@@ -132,7 +134,7 @@ The JSON form of another artifact:
 .. code-block:: console
 
    target# shirudo upatch info --json shirudo-test-basic.upatch
-   {"schema":1,"path":"shirudo-test-basic.upatch","name":"shirudo-test-basic","type":"load","payload_type":"bpf","version":1,"payload_sha256":"8aee7072a1a15e4dddc93ad6b253a0e2e70ad6cdf767442aa8a1c1997bc3069f","loader_insns_len":992,"signature_len":4853,"metadata_len":0,"data_len":2400,"log_buf_sz":1048576,"file_size":8605,"signed_name":"shirudo-test-basic","attach_metadata_len":176,"jar_len":0,"unload_payload_sha256":null,"decoders":[]}
+   {"schema":1,"path":"shirudo-test-basic.upatch","name":"shirudo-test-basic","type":"load","payload_type":"bpf","mode":"enforce","version":1,"payload_sha256":"8aee7072a1a15e4dddc93ad6b253a0e2e70ad6cdf767442aa8a1c1997bc3069f","loader_insns_len":992,"signature_len":4853,"data_len":2400,"log_buf_sz":1048576,"file_size":8605,"signed_name":"shirudo-test-basic","attach_metadata_len":176,"jar_len":0,"unload_payload_sha256":null,"decoders":[]}
 
 Related
 -------

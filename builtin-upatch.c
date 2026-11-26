@@ -512,6 +512,7 @@ static int cmd_upatch_info(int argc, const char **argv)
 								    : "load");
 		json_kv_string(&e, "payload_type",
 			       upatch_type_str(&u));
+		json_kv_string(&e, "mode", upatch_mode_str(&u));
 		json_kv_int(&e, "version", u.hdr.version);
 		json_kv_string(&e, "payload_sha256", payload_hex);
 		json_kv_int(&e, "loader_insns_len",
@@ -573,6 +574,7 @@ static int cmd_upatch_info(int argc, const char **argv)
 	printf("Name:                  %s\n", printable(name));
 	printf("Type:                  %s\n", flag_str(&u));
 	printf("Payload type:          %s\n", upatch_type_str(&u));
+	printf("Mode:                  %s\n", upatch_mode_str(&u));
 	printf("Version:               %u\n", u.hdr.version);
 	printf("Payload sha256:        ");
 	print_sha256_hex(u.hdr.payload_sha256);
@@ -606,6 +608,8 @@ static int cmd_upatch_info(int argc, const char **argv)
 		printf("  %-22s (none)\n", "Attach metadata:");
 	if (jar_len)
 		printf("  %-22s %u bytes\n", "Java agent jar:", jar_len);
+	if (u.signed_mode)
+		printf("  %-22s %s\n", "Mode:", upatch_mode_str(&u));
 	if (unload_payload) {
 		printf("  %-22s ", "Unload payload:");
 		print_sha256_hex(unload_payload);
@@ -667,6 +671,7 @@ struct list_row {
 	const char	*loaded;
 	const char	*type;
 	const char	*kind;
+	const char	*mode;
 	char		payload[32];
 };
 
@@ -687,12 +692,12 @@ static void list_rows_print(const struct list_row *rows, size_t n_rows)
 
 	for (i = 0; i < n_rows; i++)
 		width = max(width, strlen(rows[i].name));
-	printf("  %-*s  %-6s  %-6s  %-4s  %s\n", (int)width, "NAME", "LOADED",
-	       "TYPE", "KIND", "PAYLOAD");
+	printf("  %-*s  %-6s  %-6s  %-4s  %-7s  %s\n", (int)width, "NAME",
+	       "LOADED", "TYPE", "KIND", "MODE", "PAYLOAD");
 	for (i = 0; i < n_rows; i++)
-		printf("  %-*s  %-6s  %-6s  %-4s  %s\n", (int)width, rows[i].name,
-		       rows[i].loaded, rows[i].type, rows[i].kind,
-		       rows[i].payload);
+		printf("  %-*s  %-6s  %-6s  %-4s  %-7s  %s\n", (int)width,
+		       rows[i].name, rows[i].loaded, rows[i].type, rows[i].kind,
+		       rows[i].mode, rows[i].payload);
 }
 
 /*
@@ -759,7 +764,7 @@ static int cmd_upatch_list(int argc, const char **argv)
 	for (i = 0; i < np; i++) {
 		char path[1024], name[UPATCH_NAME_MAX + 1];
 		char payload_hex[2 * 32 + 1];
-		const char *type, *payload_type;
+		const char *type, *payload_type, *mode;
 		struct list_row *row;
 		struct upatch u;
 		int loaded;
@@ -775,6 +780,7 @@ static int cmd_upatch_list(int argc, const char **argv)
 				row->loaded = "?";
 				row->type = "?";
 				row->kind = "?";
+				row->mode = "?";
 				strscpy_literal(row->payload, "unreadable");
 			}
 			continue;
@@ -783,6 +789,7 @@ static int cmd_upatch_list(int argc, const char **argv)
 		hex_encode(u.hdr.payload_sha256, 32, payload_hex);
 		type = upatch_is_unload(&u) ? "unload" : "load";
 		payload_type = upatch_type_str(&u);
+		mode = upatch_mode_str(&u);
 		loaded = u.hdr.type == UPATCH_TYPE_JAVA ?
 			 java_agent_loaded(name) : upatch_is_loaded(name);
 		upatch_close(&u);
@@ -797,6 +804,7 @@ static int cmd_upatch_list(int argc, const char **argv)
 			json_kv_string(&e, "name", name);
 			json_kv_string(&e, "type", type);
 			json_kv_string(&e, "payload_type", payload_type);
+			json_kv_string(&e, "mode", mode);
 			if (loaded < 0)
 				json_kv_null(&e, "loaded");
 			else
@@ -812,6 +820,7 @@ static int cmd_upatch_list(int argc, const char **argv)
 				row->loaded = loaded ? "yes" : "no";
 			row->type = type;
 			row->kind = payload_type;
+			row->mode = mode;
 			memcpy(row->payload, payload_hex, 16);
 			memcpy(row->payload + 16, "..", 3);
 		}
@@ -835,6 +844,7 @@ static int cmd_upatch_list(int argc, const char **argv)
 			json_obj_open(&e);
 			json_kv_string(&e, "name", raw_name);
 			json_kv_null(&e, "type");
+			json_kv_null(&e, "mode");
 			json_kv_bool(&e, "loaded", 1);
 			json_kv_bool(&e, "archived", 0);
 			json_kv_null(&e, "payload_sha256");
@@ -846,6 +856,7 @@ static int cmd_upatch_list(int argc, const char **argv)
 			row->loaded = "yes";
 			row->type = "-";
 			row->kind = "-";
+			row->mode = "-";
 			strscpy_literal(row->payload,
 					"not archived, gone at reboot");
 		}

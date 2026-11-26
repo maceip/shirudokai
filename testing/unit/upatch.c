@@ -554,6 +554,88 @@ static void one_signature_keeps_its_sections_in_one_split(void)
 	upatch_close(&u);
 }
 
+struct mode_fixture {
+	struct upatch_header header;
+	__u8 signature[8];
+	__u8 insns[8];
+	char name[UPATCH_NAME_MAX];
+	__le32 mode;
+	__u8 pad[4];
+	struct upatch_signed_section dir[2];
+	struct upatch_signed_trailer trailer;
+};
+
+#define MODE_DATA_OFF	offsetof(struct mode_fixture, name)
+
+static void mode_load(struct mode_fixture *f, __u32 flags, __u32 signed_mode,
+		      __u32 nr_sections)
+{
+	memset(f, 0, sizeof(*f));
+	f->header.magic = cpu_to_le64(UPATCH_MAGIC);
+	f->header.version = cpu_to_le32(UPATCH_VERSION);
+	f->header.flags = cpu_to_le32(flags);
+	f->header.type = cpu_to_le32(UPATCH_TYPE_BPF);
+	memcpy(f->header.name, "shield", sizeof("shield"));
+	f->header.signature_off =
+		cpu_to_le32(offsetof(struct mode_fixture, signature));
+	f->header.signature_len = cpu_to_le32(sizeof(f->signature));
+	f->header.loader_insns_off =
+		cpu_to_le32(offsetof(struct mode_fixture, insns));
+	f->header.loader_insns_len = cpu_to_le32(sizeof(f->insns));
+	f->header.data_off = cpu_to_le32(MODE_DATA_OFF);
+	f->header.data_len = cpu_to_le32(sizeof(*f) - MODE_DATA_OFF);
+	memcpy(f->name, "shield", sizeof("shield"));
+	f->mode = cpu_to_le32(signed_mode);
+	f->dir[0].tag = cpu_to_le32(UPATCH_SECTION_NAME);
+	f->dir[0].off = 0;
+	f->dir[0].len = cpu_to_le32(sizeof(f->name));
+	f->dir[1].tag = cpu_to_le32(UPATCH_SECTION_MODE);
+	f->dir[1].off = cpu_to_le32(offsetof(struct mode_fixture, mode) -
+				    MODE_DATA_OFF);
+	f->dir[1].len = cpu_to_le32(sizeof(f->mode));
+	f->trailer.magic = cpu_to_le32(UPATCH_SIGNED_TRAILER_MAGIC);
+	f->trailer.version = cpu_to_le32(UPATCH_SIGNED_VERSION);
+	f->trailer.dir_off =
+		cpu_to_le32(offsetof(struct mode_fixture, dir) - MODE_DATA_OFF +
+			    (2 - nr_sections) * sizeof(f->dir[0]));
+	f->trailer.nr_sections = cpu_to_le32(nr_sections);
+}
+
+static void observe_mode_matches_the_signed_section(void)
+{
+	struct mode_fixture f;
+	struct upatch u;
+
+	mode_load(&f, DIRECTIVE_OBSERVE, UPATCH_MODE_OBSERVE, 2);
+	ASSERT_EQ(upatch_open_memory(&f, sizeof(f), &u), 0);
+	EXPECT_TRUE(upatch_is_observe(&u));
+	EXPECT_STREQ(upatch_mode_str(&u), "observe");
+	EXPECT_UEQ(upatch_signed_mode(&u), UPATCH_MODE_OBSERVE);
+	upatch_close(&u);
+
+	mode_load(&f, 0, UPATCH_MODE_ENFORCE, 2);
+	ASSERT_EQ(upatch_open_memory(&f, sizeof(f), &u), 0);
+	EXPECT_FALSE(upatch_is_observe(&u));
+	EXPECT_STREQ(upatch_mode_str(&u), "enforce");
+	EXPECT_UEQ(upatch_signed_mode(&u), UPATCH_MODE_ENFORCE);
+	upatch_close(&u);
+
+	/* Flipping DIRECTIVE_OBSERVE in the unsigned header is rejected. */
+	mode_load(&f, DIRECTIVE_OBSERVE, UPATCH_MODE_ENFORCE, 2);
+	EXPECT_EQ(upatch_open_memory(&f, sizeof(f), &u), -EBADMSG);
+	mode_load(&f, 0, UPATCH_MODE_OBSERVE, 2);
+	EXPECT_EQ(upatch_open_memory(&f, sizeof(f), &u), -EBADMSG);
+
+	/* An unknown signed mode drops the directory and fails flag match. */
+	mode_load(&f, DIRECTIVE_OBSERVE, 2, 2);
+	EXPECT_EQ(upatch_open_memory(&f, sizeof(f), &u), -EBADMSG);
+
+	/* DIRECTIVE_OBSERVE combined with DIRECTIVE_UNLOAD is refused. */
+	mode_load(&f, DIRECTIVE_OBSERVE | DIRECTIVE_UNLOAD,
+		  UPATCH_MODE_OBSERVE, 2);
+	EXPECT_EQ(upatch_open_memory(&f, sizeof(f), &u), -EBADMSG);
+}
+
 static const struct unit_case cases[] = {
 	UNIT_CASE(prog_specs_take_the_signed_counts),
 	UNIT_CASE(prog_specs_refuse_another_header_count),
@@ -576,6 +658,7 @@ static const struct unit_case cases[] = {
 	UNIT_CASE(java_header_needs_the_signed_type),
 	UNIT_CASE(java_header_carries_no_loader),
 	UNIT_CASE(one_signature_keeps_its_sections_in_one_split),
+	UNIT_CASE(observe_mode_matches_the_signed_section),
 	{}
 };
 
