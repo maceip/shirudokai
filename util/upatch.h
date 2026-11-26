@@ -60,6 +60,7 @@ struct upatch {
 	const __u8			*signed_type;	/* __le32 */
 	const __u8			*signed_jar;
 	__u32				signed_jar_len;
+	const __u8			*signed_mode;	/* __le32 */
 };
 
 struct upatch_decoder_view {
@@ -94,7 +95,9 @@ const void *upatch_signature(const struct upatch *u);
 const void *upatch_data(const struct upatch *u);
 
 bool upatch_is_unload(const struct upatch *u);
+bool upatch_is_observe(const struct upatch *u);
 const char *upatch_type_str(const struct upatch *u);
+const char *upatch_mode_str(const struct upatch *u);
 
 bool upatch_has_decoders(const struct upatch *u);
 int upatch_decoder_view(const struct upatch *u, __u32 idx,
@@ -142,6 +145,11 @@ const void *upatch_signed_policy_labels(const struct upatch *u,
 __u32 upatch_signed_type(const struct upatch *u);
 /* The agent .jar of a Java load, NULL where there is none. */
 const void *upatch_signed_jar(const struct upatch *u, __u32 *len);
+/*
+ * The mode the signed sections carry, UPATCH_MODE_ENFORCE where they
+ * carry none. A file opens only when DIRECTIVE_OBSERVE matches it.
+ */
+__u32 upatch_signed_mode(const struct upatch *u);
 
 /*
  * An upatch name: [A-Za-z0-9._-]+ not starting with '.', so nothing that

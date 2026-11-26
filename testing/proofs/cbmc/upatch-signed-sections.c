@@ -46,6 +46,8 @@ static __u32 tag_bit(__u32 tag)
 		return 32;
 	case UPATCH_SECTION_JAR:
 		return 64;
+	case UPATCH_SECTION_MODE:
+		return 128;
 	default:
 		return 0;
 	}
@@ -72,7 +74,8 @@ static bool kept_any(const struct upatch *u)
 {
 	return u->signed_name || u->signed_attach ||
 	       u->signed_unload_payload || u->signed_policy_labels ||
-	       u->decoder_blob || u->signed_type || u->signed_jar;
+	       u->decoder_blob || u->signed_type || u->signed_jar ||
+	       u->signed_mode;
 }
 
 static void forgotten(const struct upatch *u)
@@ -143,6 +146,10 @@ void harness(void)
 			 (u.signed_jar_len &&
 			  below(&u, u.signed_jar, u.signed_jar_len, dir_off)),
 			 "a jar below the directory");
+	__CPROVER_assert(!u.signed_mode ||
+			 (below(&u, u.signed_mode, sizeof(__le32), dir_off) &&
+			  get_le32(u.signed_mode) <= UPATCH_MODE_OBSERVE),
+			 "a known mode below the directory");
 	__CPROVER_assert(!u.signed_policy_labels, "no policy labels");
 	__CPROVER_assert(!u.decoder_blob ||
 			 (u.nr_decoders &&

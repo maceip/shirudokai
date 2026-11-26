@@ -21,8 +21,8 @@ Usage
 
 .. code-block:: none
 
-   shirudo build <input> [-o <output> | --output <output>] [--name <name>]
-                 [--keys-dir <dir> | --keys-dir=<dir>]
+   shirudo build [--observe] <input> [-o <output> | --output <output>]
+                 [--name <name>] [--keys-dir <dir> | --keys-dir=<dir>]
                  [--key <signing-key>] [--cert <certificate>]
                  [--vmlinux <vmlinux-h>] [--extra-cflags <flags>]
                  [--emit-artifacts]
@@ -80,11 +80,18 @@ Building a upatch
    refused.
 #. It names the upatch: ``--name``, else the input file name without
    ``.bpf.c``, ``.bpf.o``, ``.o`` or ``.jar``.
+#. With ``--observe``, if the BPF object's ``.rodata`` declares a 32-bit
+   integer ``shirudo_observe_mode`` (for example ``const volatile __u32
+   shirudo_observe_mode``), the helper rewrites its initial value to ``1``
+   before generating the loader, sets ``DIRECTIVE_OBSERVE`` in the header
+   and appends the signed ``MODE`` section (``UPATCH_MODE_OBSERVE``). Both
+   ``payload_sha256`` and the detached CMS signature cover the rewritten
+   ``.rodata`` value and ``MODE``.
 #. It generates the loader for the object, signs it with the key and
    writes the artifact. The detached CMS signature covers the loader
    instructions and the loader's data, which hold the payload and the
-   signed sections: the name, the attach metadata and any decoders (see
-   :doc:`/reference/formats/upatch-format`).
+   signed sections: the name, the attach metadata, any decoders and, with
+   ``--observe``, the mode (see :doc:`/reference/formats/upatch-format`).
 
 The helper prints ``wrote <output> (insns=<n> sig=<n> data=<n>
 sections=<n> maps=<n> progs=<n> decoders=<n> name=<name>)``.
@@ -188,6 +195,12 @@ Options
      - none
      - Further clang flags. They come after the built-in ones, so a
        ``-mcpu`` among them replaces ``-mcpu=v4``.
+   * - ``--observe``
+     - none
+     - off
+     - Build a BPF load artifact in observe mode: set ``DIRECTIVE_OBSERVE``,
+       append the signed ``MODE`` section, and rewrite ``shirudo_observe_mode``
+       in ``.rodata`` to ``1`` before signing when defined.
    * - ``--emit-artifacts``
      - none
      - off
@@ -230,7 +243,8 @@ Exit status
      - A usage error: an unknown option or one given twice, a value
        missing or empty, a second input, an input that is not
        ``.bpf.c``, ``.bpf.o``, ``.o`` or ``.jar``, no input, an input
-       together with ``--unload``, ``--java`` without ``--unload`` and
+       together with ``--unload``, ``--observe`` with ``--unload`` or a
+       ``.jar`` input, ``--java`` without ``--unload`` and
        ``--payload-sha256``, or a ``--payload-sha256`` that is not 64
        hexadecimal characters. Also a usage error of ``image sign-root`` or ``upatch
        rewrite-rodata``.

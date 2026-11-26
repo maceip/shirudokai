@@ -31,9 +31,9 @@ Description
 
 - one row per archived artifact: its name, ``LOADED`` ``yes``, ``no``
   or ``?``, its type (``load`` or ``unload``), its payload kind (``bpf``
-  or ``java``) and the first 16 hexadecimal characters of its payload
-  digest. A Java upatch is loaded while its installed jar is the
-  archived one.
+  or ``java``), its mode (``enforce`` or ``observe``) and the first 16
+  hexadecimal characters of its payload digest. A Java upatch is loaded
+  while its installed jar is the archived one.
 - one row per pinned upatch without an archive copy, marked
   ``not archived, gone at reboot``
 
@@ -60,11 +60,11 @@ Options
      - none
      - off
      - Print one JSON object: ``schema`` (1) and ``upatches``, a list of
-       ``name``, ``type``, ``payload_type``, ``loaded``, ``archived`` and
-       ``payload_sha256``. A upatch without an archive has ``type`` and
-       ``payload_sha256`` ``null`` and no ``payload_type``. ``loaded`` is
-       ``null`` for an archived upatch whose pin directory cannot be
-       read.
+       ``name``, ``type``, ``payload_type``, ``mode``, ``loaded``,
+       ``archived`` and ``payload_sha256``. A upatch without an archive has
+       ``type``, ``mode`` and ``payload_sha256`` ``null`` and no
+       ``payload_type``. ``loaded`` is ``null`` for an archived upatch
+       whose pin directory cannot be read.
 
 Exit status
 -----------
@@ -94,8 +94,8 @@ List the upatches of a target with one loaded upatch:
 
    target# shirudo upatch list
    Archived upatches (/var/lib/shirudo/upatches):
-     NAME                      LOADED  TYPE    KIND  PAYLOAD
-     shirudo-test-basic        yes     load    bpf   8aee7072a1a15e4d..
+     NAME                      LOADED  TYPE    KIND  MODE     PAYLOAD
+     shirudo-test-basic        yes     load    bpf   enforce  8aee7072a1a15e4d..
 
 The same target after the unload:
 
