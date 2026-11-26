@@ -202,16 +202,18 @@ these options and additional ones that the tests use.
    * - ``CONFIG_TMPFS``, ``CONFIG_TMPFS_XATTR``
      - ``/run/shirudo`` carries the same label.
 
-``shirudo init`` also refuses a kernel that builds modules
-(``CONFIG_MODULES``) without ``CONFIG_MODULE_SIG``: it loads an unsigned
-module without asking the LSM. The pre-flight check
-``module_signatures`` tells that from the kernel's BTF, not from
-``/proc/config.gz``.
+``shirudo init`` also checks four hardening options the threat model
+assumes: module signatures (``module_signatures``), 32-bit
+compatibility off (``compat_disabled``), hibernation resume off
+(``hibernation_disabled``) and writes to mounted block devices blocked
+(``bdev_write_mounted``). It reads the kernel's BTF and
+``/proc/cmdline``, and ``/proc/config.gz`` or
+``/boot/config-<release>`` where present.
 
 :doc:`/operate/plan/hardening` lists the options the trust model assumes
-beyond this table, ``CONFIG_COMPAT`` and others, why kernel lockdown is
-not among them, and why the dm-verity root-hash check accepting keys of
-the kernel's other keyrings does not let them sign a config.
+beyond the table above, why kernel lockdown is not among them, and why
+the dm-verity root-hash check accepting keys of the kernel's other
+keyrings does not let them sign a config.
 
 Kernel command line
 ~~~~~~~~~~~~~~~~~~~
@@ -386,6 +388,21 @@ Pre-flight checks
      - The kernel BTF has no ``__module_address``, so the kernel loads no
        modules, or has ``mod_verify_sig``, which only
        ``CONFIG_MODULE_SIG`` builds.
+   * - ``compat_disabled``
+     - The kernel BTF has none of the 32-bit or x32 compatibility
+       symbols (``CONFIG_COMPAT=n``, ``CONFIG_IA32_EMULATION=n`` and
+       ``CONFIG_X86_X32_ABI=n``).
+   * - ``hibernation_disabled``
+     - ``/proc/cmdline`` has neither ``resume=`` nor ``resumewait``, and
+       the kernel BTF has no hibernation functions
+       (``CONFIG_HIBERNATION=n``) or ``/proc/cmdline`` carries
+       ``noresume``, ``nohibernate`` or ``hibernate=no``.
+   * - ``bdev_write_mounted``
+     - The kernel BTF has the block-layer mounted-write guard,
+       ``/proc/cmdline`` does not enable ``bdev_allow_write_mounted``,
+       and neither ``/proc/config.gz`` nor ``/boot/config-<release>``
+       sets ``CONFIG_BLK_DEV_WRITE_MOUNTED=y`` without
+       ``bdev_allow_write_mounted=0``.
    * - ``cert_on_disk``
      - The primary certificate exists, is a regular file and is not
        empty.
@@ -414,13 +431,16 @@ Run the checks as root on a target:
      OK    signed_loader_kernel_abi
      OK    kernel_lsm_hooks
      OK    module_signatures
+     OK    compat_disabled
+     OK    hibernation_disabled
+     OK    bdev_write_mounted
      OK    cert_on_disk
      OK    cert_algorithm
      OK    cert_kernel_support
      OK    kernel_keyring
      OK    embedded_loader
      OK    tpm2_reachable: TCTI from the config: device:/dev/tpmrm0
-   12 of 12 passed
+   15 of 15 passed
 
 A failed check prints ``FAIL`` and its reason, and the command exits 1
 after ``init: pre-flight failed, <failed> of <total> checks``.

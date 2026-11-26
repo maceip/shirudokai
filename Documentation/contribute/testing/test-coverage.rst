@@ -684,8 +684,9 @@ signed config image.
        outlives an interval timer set before its exec, and refuses
        another task's ``prlimit``, counted as ``SealRlimit``
    * - ``t6157-kernel-options``
-     - The test kernel, which signs its modules, passes the pre-flight
-       check of module signatures
+     - The test kernel passes the pre-flight checks for module
+       signatures, 32-bit compatibility disabled, hibernation resume
+       disabled and writes to mounted block devices blocked
    * - ``t6158-bpffs-move-detach``
      - The bpffs cannot be moved away and detached: a legacy ``MS_MOVE``
        and a ``move_mount(2)`` of the bpffs, and of ``/run`` above it,

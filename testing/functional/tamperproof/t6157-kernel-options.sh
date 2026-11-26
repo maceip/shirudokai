@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Copyright (c) 2026 Authors of shirudo
 #
-# t6157 -- the pre-flight of init checks a kernel option the threat model
-# assumes on the running kernel: module signatures. The test kernel,
-# which signs its modules, passes it.
+# t6157 -- the pre-flight of init checks the kernel options the threat model
+# assumes on the running kernel: module signatures, 32-bit compatibility
+# disabled, hibernation resume disabled and writes to mounted block devices
+# blocked. The test kernel passes all four.
 
 cd "$(dirname "$0")/../.."
 . ./integration-lib.sh
@@ -28,9 +29,12 @@ print("missing")
 ' "$1" "$2"
 }
 
-test_expect_success 'the test kernel passes the module signature check' '
+test_expect_success 'the test kernel passes the kernel prerequisite checks' '
 	"$SHIRUDO_BIN" init --check-only --json >"$W/preflight.json" &&
-	[ "$(check "$W/preflight.json" module_signatures)" = ok ]
+	for name in module_signatures compat_disabled hibernation_disabled \
+		bdev_write_mounted; do
+		[ "$(check "$W/preflight.json" "$name")" = ok ] || return 1
+	done
 '
 
 test_done

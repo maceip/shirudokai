@@ -558,20 +558,25 @@ Meaning
         OK    signed_loader_kernel_abi
         OK    kernel_lsm_hooks
         OK    module_signatures
+        OK    compat_disabled
+        OK    hibernation_disabled
+        OK    bdev_write_mounted
         OK    cert_on_disk
         OK    cert_algorithm
         OK    cert_kernel_support
         OK    kernel_keyring
         OK    embedded_loader
         OK    tpm2_reachable: TCTI from the config: device:/dev/tpmrm0
-      12 of 12 passed
+      15 of 15 passed
 
 Causes
    The check names the requirement that is missing: root, the BPF LSM
    in the kernel's active LSM list, bpffs, the signed-loader ABI, an
    LSM hook only the kernel project patches add, module signatures in
-   a kernel that loads modules, the certificate and its algorithm, the
-   kernel keyring, the embedded loader or the TPM.
+   a kernel that loads modules, 32-bit compatibility disabled,
+   hibernation resume disabled, writes to mounted block devices
+   blocked, the certificate and its algorithm, the kernel keyring, the
+   embedded loader or the TPM.
 
 Action
    Fix the requirement, see :doc:`/operate/plan/system-requirements`, and

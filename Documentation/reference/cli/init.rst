@@ -99,6 +99,13 @@ Pre-flight checks
      - The kernel has every LSM hook the embedded programs attach to.
    * - ``module_signatures``
      - The kernel checks module signatures, or loads no modules.
+   * - ``compat_disabled``
+     - The kernel has 32-bit and x32 compatibility disabled.
+   * - ``hibernation_disabled``
+     - Hibernation is disabled in the kernel or on ``/proc/cmdline``, and
+       no resume parameter is set.
+   * - ``bdev_write_mounted``
+     - The kernel blocks writes to mounted block devices.
    * - ``cert_on_disk``
      - The primary certificate exists: ``/etc/shirudo/keys/cert.der`` in
        the initrd, ``/run/shirudo/runtime/keys/cert.der`` with an active
@@ -189,13 +196,16 @@ Run the pre-flight checks on a target:
      OK    signed_loader_kernel_abi
      OK    kernel_lsm_hooks
      OK    module_signatures
+     OK    compat_disabled
+     OK    hibernation_disabled
+     OK    bdev_write_mounted
      OK    cert_on_disk
      OK    cert_algorithm
      OK    cert_kernel_support
      OK    kernel_keyring
      OK    embedded_loader
      OK    tpm2_reachable: TCTI from the config: device:/dev/tpmrm0
-   12 of 12 passed
+   15 of 15 passed
 
 Related
 -------

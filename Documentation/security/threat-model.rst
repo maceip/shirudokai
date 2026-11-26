@@ -199,7 +199,11 @@ without the protection.
        also ``CONFIG_IA32_EMULATION=n`` and ``CONFIG_X86_X32_ABI=n``.
      - The device-mapper and perf checks hook the native and the compat
        ioctl paths; no other 32-bit entry point is considered.
-     - No.
+     - Yes. The pre-flight check ``compat_disabled`` refuses a kernel
+       whose BTF shows 32-bit or x32 compatibility symbols
+       (``__do_fast_syscall_32``, ``ia32_sys_call_table``,
+       ``compat_elf_check_arch``, ``compat_alloc_user_space`` or
+       ``get_compat_sigset``).
    * - A6
      - The target boots with Secure Boot from a signed, measured UKI
        whose initrd carries shirudo, its bootstrap settings and the
@@ -230,8 +234,8 @@ without the protection.
      - The boot resumes from no hibernation image: the command line has
        no ``resume=``, ``CONFIG_PM_STD_PARTITION`` is empty and the
        initrd names no resume device, or hibernation is off from boot
-       (``CONFIG_HIBERNATION=n``, ``nohibernate`` or
-       ``lockdown=integrity``).
+       (``CONFIG_HIBERNATION=n``, ``noresume``, ``nohibernate`` or
+       ``hibernate=no``).
      - A hibernation image is kernel memory on disk, and a resume runs
        in the initrd before ``init``, from an image root can write to
        swap. ``bpf2`` refuses hibernation once ``init`` runs, and the
@@ -241,13 +245,27 @@ without the protection.
        left.
        The behavior of the register across hibernation is not analyzed
        here.
-     - No.
+     - Yes, on the kernel side. The pre-flight check
+       ``hibernation_disabled`` refuses a command line with ``resume=``
+       or ``resumewait``, and refuses a kernel whose BTF shows
+       hibernation (``hibernation_set_ops`` or ``software_resume``)
+       unless ``noresume``, ``nohibernate`` or ``hibernate=no`` disables
+       resume on ``/proc/cmdline``. An initrd tool that resumes without
+       those parameters is not checked.
    * - A10
      - No process writes to the block device under a mounted file
-       system: ``CONFIG_BLK_DEV_WRITE_MOUNTED=n``.
+       system: ``CONFIG_BLK_DEV_WRITE_MOUNTED=n`` and no
+       ``bdev_allow_write_mounted=1`` on the command line.
      - The seal guards file operations. A write to the device under
        ``/var/lib/shirudo`` bypasses it.
-     - No. See R19.
+     - Partly. The pre-flight check ``bdev_write_mounted`` requires the
+       block-layer mounted-write guard in BTF, refuses
+       ``bdev_allow_write_mounted`` when enabled on ``/proc/cmdline``,
+       and refuses ``CONFIG_BLK_DEV_WRITE_MOUNTED=y`` in
+       ``/proc/config.gz`` or ``/boot/config-<release>`` unless
+       ``bdev_allow_write_mounted=0`` overrides it. Without either
+       config file, BTF alone does not show the compile-time default.
+       See R19.
    * - A11
      - The kernel command line is authenticated as part of the UKI. It
        carries ``lsm=`` with ``bpf``, ``bpf.keyring_unsealed=1`` and
@@ -1248,10 +1266,14 @@ kernel that does not ask about an unsigned module, one without
 ``CONFIG_MODULE_SIG``, fails the pre-flight check
 ``module_signatures``.
 Hibernation is refused too, but a resume runs in the initrd before
-``init``: ``lsm/file_open`` refuses the write of a ``HibernateLocation``
-EFI variable, which would have the next boot's initrd resume from a
-device root chose (``HibernateLocation``), and A9 keeps the UKI from
-naming one. :doc:`integrity-counters` lists the counters.
+``init``: the pre-flight check ``hibernation_disabled`` refuses a
+command line with ``resume=`` or ``resumewait`` and a kernel with
+hibernation unless ``noresume``, ``nohibernate`` or ``hibernate=no``
+disables it, ``lsm/file_open`` refuses the write of a
+``HibernateLocation`` EFI variable, which would have the next boot's
+initrd resume from a device root chose (``HibernateLocation``), and A9
+keeps the UKI from naming one. :doc:`integrity-counters` lists the
+counters.
 
 .. rst-class:: facts
 
@@ -2268,16 +2290,6 @@ U9 init can rebind the register after hiding this boot's record
       ``--expect-bind-pcr=11`` with the initrd's values, or
       ``--expect-pcr=9`` with the predicted value.
 
-U10 Kernel prerequisites are not checked
-   :Affects: A5, A9 and A10.
-   :Consequence: A target with 32-bit compatibility, with a resume
-      device in its UKI or with writes under mounted file systems
-      allowed initializes without an error and without the protection
-      those assumptions give.
-   :Status: Confirmed in code: the pre-flight checks none of them.
-   :Meanwhile: Build the kernel and its command line as
-      :doc:`/operate/plan/hardening` describes.
-
 U11 The boot continues when init fails
    :Affects: ``shirudo-initrd.service`` and the root file system's
       ``init`` (R6, R7).
@@ -2439,7 +2451,7 @@ The deployer:
   patch set (A3), ``CONFIG_MODULE_SIG`` (A4), ``CONFIG_COMPAT=n`` (A5),
   the TPM driver without ``i2c-dev`` or ``spidev`` on its bus (A8), and
   ``CONFIG_BLK_DEV_WRITE_MOUNTED=n`` (A10); the pre-flight of ``init``
-  refuses a kernel without A4
+  refuses a target without A4, A5, A9 or A10
 - Boots a signed, measured UKI under Secure Boot whose command line
   carries ``lsm=`` with ``bpf``, ``bpf.keyring_unsealed=1`` and
   ``dm_verity.keyring_unsealed=1``, and whose command line, kernel and
