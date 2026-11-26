@@ -23,6 +23,7 @@
 #include <openssl/evp.h>
 #include <openssl/param_build.h>
 #include <openssl/pem.h>
+#include <openssl/provider.h>
 #include <openssl/rsa.h>
 #include <openssl/x509.h>
 #include <openssl/x509_vfy.h>
@@ -775,6 +776,36 @@ out:
 	X509_STORE_CTX_free(ctx);
 	X509_STORE_free(store);
 	return ret;
+}
+
+static void *fips_provider;
+
+int crypto_fips_init(void)
+{
+	void *prov;
+
+	if (fips_provider && crypto_fips_enabled())
+		return 0;
+	prov = OSSL_PROVIDER_load(NULL, "fips");
+	if (!prov) {
+		openssl_complain("OSSL_PROVIDER_load(fips)");
+		ERR_clear_error();
+		return -ENOPKG;
+	}
+	if (EVP_default_properties_enable_fips(NULL, 1) != 1 ||
+	    EVP_default_properties_is_fips_enabled(NULL) != 1) {
+		openssl_complain("EVP_default_properties_enable_fips");
+		ERR_clear_error();
+		OSSL_PROVIDER_unload(prov);
+		return -ENOPKG;
+	}
+	fips_provider = prov;
+	return 0;
+}
+
+bool crypto_fips_enabled(void)
+{
+	return EVP_default_properties_is_fips_enabled(NULL) == 1;
 }
 
 void openssl_complain(const char *where)

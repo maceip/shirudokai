@@ -49,8 +49,9 @@ Signatures
        keyrings of assumption A7; ``shirudo image verify`` offline
    * - Vouch
      - The bytes ``shirudo-key-vouch``, a NUL byte, and the DER of the
-       vouched certificate
-     - ``shirudo keys vouch``
+       vouched certificate, or ``shirudo-key-vouch-v2``, a NUL byte, an
+       8-byte big-endian Unix ``not_after`` timestamp and the DER
+     - ``shirudo keys vouch`` and ``shirudo keys rotate``
      - ``init`` and ``shirudo image update``, against the certificates
        already in the trusted set
 
@@ -127,6 +128,18 @@ operator key commands, and ``shirudo keys vouch --expires-days`` and
 expiration timestamp into the signed ``shirudo-key-vouch-v2`` payload.
 Retire an active BPF signing key by revoking it (residual risks R13 and
 R16).
+
+FIPS 140-3 profile
+------------------
+
+Building with ``make FIPS=1`` defines ``SHIRUDO_FIPS=1``. At process
+startup, ``shirudo`` and ``shirudo-build`` call ``crypto_fips_init()``,
+which loads OpenSSL's ``fips`` provider (``OSSL_PROVIDER_load(NULL,
+"fips")``), enables ``EVP_default_properties_enable_fips(NULL, 1)``, and
+verifies ``EVP_default_properties_is_fips_enabled(NULL)``. When the FIPS
+module is absent or fails self-tests, startup exits with status 1 before
+running any command. ``shirudo version`` reports ``fips: enabled`` or
+``fips: disabled`` from ``crypto_fips_enabled()``.
 
 Digests
 -------
