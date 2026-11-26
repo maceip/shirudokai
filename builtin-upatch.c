@@ -5891,6 +5891,11 @@ static int cmd_upatch_check(int argc, const char **argv)
 		return EXIT_USAGE;
 	}
 
+	if (test_input && !benign_input) {
+		opt_usage(&p, "--test-input requires --benign-input");
+		return EXIT_USAGE;
+	}
+
 	if (test_input) {
 		if (!upatch_name || !upatch_name_valid(upatch_name)) {
 			opt_usage(&p, "--test-input requires a valid loaded <upatch-name>");
@@ -5907,10 +5912,9 @@ static int cmd_upatch_check(int argc, const char **argv)
 	} else {
 		struct reproducer_snapshot before = {}, after_exp = {};
 		struct reproducer_snapshot after_ben = {};
-		const struct reproducer_snapshot *ben_ptr = NULL;
 
-		if (!before_path || !exploit_path) {
-			opt_usage(&p, "takes --before <file> and --after-exploit <file>, or <name> --test-input <file>");
+		if (!before_path || !exploit_path || !benign_path) {
+			opt_usage(&p, "takes --before, --after-exploit and --after-benign <file>, or <name> --test-input <file> --benign-input <file>");
 			return EXIT_USAGE;
 		}
 		err = reproducer_snapshot_read_file(before_path, &before);
@@ -5925,17 +5929,13 @@ static int cmd_upatch_check(int argc, const char **argv)
 			       strerror(-err));
 			return 1;
 		}
-		if (benign_path) {
-			err = reproducer_snapshot_read_file(benign_path,
-							    &after_ben);
-			if (err) {
-				pr_err("upatch check: %s: %s", benign_path,
-				       strerror(-err));
-				return 1;
-			}
-			ben_ptr = &after_ben;
+		err = reproducer_snapshot_read_file(benign_path, &after_ben);
+		if (err) {
+			pr_err("upatch check: %s: %s", benign_path,
+			       strerror(-err));
+			return 1;
 		}
-		err = reproducer_evaluate(&before, &after_exp, ben_ptr, &v);
+		err = reproducer_evaluate(&before, &after_exp, &after_ben, &v);
 		if (err) {
 			pr_err("upatch check: %s", strerror(-err));
 			return 1;

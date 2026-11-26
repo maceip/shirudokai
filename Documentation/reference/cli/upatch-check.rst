@@ -23,8 +23,8 @@ Usage
 
    shirudo upatch check [<name>] --before <snapshot.json>
                         --after-exploit <snapshot.json>
-                        [--after-benign <snapshot.json>] [--json]
-   shirudo upatch check <name> --test-input <file> [--benign-input <file>]
+                        --after-benign <snapshot.json> [--json]
+   shirudo upatch check <name> --test-input <file> --benign-input <file>
                         [--counters-map <map>] [--stack-map <map>] [--json]
 
 Description
@@ -36,7 +36,6 @@ or skipped runs:
 
 - ``exploit_hits_delta > 0`` between ``before`` and ``after-exploit``
 - ``benign_hits_delta == 0`` between ``after-exploit`` and ``after-benign``
-  (0 when no benign phase is supplied)
 - ``missed_runs_delta == 0`` across the run
 - monotonic counter values without regression
 
@@ -46,8 +45,17 @@ the exploit phase so operators can narrow enforcement by call stack.
 With ``--test-input <file>``, ``check`` opens the loaded upatch's pinned
 ``test`` program (``SEC("syscall")`` ``shirudo_test__<id>``), reads its
 pinned ``struct shield_counters`` map and missed-run counters before and
-after ``BPF_PROG_TEST_RUN`` on ``<file>`` (and optionally
-``--benign-input <file>``), and evaluates the resulting snapshots.
+after ``BPF_PROG_TEST_RUN`` on ``<file>`` and on the
+``--benign-input`` file, and evaluates the resulting snapshots.
+
+A benign phase is required in both forms: a shield that was never shown
+a benign workload has not been shown to leave one alone, and ``check``
+does not pass it.
+
+``check`` runs no exploit and no workload itself. The snapshots are
+what the caller recorded around its own runs, and ``--test-input``
+runs the upatch's ``test`` program on a fixed input, not the hook the
+shield is attached to.
 
 Options
 -------
@@ -80,8 +88,8 @@ Options
    * - ``--benign-input``
      - ``<file>``
      - none
-     - Input passed to ``BPF_PROG_TEST_RUN`` for the benign run. Only with
-       ``--test-input``.
+     - Input passed to ``BPF_PROG_TEST_RUN`` for the benign run.
+       Required with ``--test-input``.
    * - ``--counters-map``
      - ``<map>``
      - ``shield_counters``
@@ -113,8 +121,9 @@ Exit status
      - A check failed (``verdict: fail``), or a snapshot, pin or
        ``BPF_PROG_TEST_RUN`` call failed.
    * - 2
-     - A usage error: missing required inputs, ``--test-input`` combined
-       with snapshot files, ``--benign-input`` without ``--test-input``, or
+     - A usage error: missing required inputs, a missing benign snapshot
+       or input, ``--test-input`` combined with snapshot files,
+       ``--benign-input`` without ``--test-input``, or
        an invalid upatch name.
 
 Examples

@@ -186,6 +186,13 @@ test_expect_success 'shirudo upatch check passes valid reproducer snapshots and 
 	PY
 '
 
+test_expect_success 'shirudo upatch check refuses a verdict without a benign phase' '
+	rc=0 &&
+	{ "$S" upatch check cve-shield --before "$WORK/before.json" \
+		--after-exploit "$WORK/after_exp.json" >/dev/null 2>&1 || rc=$?; } &&
+	test "$rc" = 2
+'
+
 test_expect_success 'shirudo upatch check rejects benign false positives and missed runs' '
 	cat >"$WORK/benign_hit.json" <<-\EOF &&
 	{"activity":250,"hits":4,"enforced":0,"observed":4,"missed_runs":0,"stack_ids":[204,41]}
