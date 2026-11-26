@@ -345,7 +345,7 @@ static void check_sleepable_inode_patch(const struct btf *btf,
 	if (!n_missing) {
 		set_patch(out, KERNEL_PATCH_0022_SLEEPABLE_INODE, 22,
 			  "sleepable_inode_hooks",
-			  "6 inode LSM hooks present; sleepable set verified at attach");
+			  "6 inode LSM hooks present; whether they take sleepable programs shows only at attach");
 		record_patch(out, KERNEL_PATCH_0022_SLEEPABLE_INODE,
 			     KERNEL_PATCH_RUNTIME_ONLY);
 		return;
@@ -409,7 +409,7 @@ int kernel_abi_patch_status_btf(const struct btf *btf,
 	    has_func(btf, "bpf_get_file_xattr")) {
 		set_patch(out, KERNEL_PATCH_0021_XATTR_UNPRIV, 21,
 			  "security_bpf_xattr",
-			  "xattr kfuncs present; permission bypass verified at runtime");
+			  "xattr kfuncs present; the read without the caller's permission shows only at run time");
 		record_patch(out, KERNEL_PATCH_0021_XATTR_UNPRIV,
 			     KERNEL_PATCH_RUNTIME_ONLY);
 	} else {
@@ -425,7 +425,7 @@ int kernel_abi_patch_status_btf(const struct btf *btf,
 	if (has_dentry_parent(btf) && has_func(btf, "bpf_get_dentry_xattr")) {
 		set_patch(out, KERNEL_PATCH_0023_TRUSTED_D_PARENT, 23,
 			  "trusted_dentry_parent",
-			  "dentry.d_parent present; verifier trust verified at attach");
+			  "dentry.d_parent present; whether the verifier trusts it shows only at attach");
 		record_patch(out, KERNEL_PATCH_0023_TRUSTED_D_PARENT,
 			     KERNEL_PATCH_RUNTIME_ONLY);
 	} else {
