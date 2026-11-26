@@ -96,6 +96,15 @@ public final class SqlLexer {
     }
 
     public static List<Token> tokenize(String sql) {
+        return tokenize(sql, true);
+    }
+
+    /**
+     * MySQL and MariaDB take a backslash in a quoted string as an escape.
+     * PostgreSQL with standard_conforming_strings, SQL Server, Oracle and
+     * SQLite take it as a character, so that \' ends the string there.
+     */
+    public static List<Token> tokenize(String sql, boolean backslashEscape) {
         List<Token> out = new ArrayList<>();
         if (sql == null) {
             return out;
@@ -121,13 +130,13 @@ public final class SqlLexer {
 
             // Single-quoted string literal: handles '' and \' and \\.
             if (c == '\'') {
-                i = readQuoted(sql, i, '\'', true, TokenType.STRING, out);
+                i = readQuoted(sql, i, '\'', backslashEscape, TokenType.STRING, out);
                 continue;
             }
 
             // Double-quoted identifier or string: handles "" and \" and \\.
             if (c == '"') {
-                i = readQuoted(sql, i, '"', true, TokenType.DOUBLE_QUOTED, out);
+                i = readQuoted(sql, i, '"', backslashEscape, TokenType.DOUBLE_QUOTED, out);
                 continue;
             }
 
@@ -304,8 +313,27 @@ public final class SqlLexer {
         return n;
     }
 
+    /**
+     * The agent does not know which database reads the statement, so a
+     * statement with a backslash is read both ways and refused when
+     * either reading is an injection. A string that MySQL ends properly
+     * is often unterminated in the other reading, 'it\\'s', so that
+     * reading alone does not refuse a statement for an open quote.
+     */
     public static Analysis analyze(String sql) {
-        List<Token> raw = tokenize(sql);
+        Analysis escaped = analyze(tokenize(sql, true));
+        if (escaped.malicious || sql == null || sql.indexOf('\\') < 0) {
+            return escaped;
+        }
+        Analysis literal = analyze(tokenize(sql, false));
+        if (literal.malicious
+                && !"unterminated_quote_or_comment".equals(literal.reason)) {
+            return literal;
+        }
+        return escaped;
+    }
+
+    private static Analysis analyze(List<Token> raw) {
         List<Token> significant = new ArrayList<>(raw.size());
         boolean sawLiteral = false;
 
