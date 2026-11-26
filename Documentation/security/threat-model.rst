@@ -1811,11 +1811,16 @@ R10 Endorsement key trust
    key in the evidence, and the endorsement certificate ties that key
    to a manufacturer. ``shirudo attest challenge`` makes no challenge
    unless the certificate chains to the issuers given with
-   ``--ek-ca``, the key is pinned with ``--ek-name`` from an inventory,
-   or the operator waives the check with ``--trust-presented-ek``,
-   which proves only that the same party answers each time. Virtual
-   TPMs usually have no certificate. Which issuers to trust is the
-   operator's decision.
+   ``--ek-ca``, the key matches a cloud-published endorsement public key
+   given with ``--ek-pub`` (PEM or DER SPKI or raw/base64
+   ``TPM2B_PUBLIC`` from AWS NitroTPM, GCP Shielded VM or Azure Trusted
+   Launch), the key is pinned with ``--ek-name`` from an inventory or
+   ``shirudo attest ek-name``, or the operator waives the check with
+   ``--trust-presented-ek``, which proves only that the same party
+   answers each time. Virtual TPMs usually have no in-band certificate;
+   on cloud instances ``--ek-pub`` authenticates the vTPM endorsement key
+   through the cloud control plane instead. Which issuers or cloud APIs
+   to trust is the operator's decision.
 
 R11 The anchor shares PCR 9
    PCR 9 also carries the initrd measurements and systemd's NvPCR
@@ -2360,8 +2365,8 @@ The verifier:
 
 - Uses a fresh, unique ``--nonce`` for each verification
 - Records the attestation key name at enrollment after a challenge whose
-  endorsement key chains through ``--ek-ca`` or matches ``--ek-name``,
-  and passes ``--ak-name`` on every verification (U1, R10)
+  endorsement key chains through ``--ek-ca`` or matches ``--ek-pub`` or
+  ``--ek-name``, and passes ``--ak-name`` on every verification (U1, R10)
 - Pins the binding with ``--expect-bind-pcr=9=<value>`` and
   ``--expect-bind-pcr=11=<value>`` (U9, R7, R12)
 - Gives an expected state: ``--cert`` with ``--upatch`` or ``--expect``

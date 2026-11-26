@@ -21,7 +21,8 @@ Usage
 .. code-block:: none
 
    shirudo attest challenge --evidence=<evidence> (-o <challenge> | --output=<challenge>)
-                            (--ek-ca=<bundle> | --ek-name=<name> | --trust-presented-ek)
+                            (--ek-ca=<bundle> | --ek-pub=<path> | --ek-name=<name> |
+                             --trust-presented-ek)
                             [--ak-name=<name>]
 
 Every option takes its value after ``=`` or as the next argument, and
@@ -43,10 +44,13 @@ to the target's endorsement key:
 
    - With ``--ek-ca``, the endorsement certificate in the evidence must
      describe the key and chain to an issuer in the PEM bundle.
+   - With ``--ek-pub``, the endorsement key in the evidence must use an
+     approved TCG endorsement template and carry the exact RSA-2048
+     modulus or NIST P-256 coordinates of the cloud-published key.
    - With ``--ek-name``, the pinned name vouches for the key.
    - With ``--trust-presented-ek``, the key is accepted as presented.
 
-   Without any of the three, the check fails.
+   Without any of the four, the check fails.
 #. It makes a random 32-byte credential, protects it for the endorsement
    key and the attestation key name, writes the challenge to ``--output``
    with mode 0600 and prints ``challenge: <path>`` and
@@ -78,6 +82,10 @@ Options
    * - ``--ek-ca``
      - ``<bundle>``, PEM file
      - Issuers the endorsement certificate must chain to.
+   * - ``--ek-pub``
+     - ``<path>``
+     - Cloud-published endorsement public key (PEM SPKI, DER SPKI, or raw
+       or base64 ``TPM2B_PUBLIC``).
    * - ``--ek-name``
      - ``<name>``, 68 hex characters
      - An endorsement key name known out of band.
@@ -123,4 +131,5 @@ Related
 
 - :doc:`attest`
 - :doc:`attest-verify`
+- :doc:`attest-ek-name`
 - :doc:`/operate/run/attest`

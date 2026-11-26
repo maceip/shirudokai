@@ -66,6 +66,8 @@ struct attest_challenge_policy {
 	const char	*ek_ca;		/* issuer bundle, or NULL */
 	const __u8	*ak_name;	/* pinned attestation key, or NULL */
 	const __u8	*ek_name;	/* pinned endorsement key, or NULL */
+	const void	*ek_pub;	/* cloud EK public key, or NULL */
+	size_t		ek_pub_len;
 	bool		trust_presented; /* accept an unvouched endorsement key */
 };
 
@@ -92,6 +94,9 @@ struct attest_expect {
 	__u8		credential[TPM_CREDENTIAL_LEN] __sensitive;
 	bool		have_ek_name;
 	__u8		ek_name[TPM_NAME_LEN];
+	bool		have_ek_pub;
+	const void	*ek_pub;
+	size_t		ek_pub_len;
 	bool		require_initrd;	/* the binding must be the initrd's */
 	__u32		bind_expect_mask;	/* PCR values at binding time */
 	__u8		bind_values[24][32];

@@ -26,6 +26,8 @@ static inline size_t tpm_put2b(__u8 *p, const __u8 *data, size_t len)
 }
 
 #define TPM_DIGEST_LEN		32
+#define TPM_NAME_MAX		TPM_NAME_LEN
+#define TPM_PUBLIC_MAX		512
 BUILD_BUG_ON_MSG(TPM_NAME_LEN != 2 + TPM_DIGEST_LEN,
 		 "a name is the algorithm and its digest");
 #define TPM_ALG_RSA		0x0001u
@@ -122,7 +124,10 @@ int tpm_qualified_name(__u32 hierarchy,
  * adminWithPolicy | restricted | decrypt).
  */
 #define TPM_EK_ATTRS		0x000300B2u
+#define TPM_ATTR_USER_WITH_AUTH	0x00000040u
+#define TPM_ATTR_SIGN_ENCRYPT	0x00040000u
 extern const __u8 shirudo_tpm_ek_policy[TPM_DIGEST_LEN];
+extern const __u8 shirudo_tpm_ek_policy_l2[TPM_DIGEST_LEN];
 
 /*
  * A TPMT_PUBLIC of the shapes shirudo makes or checks: a SHA-256-named
@@ -150,6 +155,8 @@ struct tpm_public {
 
 int tpm_public_parse(const __u8 *buf, size_t len,
 		     struct tpm_public *out) __must_check;
+int tpm_public_unmarshal(const __u8 *buf, size_t len,
+			 struct tpm_public *out) __must_check;
 int tpm_public_marshal(const struct tpm_public *pub,
 		       __u8 *out, size_t cap, size_t *len) __must_check;
 
