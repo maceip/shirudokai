@@ -39,6 +39,7 @@
 #include "curl.h"
 #include "hex.h"
 #include "json.h"
+#include "keepalive_quote.h"
 #include "log.h"
 #include "malloc.h"
 #include "paths.h"
@@ -774,7 +775,8 @@ static bool reserved_header(const char *name)
 	       str_equals_nocase(name, "content-encoding") ||
 	       str_equals_nocase(name, "content-length") ||
 	       str_equals_nocase(name, "host") ||
-	       str_equals_nocase(name, "user-agent");
+	       str_equals_nocase(name, "user-agent") ||
+	       str_has_prefix_nocase(name, "x-shirudo-");
 }
 
 static int append_header(struct otel_state *st, const char *line)
@@ -1217,9 +1219,141 @@ static void retry_wait(__u32 retry, __u64 retry_after,
 		;
 }
 
+static int otel_read_boot_id(char *out, size_t cap)
+{
+	char raw[OTEL_BOOT_ID_MAX + 4];
+	ssize_t n;
+	size_t len;
+	int fd;
+
+	fd = open("/proc/sys/kernel/random/boot_id", O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		return -errno;
+	n = read(fd, raw, sizeof(raw) - 1);
+	close(fd);
+	if (n <= 0)
+		return -ENODATA;
+	len = (size_t)n;
+	while (len && (raw[len - 1] == '\n' || raw[len - 1] == '\r'))
+		len--;
+	if (!len)
+		return -ENODATA;
+	return span_to_str(out, cap, raw, len);
+}
+
+static __u64 otel_next_export_seq(const struct otel_opts *opts)
+{
+	static __u64 otel_export_seq;
+
+	if (opts && opts->export_seq)
+		return opts->export_seq;
+	return __atomic_add_fetch(&otel_export_seq, 1, __ATOMIC_RELAXED);
+}
+
+noinline_for_stack int
+otel_sign_headers(const struct otel_opts *opts, const char *body,
+		  size_t body_len, struct otel_signed_headers *out)
+{
+	__u8 body_sha256[CRYPTO_SHA256_LEN], origin[CRYPTO_SHA256_LEN];
+	struct tpm_attestation att = {};
+	struct tpm_key ak = {};
+	__u64 seq;
+	int ret;
+
+	if (!opts || !body || !out)
+		return -EINVAL;
+	memset(out, 0, sizeof(*out));
+	if (opts->boot_id && opts->boot_id[0]) {
+		if (strscpy(out->boot_id, opts->boot_id,
+			    sizeof(out->boot_id)) < 0)
+			return -EINVAL;
+	} else {
+		ret = otel_read_boot_id(out->boot_id, sizeof(out->boot_id));
+		if (ret)
+			return ret;
+	}
+	seq = otel_next_export_seq(opts);
+	if (u64_decimal(seq, out->export_seq) < 0)
+		return -E2BIG;
+	ret = sha256_buffer(body, body_len, body_sha256);
+	if (!ret)
+		ret = otel_origin_digest(out->boot_id, seq, body_sha256,
+					 origin);
+	if (!ret)
+		ret = opts->quote_fn ?
+		      opts->quote_fn(origin, &ak, &att, opts->quote_ctx) :
+		      tpm_quote_digest(origin, &ak, &att);
+	if (ret)
+		return ret;
+	if (!ak.name_len || ak.name_len > sizeof(ak.name) ||
+	    !att.attest_len || att.attest_len > sizeof(att.attest) ||
+	    !att.signature_len || att.signature_len > sizeof(att.signature))
+		return -EBADMSG;
+	hex_encode(ak.name, ak.name_len, out->ak_name);
+	hex_encode(att.attest, att.attest_len, out->attest);
+	hex_encode(att.signature, att.signature_len, out->signature);
+	out->seq = seq;
+	return 0;
+}
+
+static int otel_append_list(struct curl_slist **list, const char *line)
+{
+	struct curl_slist *next = curl_slist_append(*list, line);
+
+	if (!next)
+		return -ENOMEM;
+	*list = next;
+	return 0;
+}
+
+static noinline_for_stack int
+otel_build_signed_headers(struct otel_state *st, const char *json,
+			  size_t json_len, struct curl_slist **out)
+{
+	char line[sizeof("X-Shirudo-TPM-Attest: ") + 2 * TPM_ATTEST_MAX];
+	struct otel_signed_headers sig;
+	struct curl_slist *list = NULL;
+	const struct curl_slist *cur;
+	int ret;
+
+	ret = otel_sign_headers(&st->opts, json, json_len, &sig);
+	if (ret)
+		return ret;
+	for (cur = st->headers; cur; cur = cur->next) {
+		ret = otel_append_list(&list, cur->data);
+		if (ret)
+			goto err;
+	}
+	if (strsprintf(line, sizeof(line), "X-Shirudo-TPM-AK-Name: %s",
+		       sig.ak_name) < 0 ||
+	    otel_append_list(&list, line) ||
+	    strsprintf(line, sizeof(line), "X-Shirudo-TPM-Attest: %s",
+		       sig.attest) < 0 ||
+	    otel_append_list(&list, line) ||
+	    strsprintf(line, sizeof(line), "X-Shirudo-TPM-Signature: %s",
+		       sig.signature) < 0 ||
+	    otel_append_list(&list, line) ||
+	    strsprintf(line, sizeof(line), "X-Shirudo-Boot-ID: %s",
+		       sig.boot_id) < 0 ||
+	    otel_append_list(&list, line) ||
+	    strsprintf(line, sizeof(line), "X-Shirudo-Export-Seq: %s",
+		       sig.export_seq) < 0 ||
+	    otel_append_list(&list, line)) {
+		ret = -ENOMEM;
+		goto err;
+	}
+	*out = list;
+	return 0;
+err:
+	curl_slist_free_sensitive(list);
+	return ret;
+}
+
 static noinline_for_stack int otel_post(struct otel_state *st,
 					const char *json, size_t json_len)
 {
+	struct curl_slist *signed_headers = NULL;
+	struct curl_slist *req_headers;
 	__u8 *compressed = NULL;
 	const void *body = json;
 	size_t body_len = json_len, compressed_cap = 0;
@@ -1231,10 +1365,20 @@ static noinline_for_stack int otel_post(struct otel_state *st,
 	if (!st->s3_reference && st->opts.otlp_max_bytes &&
 	    json_len > st->opts.otlp_max_bytes)
 		return -E2BIG;
-	if (st->gzip) {
-		ret = gzip_data(json, json_len, &compressed, &body_len);
+	req_headers = st->headers;
+	if (st->opts.tpm_sign) {
+		ret = otel_build_signed_headers(st, json, json_len,
+						&signed_headers);
 		if (ret)
 			return ret;
+		req_headers = signed_headers;
+	}
+	if (st->gzip) {
+		ret = gzip_data(json, json_len, &compressed, &body_len);
+		if (ret) {
+			curl_slist_free_sensitive(signed_headers);
+			return ret;
+		}
 		body = compressed;
 		compressed_cap = compressBound(json_len) + 32;
 	}
@@ -1255,7 +1399,7 @@ static noinline_for_stack int otel_post(struct otel_state *st,
 		    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE,
 				     (curl_off_t)body_len) != CURLE_OK ||
 		    curl_easy_setopt(curl, CURLOPT_HTTPHEADER,
-				     st->headers) != CURLE_OK ||
+				     req_headers) != CURLE_OK ||
 		    curl_easy_setopt(curl, CURLOPT_USERAGENT,
 				     "shirudo OTel-OTLP-Exporter-C/1") != CURLE_OK ||
 		    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,
@@ -1312,6 +1456,7 @@ static noinline_for_stack int otel_post(struct otel_state *st,
 		retry_wait(attempt, response.retry_after,
 			   response.retry_after_valid);
 	}
+	curl_slist_free_sensitive(signed_headers);
 	xfree(compressed, compressed_cap);
 	return ret;
 }

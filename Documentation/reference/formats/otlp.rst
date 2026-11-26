@@ -52,7 +52,10 @@ Transport
      - ``Content-Type: application/json``,
        ``Content-Encoding: gzip`` when compression is on,
        ``User-Agent: shirudo OTel-OTLP-Exporter-C/1``, the configured
-       headers and ``X-Tenant-ID``.
+       headers, ``X-Tenant-ID``, and with ``map_export.tpm_sign = true``
+       ``X-Shirudo-TPM-AK-Name``, ``X-Shirudo-TPM-Attest``,
+       ``X-Shirudo-TPM-Signature``, ``X-Shirudo-Boot-ID`` and
+       ``X-Shirudo-Export-Seq``.
    * - Compression
      - ``none`` (default) or ``gzip``.
    * - TLS
@@ -152,7 +155,7 @@ services read them from ``/etc/shirudo/map-export.env``.
        9110), a value that holds a control character other than tab
        before or after decoding, ``%00`` included, and the names
        ``Content-Type``, ``Content-Encoding``, ``Content-Length``,
-       ``Host`` and ``User-Agent``. One ``X-Tenant-ID`` is allowed and
+       ``Host``, ``User-Agent`` and ``X-Shirudo-*``. One ``X-Tenant-ID`` is allowed and
        must be a valid tenant id. A tenant id from the command line or
        the config replaces it.
    * - ``OTEL_EXPORTER_OTLP_CERTIFICATE``

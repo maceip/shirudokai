@@ -669,3 +669,53 @@ int tpm_attest_verify(const __u8 *attest, size_t len,
 		ret = ecdsa_p256_verify(x, y, digest, r, s);
 	return ret == -EINVAL ? -EKEYREJECTED : ret;
 }
+
+static bool otel_boot_id_valid(const char *boot_id, size_t *len_out)
+{
+	size_t i;
+
+	if (!boot_id || !boot_id[0])
+		return false;
+	for (i = 0; i <= OTEL_BOOT_ID_MAX; i++) {
+		__u8 c = (__u8)boot_id[i];
+
+		if (!c) {
+			*len_out = i;
+			return true;
+		}
+		if (c <= 0x20 || c >= 0x7f)
+			return false;
+	}
+	return false;
+}
+
+int otel_origin_digest(const char *boot_id, __u64 seq,
+		       const __u8 body_sha256[32], __u8 out[32])
+{
+	__u8 digest[CRYPTO_SHA256_LEN], seq_be[8];
+	struct sha256_ctx ctx;
+	size_t boot_len;
+	int ret;
+
+	if (!body_sha256 || !out || !otel_boot_id_valid(boot_id, &boot_len))
+		return -EINVAL;
+	put_be32(seq_be, (__u32)(seq >> 32));
+	put_be32(seq_be + 4, (__u32)seq);
+	ret = sha256_init(&ctx);
+	if (ret)
+		return ret;
+	ret = sha256_update(&ctx, OTEL_ORIGIN_PREFIX,
+			    sizeof(OTEL_ORIGIN_PREFIX));
+	if (!ret)
+		ret = sha256_update(&ctx, seq_be, sizeof(seq_be));
+	if (!ret)
+		ret = sha256_update(&ctx, body_sha256, 32);
+	if (!ret)
+		ret = sha256_update(&ctx, boot_id, boot_len);
+	if (!ret)
+		ret = sha256_final(&ctx, digest);
+	sha256_free(&ctx);
+	if (!ret)
+		memcpy(out, digest, sizeof(digest));
+	return ret;
+}

@@ -418,10 +418,13 @@ Assets
      - The config signature (T11).
    * - Status, reports and telemetry
      - The target's output and the collector
-     - Nothing for reports and map snapshots. A keepalive's body is quoted
-       by the TPM's attestation key, which shows it unchanged on the way
-       but not that the key is a TPM's. All of them are the target's own
-       account (R17).
+     - Nothing for reports, or for map snapshots unless
+       ``map_export.tpm_sign`` is set. A keepalive's body, and with
+       ``map_export.tpm_sign`` the origin digest of each OTLP export, is
+       quoted by the TPM's attestation key, which shows it unchanged on
+       the way and ties it to the pinned AK once enrolled, though root
+       can still ask the TPM to quote telemetry of its own. All of them
+       are the target's own account (R17).
 
 .. _tm-trust-boundaries:
 
@@ -2007,20 +2010,28 @@ R16 Any artifact ever signed loads at any time
    with an expected state sees it. Retiring one BPF loader artifact
    requires revoking the key that signed it.
 
-R17 Telemetry has no proof of origin
-   Map snapshots are unsigned and not bound to the TPM. A keepalive
+R17 Telemetry is the target's own account
+   Map snapshots are unsigned unless ``map_export.tpm_sign = true`` is
+   set in the signed config image. With ``map_export.tpm_sign = true``,
+   each OTLP export quotes the domain-separated digest
+   ``otel_origin_digest(boot_id, seq, body_sha256)`` with the attestation
+   key of ``attest`` over no PCR and attaches ``X-Shirudo-TPM-AK-Name``,
+   ``X-Shirudo-TPM-Attest``, ``X-Shirudo-TPM-Signature``,
+   ``X-Shirudo-Boot-ID`` and ``X-Shirudo-Export-Seq`` for offline
+   verification by ``shirudo-quote-check --otel``. A keepalive likewise
    carries a quote of the SHA-256 of its body by the attestation key of
    ``attest``, created for each keepalive, over no PCR, and
    ``shirudo-quote-check`` verifies it without a TPM. A quote that
-   checks proves that the body is unchanged since that key signed it,
-   and its clock orders the keepalives of one key. A keepalive sent
+   checks proves that the body (and, for signed OTLP exports, the boot
+   identity and export sequence) is unchanged since that key signed it,
+   and its clock orders the quotes of one key. A quote sent
    again checks as it did the first time: a backend has to take a
    record's age from when its clock first arrived, as the example
    backend's check 2 does, or a silent node reads as alive. It does not prove
    that the key lives in a genuine TPM: only ``attest challenge`` ties
    the key to an endorsement key, and a backend treats every node as
-   ``untrusted`` until a future workflow does that. Nor does it vouch
-   for the body: root on the target can have the TPM quote a body of
+   ``untrusted`` until enrollment records that. Nor does it vouch
+   for the body's truth: root on the target can have the TPM quote a body of
    its own. ``host.name`` is the target's host name, and the
    credentials come from files root reads. ``map_export.otel_insecure``
    turns certificate verification off. Root can withhold, drain or
