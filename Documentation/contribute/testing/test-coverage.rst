@@ -261,7 +261,8 @@ signed config image.
      - A BPF shield using ``bpf/lib/shield.h`` built with and without
        ``--observe``: ``upatch info`` mode, signed ``.rodata``
        ``shirudo_observe_mode`` value, rejection of an unsigned
-       ``DIRECTIVE_OBSERVE`` header bit flip and ``--observe --unload``,
+       ``DIRECTIVE_OBSERVE`` header bit flip, ``--observe`` for a
+       program without the variable and ``--observe --unload``,
        and ``shirudo upatch check`` verdicts and captured stack IDs on
        passing and failing exploit/benign snapshots
    * - ``t3017-runtime-shields``

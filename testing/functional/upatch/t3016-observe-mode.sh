@@ -140,6 +140,18 @@ test_expect_success 'unsigned DIRECTIVE_OBSERVE bit flip in header is rejected' 
 	! "$S" upatch info "$WORK/flip-obs.upatch" >/dev/null 2>&1
 '
 
+test_expect_success 'shirudo build refuses --observe for a program without shirudo_observe_mode' '
+	sed "/shirudo_observe_mode = 0/d; s/shirudo_observe_mode != 0/false/" \
+		"$WORK/shield.bpf.c" >"$WORK/blind.bpf.c" &&
+	! grep -q shirudo_observe_mode "$WORK/blind.bpf.c" &&
+	build_shield "$WORK/blind.bpf.c" --name blind-shield \
+		-o "$WORK/blind.upatch" >/dev/null 2>&1 &&
+	! build_shield --observe "$WORK/blind.bpf.c" --name blind-shield \
+		-o "$WORK/blind-obs.upatch" >"$WORK/blind.log" 2>&1 &&
+	grep -q "needs a 32-bit shirudo_observe_mode" "$WORK/blind.log" &&
+	test ! -e "$WORK/blind-obs.upatch"
+'
+
 test_expect_success 'shirudo build refuses --observe combined with --unload' '
 	p=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))[\"payload_sha256\"])" \
 		"$WORK/observe.info.json") &&
