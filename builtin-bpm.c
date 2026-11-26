@@ -34,6 +34,7 @@
 
 #include "builtin.h"
 #include "util/bpm_cleanup.h"
+#include "util/bpm_feed.h"
 #include "util/bpm_install.h"
 #include "util/bpm_oci.h"
 #include "util/bpm_package.h"
@@ -2565,6 +2566,7 @@ static const struct help_item bpm_subcmds[] = {
 	{ "config", "manage package inputs and OCI repositories" },
 	{ "repo", "refresh signed repository indexes" },
 	{ "tree", "synchronize or publish the signed upatch tree" },
+	{ "feed", "verify and query signed curated CVE shield feeds" },
 	{ "key", "add, fingerprint, and list package certificates" },
 	{ "pull", "download an OCI package into the current directory" },
 	{ "info", "print a local or OCI package README" },
@@ -2580,6 +2582,7 @@ static const struct help_item bpm_target_subcmds[] = {
 	{ "config", "register and manage OCI repositories" },
 	{ "repo", "refresh signed repository indexes" },
 	{ "tree", "synchronize the optional signed upatch tree" },
+	{ "feed", "verify and query signed curated CVE shield feeds" },
 	{ "key", "add, fingerprint, and list package certificates" },
 	{ "pull", "download an OCI package into the current directory" },
 	{ "info", "print a local or OCI package README" },
@@ -2604,7 +2607,7 @@ static int bpm_exec_operator(const char *sub, int argc, const char **argv)
 }
 
 static const struct help bpm_target_help = {
-	.usage = "shirudo bpm <config|repo|tree|key|pull|info|install|upgrade|list|uninstall>",
+	.usage = "shirudo bpm <config|repo|tree|feed|key|pull|info|install|upgrade|list|uninstall>",
 	.summary = "Manage signed target-local BPM packages backed by OCI repositories.",
 	.sections = (const struct help_section[]) {
 		HELP_ITEMS("subcommands:", bpm_target_subcmds),
@@ -2613,7 +2616,7 @@ static const struct help bpm_target_help = {
 };
 
 static const struct help bpm_operator_help = {
-	.usage = "shirudo bpm <config|repo|tree|key|pull|info|push|build|install|upgrade|list|uninstall>",
+	.usage = "shirudo bpm <config|repo|tree|feed|key|pull|info|push|build|install|upgrade|list|uninstall>",
 	.summary = "Manage signed OCI packages and publish packages from the operator.",
 	.sections = (const struct help_section[]) {
 		HELP_ITEMS("subcommands:", bpm_subcmds),
@@ -3351,6 +3354,236 @@ static int bpm_upgrade_cmd(int argc, const char **argv)
 	return with_tables(bpm_upgrade, NULL, "upgrade");
 }
 
+static const struct help_item bpm_feed_subcmds[] = {
+	{ "verify", "verify a signed curated CVE shield feed" },
+	{ "list", "verify and list entries of a curated CVE shield feed" },
+	{ "match", "verify and list feed entries matching this host" },
+};
+
+enum bpm_feed_opt {
+	FEED_OPT_FEED,
+	FEED_OPT_SIG,
+	FEED_OPT_CERT,
+	FEED_OPT_JSON,
+	FEED_OPT_CVE,
+};
+
+static const struct opt_spec bpm_feed_verify_opts[] = {
+	[FEED_OPT_FEED] = { "--feed", 0, 0, "<path>", "feed JSON file" },
+	[FEED_OPT_SIG] = { "--sig", 0, 0, "<path>",
+		"detached ML-DSA-87 CMS signature" },
+	[FEED_OPT_CERT] = { "--cert", 0, 0, "<cert.der>",
+		"signer certificate" },
+	[FEED_OPT_JSON] = { "--json", 0, 0, NULL, "print verdict as JSON" },
+};
+
+static const struct opt_spec bpm_feed_query_opts[] = {
+	[FEED_OPT_FEED] = { "--feed", 0, 0, "<path>", "feed JSON file" },
+	[FEED_OPT_SIG] = { "--sig", 0, 0, "<path>",
+		"detached ML-DSA-87 CMS signature" },
+	[FEED_OPT_CERT] = { "--cert", 0, 0, "<cert.der>",
+		"signer certificate" },
+	[FEED_OPT_JSON] = { "--json", 0, 0, NULL, "print feed entries as JSON" },
+	[FEED_OPT_CVE] = { "--cve", 0, 0, "<cve-id>",
+		"filter entries fixing this CVE" },
+};
+
+static const struct help_section bpm_feed_sections[] = {
+	HELP_ITEMS("subcommands:", bpm_feed_subcmds),
+	HELP_OPTIONS("options:", bpm_feed_query_opts),
+};
+
+static const struct help bpm_feed_help = {
+	.usage	    = "shirudo bpm feed verify --feed <path> --sig <path> "
+		      "--cert <cert.der> [--json]\n"
+		      "       shirudo bpm feed list --feed <path> --sig <path> "
+		      "--cert <cert.der> [--cve <CVE-ID>] [--json]\n"
+		      "       shirudo bpm feed match --feed <path> --sig <path> "
+		      "--cert <cert.der> [--cve <CVE-ID>] [--json]",
+	.summary    = "Verify and query offline ML-DSA-87 signed curated CVE "
+		      "shield feeds.",
+	.sections   = bpm_feed_sections,
+	.n_sections = ARRAY_SIZE(bpm_feed_sections),
+};
+
+static int feed_print_verify(const struct bpm_feed *feed, bool json)
+{
+	if (!json) {
+		printf("Verified feed %s (%d entries, generated %s)\n",
+		       feed->feed_id, feed->n_entries, feed->generated_at);
+		return 0;
+	}
+	{
+		char buf[1024];
+		struct json_emit e = { .buf = buf, .cap = sizeof(buf) };
+
+		json_obj_open(&e);
+		json_kv_int(&e, "schema", 1);
+		json_kv_bool(&e, "verified", 1);
+		json_kv_string(&e, "feed_id", feed->feed_id);
+		json_kv_string(&e, "generated_at", feed->generated_at);
+		json_kv_int(&e, "entries", feed->n_entries);
+		json_obj_close(&e);
+		if (e.err)
+			return e.err;
+		puts(buf);
+	}
+	return 0;
+}
+
+static void feed_print_table(const struct bpm_feed *feed, const bool *keep,
+			     int n_kept)
+{
+	size_t id_w = 8, pkg_w = 8;
+
+	for (int i = 0; i < feed->n_entries; i++) {
+		if (!keep[i])
+			continue;
+		id_w = max(id_w, strlen(feed->entries[i].id));
+		pkg_w = max(pkg_w, strlen(feed->entries[i].package));
+	}
+	printf("Feed %s (%d matching):\n", feed->feed_id, n_kept);
+	if (!n_kept) {
+		printf("  none\n");
+		return;
+	}
+	printf("  %-*s  %-10s  %-*s  %-12s  %s\n", (int)id_w, "ID", "ROLE",
+	       (int)pkg_w, "PACKAGE", "VERSION", "CVES");
+	for (int i = 0; i < feed->n_entries; i++) {
+		const struct bpm_feed_entry *ent = &feed->entries[i];
+
+		if (!keep[i])
+			continue;
+		printf("  %-*s  %-10s  %-*s  %-12s  ", (int)id_w, ent->id,
+		       bpm_feed_role_str(ent->role), (int)pkg_w, ent->package,
+		       ent->version);
+		for (int j = 0; j < ent->n_cves; j++)
+			printf("%s%s", j ? "," : "", ent->cves[j]);
+		putchar('\n');
+	}
+}
+
+static int feed_print_filtered(const struct bpm_feed *feed, const bool *keep,
+			       int n_kept, bool json)
+{
+	struct bpm_feed sub = {};
+	size_t out_len = 0;
+	char *out = NULL;
+	int at = 0, ret;
+
+	if (!json) {
+		feed_print_table(feed, keep, n_kept);
+		return 0;
+	}
+	sub.schema = feed->schema;
+	bpm_copy_string(sub.feed_id, sizeof(sub.feed_id), feed->feed_id);
+	bpm_copy_string(sub.generated_at, sizeof(sub.generated_at),
+			feed->generated_at);
+	if (n_kept) {
+		sub.entries = xcalloc((size_t)n_kept, sizeof(*sub.entries));
+		if (!sub.entries)
+			return -ENOMEM;
+		for (int i = 0; i < feed->n_entries; i++) {
+			if (keep[i])
+				sub.entries[at++] = feed->entries[i];
+		}
+		sub.n_entries = n_kept;
+	}
+	ret = bpm_feed_emit(&sub, &out, &out_len);
+	if (!ret) {
+		puts(out);
+		xfree(out, out_len);
+	}
+	xfree(sub.entries, (size_t)n_kept * sizeof(*sub.entries));
+	return ret;
+}
+
+static int feed_run_query(const struct bpm_feed *feed, const char *cve,
+			  bool match_node, bool json)
+{
+	bool keep[BPM_FEED_MAX_ENTRIES] = {};
+	int n_kept = 0;
+
+	for (int i = 0; i < feed->n_entries; i++) {
+		const struct bpm_feed_entry *ent = &feed->entries[i];
+
+		if (cve && !bpm_feed_entry_has_cve(ent, cve))
+			continue;
+		if (match_node) {
+			int matched = tree_selector_matches(&ent->selector);
+
+			if (matched < 0)
+				return matched;
+			if (!matched)
+				continue;
+		}
+		keep[i] = true;
+		n_kept++;
+	}
+	return feed_print_filtered(feed, keep, n_kept, json);
+}
+
+static int bpm_feed_cmd(int argc, const char **argv)
+{
+	const char *values[ARRAY_SIZE(bpm_feed_query_opts)] = {};
+	struct bpm_feed feed = {};
+	const char *sub, *action;
+	struct opt_parser p;
+	bool is_verify;
+	size_t n;
+	int ret;
+
+	if (argc < 3 || is_help(argv[2])) {
+		print_help(&bpm_feed_help);
+		return argc < 3 ? EXIT_USAGE : 0;
+	}
+	if (is_list_cmds(argv[2])) {
+		print_subcmd_list(bpm_feed_subcmds,
+				  ARRAY_SIZE(bpm_feed_subcmds));
+		return 0;
+	}
+	sub = argv[2];
+	if (strcmp(sub, "verify") && strcmp(sub, "list") &&
+	    strcmp(sub, "match")) {
+		pr_err("bpm feed: '%s' is not a subcommand", sub);
+		return EXIT_USAGE;
+	}
+	is_verify = !strcmp(sub, "verify");
+	action = is_verify ? "bpm feed verify" :
+		 !strcmp(sub, "list") ? "bpm feed list" : "bpm feed match";
+	opt_init(&p, action,
+		 is_verify ? bpm_feed_verify_opts : bpm_feed_query_opts,
+		 is_verify ? ARRAY_SIZE(bpm_feed_verify_opts) :
+			     ARRAY_SIZE(bpm_feed_query_opts),
+		 &bpm_feed_help, argc, argv, 3);
+	ret = bpm_args(&p, values, NULL, 0, 0, NULL, &n);
+	if (ret != OPT_END)
+		return bpm_exit(ret);
+	if (!values[FEED_OPT_FEED] || !values[FEED_OPT_SIG] ||
+	    !values[FEED_OPT_CERT]) {
+		opt_usage(&p, "takes --feed, --sig and --cert");
+		return EXIT_USAGE;
+	}
+	if (values[FEED_OPT_CVE] && !bpm_feed_cve_ok(values[FEED_OPT_CVE])) {
+		opt_usage(&p, "invalid CVE identifier '%s'",
+			  values[FEED_OPT_CVE]);
+		return EXIT_USAGE;
+	}
+	ret = bpm_feed_verify_files(values[FEED_OPT_FEED], values[FEED_OPT_SIG],
+				    values[FEED_OPT_CERT], &feed);
+	if (!ret) {
+		if (is_verify)
+			ret = feed_print_verify(&feed,
+						opt_given(&p, FEED_OPT_JSON));
+		else
+			ret = feed_run_query(&feed, values[FEED_OPT_CVE],
+					     !strcmp(sub, "match"),
+					     opt_given(&p, FEED_OPT_JSON));
+	}
+	bpm_feed_free(&feed);
+	return ret ? bpm_fail(action + 4, ret) : 0;
+}
+
 int cmd_bpm(int argc, const char **argv)
 {
 	const struct help *help = build_available() ?
@@ -3386,6 +3619,8 @@ int cmd_bpm(int argc, const char **argv)
 		return bpm_info_cmd(argc, argv);
 	if (!strcmp(sub, "tree"))
 		return bpm_tree_cmd(argc, argv);
+	if (!strcmp(sub, "feed"))
+		return bpm_feed_cmd(argc, argv);
 	if (!strcmp(sub, "pull"))
 		return bpm_pull_cmd(argc, argv);
 	if (!strcmp(sub, "repo"))

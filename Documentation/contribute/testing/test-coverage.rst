@@ -1124,6 +1124,8 @@ the functional tests run.
        JSON, which give the same checks and verdict
    * - ``beefile``
      - A Beefile
+   * - ``bpm-feed``
+     - A curated CVE shield feed and its canonical round-trip emission
    * - ``bpm-index``
      - A repository index
    * - ``bpm-info``
@@ -1293,10 +1295,10 @@ Coverage by area
    * - Packages and repositories
      - ``t7001``, ``t7002``, ``t7003``, ``t7004``, ``t7005``,
        ``t7006``, ``t7114``. Fuzz:
-       ``beefile``, ``bpm-index``, ``bpm-info``, ``bpm-package``,
-       ``bpm-tar``, ``oci-http``, ``oci-manifest``, ``oci-ref``,
-       ``registry-auth``. Unit:
-       ``bpm_oci``, ``bpm_package``
+       ``beefile``, ``bpm-feed``, ``bpm-index``, ``bpm-info``,
+       ``bpm-package``, ``bpm-tar``, ``oci-http``, ``oci-manifest``,
+       ``oci-ref``, ``registry-auth``. Unit:
+       ``bpm_feed``, ``bpm_oci``, ``bpm_package``
    * - upatch tree
      - ``t3011``, ``t5004``, ``t7005``, ``t7007``, ``t7008``, ``t7009``,
        ``t7101``, ``t7102``, ``t7103``, ``t7104``, ``t7105``, ``t7106``,
