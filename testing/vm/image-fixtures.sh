@@ -146,19 +146,15 @@ for name in config-boot-keys config-live-new-key config-live-revoke-a config-a c
 	"$builder" keys vouch "$output/public/boot.der" \
 		-o "$root/keys/trusted/$boot_fp.vouch" --keys-dir "$keys_dir" \
 		>"$output/$name-boot-vouch.log" 2>&1
-	if [ "$name" = config-live-new-key ]; then
+	if [[ "$name" == config-live-new-key || "$name" == config-live-revoke-a ]]; then
 		cp "$output/public/live.der" "$root/keys/trusted/$live_fp.der"
 		"$builder" keys vouch "$output/public/live.der" \
 			-o "$root/keys/trusted/$live_fp.vouch" \
 			--keys-dir "$output/private/boot" \
 			>"$output/$name-live-vouch.log" 2>&1
-	elif [ "$name" = config-live-revoke-a ]; then
-		cp "$output/public/live.der" "$root/keys/trusted/$live_fp.der"
-		"$builder" keys vouch "$output/public/live.der" \
-			-o "$root/keys/trusted/$live_fp.vouch" \
-			--keys-dir "$keys_dir" \
-			>"$output/$name-live-vouch.log" 2>&1
-		cp "$output/public/boot.der" "$root/keys/revoked/$boot_fp.der"
+	fi
+	if [ "$name" = config-live-revoke-a ]; then
+		cp "$output/public/primary.der" "$root/keys/revoked/$primary_fp.der"
 	elif [[ "$name" == config-revoke || "$name" == config-interrupted ]]; then
 		cp "$output/public/boot.der" "$root/keys/revoked/$boot_fp.der"
 	elif [ "$name" = config-bad ]; then

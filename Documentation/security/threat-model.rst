@@ -545,9 +545,8 @@ ADV-F, holder of a compromised or revoked signing key
    which both gates admit, so it can open shirudo's maps and attach
    programs that write them: the maps are frozen against ``bpf()``
    writes, not against programs. A upatch does what its author wrote,
-   disabling enforcement included. Revoking the key also invalidates
-   vouches it signed, so dependent keys without another active voucher
-   are excluded. Tree publications require a
+   disabling enforcement included. Keys it vouched for stay admitted
+   where a config lists them (U13). Tree publications require a
    non-revoked member of the active config's BPF signer set.
    A key that signs configs (A7) chooses repositories, vouched signers
    and revocations.
@@ -1975,9 +1974,8 @@ R13 Revocation reaches a target only through a config
    BPF loads require a complete CMS envelope, and the purge reads an
    archived signature by the same rule.
    At boot the revoked key is not enrolled, and the init event's
-   certificate list shows it. Revoking a signer also invalidates vouches
-   it signed, so dependent keys without an active voucher are excluded. A
-   target that has not activated the config still trusts the key.
+   certificate list shows it. A target that has not activated the
+   config still trusts the key. Historical vouches are U13.
 
 R14 Configs roll back
    Targets persist a sealed monotonic ``security.epoch`` floor at
@@ -2360,6 +2358,21 @@ U11 The boot continues when init fails
       pinned, and treat a missing keepalive as a signal. A deployer who
       prefers a halted boot can add an ``OnFailure=`` drop-in to
       ``shirudo-initrd.service``; this is not tested.
+
+U13 A revoked signer's historical vouches remain valid
+   :Affects: Vouched keys (R13).
+   :Consequence: A revoked key's vouch for another key still admits it
+      when a config lists that key. This supports planned rotation, in
+      which the primary vouches for a standby and is revoked later, but
+      does not distinguish a legitimate earlier vouch from one made with
+      a compromised signing key. A vouch made with ``--expires-days``
+      stops admitting its key at the date signed into it, by the
+      target's clock, which bounds how long such a vouch lasts and not
+      whether it was legitimate.
+   :Status: Confirmed in code. Rotation preserves this existing rule.
+   :Meanwhile: When a signer is compromised, also remove or revoke every
+      dependent key whose authority should no longer be trusted. A
+      planned overlap is not sufficient compromise recovery by itself.
 
 U15 Certificates are fetched without a pin
    :Affects: ``tools/gen-initrd/install.sh --cert <url>`` and

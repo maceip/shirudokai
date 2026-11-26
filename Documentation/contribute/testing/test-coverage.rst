@@ -178,8 +178,7 @@ signed config image.
        keys, a one-bit change in the signed bytes, the signed bytes
        under a header that ends the loader elsewhere
    * - ``t2003-keys-set``
-     - The trusted set and its digest, revoked certificates and
-       dependent keys vouched only by a revoked signer left out,
+     - The trusted set and its digest, revoked certificates left out,
        ``attest predict`` agreement, signatures accepted from either
        active signer and refused after that signer is revoked
    * - ``t2004-keys-vouch``
@@ -1536,6 +1535,8 @@ Most of these attacks are open threats in
 Tests that assert behavior the threat model lists as a threat to
 resolve. They change when that threat is resolved:
 
+- ``t2003`` and ``t5003`` assert that a revoked signer's earlier
+  vouches stay valid.
 - ``t7003`` adds a certificate from an OCI reference without a
   fingerprint to compare it with.
 

@@ -467,9 +467,15 @@ Limits
   is then not restored, and ``shirudo status`` does not report it: the
   node reads ``ok`` with a loaded set, in ``status`` and in the
   keepalive, that is one upatch short.
-- Revoking a signer invalidates vouches it signed. Any dependent signer
-  whose only vouch came from the revoked certificate must be re-vouched
-  by an active signer before activating the revocation config.
+- Revoking a signer does not undo the vouches it signed: a key it
+  vouched for stays admitted where a config lists it, which is what lets
+  you revoke the primary and keep the standby. After a compromise, also
+  revoke every key the compromised signer vouched for (U13).
+- A vouch made with ``--expires-days`` stops admitting its key on that
+  day by the target's clock, and ``shirudo keys rotate`` makes one of 90
+  days unless told otherwise. A target whose only remaining signer
+  depends on an expired vouch refuses its config at the next boot:
+  renew the vouch, or vouch without an expiry, before that day.
 - Userspace verifiers check X.509 ``notBefore`` and ``notAfter`` windows
   on vouch, repository and Java upatch certificates and enforce the
   signed expiration of bounded v2 vouches, whereas the kernel's ``.bpf``
