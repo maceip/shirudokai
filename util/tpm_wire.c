@@ -321,6 +321,12 @@ const __u8 shirudo_tpm_ek_policy[32] = {
 	0x0b, 0x64, 0xf2, 0xa1, 0xda, 0x1b, 0x33, 0x14, 0x69, 0xaa,
 };
 
+const __u8 shirudo_tpm_ek_policy_l2[32] = {
+	0xb2, 0x6e, 0x7d, 0x28, 0xd1, 0x1a, 0x50, 0xbc, 0x53, 0xd8, 0x82,
+	0xbc, 0xf5, 0xfd, 0x3a, 0x1a, 0x07, 0x41, 0x48, 0xbb, 0x35, 0xd3,
+	0xb4, 0xe4, 0xcb, 0x1c, 0x0a, 0x9b, 0xd4, 0x16, 0xca, 0x11,
+};
+
 int tpm_public_parse(const __u8 *buf, size_t len,
 		     struct tpm_public *out)
 {
@@ -372,6 +378,16 @@ int tpm_public_parse(const __u8 *buf, size_t len,
 	      (out->rsa_exponent && out->rsa_exponent != 65537))))
 		return -EPROTONOSUPPORT;
 	return 0;
+}
+
+int tpm_public_unmarshal(const __u8 *buf, size_t len,
+			 struct tpm_public *out)
+{
+	if (!buf || !out || len < 2)
+		return -EINVAL;
+	if (get_be16(buf) != len - 2)
+		return -EINVAL;
+	return tpm_public_parse(buf + 2, len - 2, out);
 }
 
 int tpm_public_marshal(const struct tpm_public *pub,

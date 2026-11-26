@@ -41,6 +41,7 @@ install beside ``shirudo``.
    attest-verify
    attest-predict
    attest-challenge
+   attest-ek-name
    image
    gen-tools
    quote-check

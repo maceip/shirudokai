@@ -20,7 +20,7 @@ Usage
 .. code-block:: none
 
    shirudo attest verify --evidence=<evidence> --nonce=<nonce>
-                         [--ak-name=<name>] [--ek-name=<name>]
+                         [--ak-name=<name>] [--ek-name=<name>] [--ek-pub=<path>]
                          [--expect-credential=<credential>]
                          [--cert=<certificate>]... [--upatch=<file>]...
                          [--expect=[java:]<name>=<digest>]... [--tree-root=<digest>]
@@ -47,9 +47,10 @@ checks:
   certification
 - the attestation key: restricted, fixed to its TPM, its name matching its
   public area and, with ``--ak-name``, the pinned name
-- the endorsement key: its name and the TCG default template, and with
-  ``--ek-name`` the pinned name. With ``--expect-credential``, the
-  credential the target recovered
+- the endorsement key: its name and the TCG default template, with
+  ``--ek-name`` the pinned name, and with ``--ek-pub`` the cloud-published
+  public key. With ``--expect-credential``, the credential the target
+  recovered
 - the quote and the register certification: signed by the attestation key
   as an endorsement primary, covering the listed PCRs and index, of one
   TPM boot with the same reset and restart counts, with each register
@@ -97,6 +98,11 @@ Options
    * - ``--ek-name``
      - ``<name>``, 68 hex characters
      - The endorsement key name pinned at enrollment.
+   * - ``--ek-pub``
+     - ``<path>``
+     - Cloud-published endorsement public key (PEM SPKI, DER SPKI, or raw
+       or base64 ``TPM2B_PUBLIC``) that the evidence's endorsement key
+       must match.
    * - ``--expect-credential``
      - ``<credential>``, 64 hex characters
      - The credential of the challenge given to the target. Needs
@@ -254,6 +260,7 @@ Related
 - :doc:`attest`
 - :doc:`attest-predict`
 - :doc:`attest-challenge`
+- :doc:`attest-ek-name`
 - :doc:`quote-check`
 - :doc:`/operate/run/attest`
 - :doc:`/security/threat-model`
