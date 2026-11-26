@@ -273,7 +273,52 @@ static void unsupported_algorithms_and_malformed_inputs_fail(void)
 	EVP_PKEY_free(rsa3072);
 }
 
+/*
+ * The endorsement key of an Azure Trusted Launch vTPM, as tpm2_readpublic
+ * printed it for the persistent handle 0x81010001, and the name the TPM
+ * gave for it.
+ */
+static const char azure_ek_pem[] =
+	"-----BEGIN PUBLIC KEY-----\n"
+	"MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqpsgzgAAM6Uc+wFTGGHt\n"
+	"9Pfg4ZBMZXyfQ81JZHzuXJtxZH0B4Cs6eOnMVvyuLDQpLh8oOJGKTP2dJSLxXoeF\n"
+	"tQhk+APDI/ZywVgbN6xJsJFi1+XGkjprUFUBu3ACTCQvjnIlnv+rQ8hHtGe0GgTF\n"
+	"zUy7MxEOo7D63C6hftrL9Wwq5RZFT/EXDMZ3DaXGj7dQb0+OIKQ8vyO4ZJGz2PJV\n"
+	"6zFr8YwpYVsf4jRU/s5wySGn09lBUbgH1h5YFU76PqeDFXL5n/uk+qNtWlZKMIQt\n"
+	"Oh908kHc4qAlcKlyOvIfmacuQysR1hG4WoFgJlWqSHZByeGkBuprs/kLytepu3d9\n"
+	"SQIDAQAB\n"
+	"-----END PUBLIC KEY-----\n";
+
+static const __u8 azure_ek_name[TPM_NAME_LEN] = {
+	0x00, 0x0b, 0x1e, 0xad, 0x9b, 0xe3, 0x6c, 0x74, 0xac, 0x17, 0x98,
+	0x96, 0x43, 0x95, 0xfa, 0x3c, 0x35, 0xef, 0x88, 0x28, 0x23, 0x10,
+	0x26, 0xc8, 0x01, 0x12, 0x8c, 0x1e, 0xc8, 0xf6, 0x98, 0x08, 0x74,
+	0xe0,
+};
+
+static const __u8 tcg_policy_b_sha256[TPM_DIGEST_LEN] = {
+	0xca, 0x3d, 0x0a, 0x99, 0xa2, 0xb9, 0x39, 0x06, 0xf7, 0xa3, 0x34,
+	0x24, 0x14, 0xef, 0xcf, 0xb3, 0xa3, 0x85, 0xd4, 0x4c, 0xd1, 0xfd,
+	0x45, 0x90, 0x89, 0xd1, 0x9b, 0x50, 0x71, 0xc0, 0xb7, 0xa0,
+};
+
+static void name_of_a_real_vtpm_key_and_the_tcg_policies(void)
+{
+	enum ek_template tmpl = EK_TEMPLATE_L2;
+	__u8 name[TPM_NAME_MAX];
+	bool rsa = false;
+
+	ASSERT_EQ(ek_cloud_name(azure_ek_pem, sizeof(azure_ek_pem) - 1,
+				EK_TEMPLATE_L1, false, &rsa, &tmpl, name), 0);
+	EXPECT_TRUE(rsa);
+	EXPECT_EQ(tmpl, EK_TEMPLATE_L1);
+	EXPECT_EQ(memcmp(name, azure_ek_name, TPM_NAME_LEN), 0);
+	EXPECT_EQ(memcmp(shirudo_tpm_ek_policy_l2, tcg_policy_b_sha256,
+			 TPM_DIGEST_LEN), 0);
+}
+
 static const struct unit_case cases[] = {
+	UNIT_CASE(name_of_a_real_vtpm_key_and_the_tcg_policies),
 	UNIT_CASE(rsa2048_vectors_across_cloud_formats),
 	UNIT_CASE(ecc_p256_vectors_and_tamper_rejection),
 	UNIT_CASE(unsupported_algorithms_and_malformed_inputs_fail),
