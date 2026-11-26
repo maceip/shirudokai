@@ -106,4 +106,31 @@ test_expect_success 'add needs a primary certificate to extend' '
 	! [ -d "$W/empty/trusted" ]
 '
 
+test_expect_success 'vouch --expires-days writes a bounded v2 vouch and refuses a revoked signer' '
+	$S genkey --keys-dir "$W/e" >/dev/null 2>&1 &&
+	fp_e=$(fp "$W/e/cert.der") &&
+	out=$($S keys vouch "$W/e/cert.der" --keys-dir "$W/a" --expires-days 30 -o "$W/e.vouch" 2>/dev/null) &&
+	[ "$out" = "$fp_e" ] &&
+	head -c 20 "$W/e.vouch" | grep -qx "shirudo-key-vouch-v2" &&
+	$S keys add "$W/e/cert.der" --vouch "$W/e.vouch" --keys-dir "$W/keys" >/dev/null 2>&1 &&
+	./$H load "$W/keys" | grep -qx "n=4 revoked=1 unvouched=0" &&
+	mkdir -p "$W/b/revoked" &&
+	cp "$W/b/cert.der" "$W/b/revoked/$fp_b.der" &&
+	! $S keys vouch "$W/e/cert.der" --keys-dir "$W/b" -o "$W/revoked-signer.vouch" >/dev/null 2>&1
+'
+
+test_expect_success 'keys rotate generates a new ML-DSA-87 keypair and bounded vouch' '
+	fp_rot=$($S keys rotate --old-keys-dir "$W/a" --keys-dir "$W/rotated" --expires-days 14 2>/dev/null) &&
+	[ -n "$fp_rot" ] &&
+	[ -s "$W/rotated/signing_key.pem" ] &&
+	[ -s "$W/rotated/cert.der" ] &&
+	[ -s "$W/rotated/cert.der.vouch" ] &&
+	[ "$(fp "$W/rotated/cert.der")" = "$fp_rot" ] &&
+	head -c 20 "$W/rotated/cert.der.vouch" | grep -qx "shirudo-key-vouch-v2" &&
+	$S keys add "$W/rotated/cert.der" --vouch "$W/rotated/cert.der.vouch" --keys-dir "$W/keys" >/dev/null 2>&1 &&
+	./$H load "$W/keys" | grep -qx "n=5 revoked=1 unvouched=0" &&
+	! $S keys rotate --old-keys-dir "$W/a" --keys-dir "$W/rotated" >/dev/null 2>&1 &&
+	! $S keys rotate --old-keys-dir "$W/b" --keys-dir "$W/from-revoked" >/dev/null 2>&1
+'
+
 test_done

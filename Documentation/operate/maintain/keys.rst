@@ -121,7 +121,8 @@ What can change when
      - New runtime image, UKI and reboot
    * - Runtime primary BPF certificate
      - Set by the runtime image.
-     - Cannot change it. The config can revoke it.
+     - Cannot change it. Retiring it requires a new runtime image,
+       because vouched signers chain from it.
      - Changes it. Every certificate in the selected config's
        ``keys/trusted`` must chain from the new primary, or init fails
        before enforcement starts. Every archived upatch must be signed
@@ -246,12 +247,15 @@ that config on an existing target and reboot when appropriate.
 
       operator$ shirudo genkey --keys-dir=<standby-keys-dir>
 
-2. Sign a vouch for its certificate with the primary key:
+2. Sign a vouch for its certificate with the primary key (or generate and
+   vouch in one step with ``shirudo keys rotate --old-keys-dir
+   <primary-keys-dir> --keys-dir <standby-keys-dir>``):
 
    .. code-block:: console
 
       operator$ shirudo keys vouch <standby-keys-dir>/cert.der \
-          -o standby.vouch --keys-dir=<primary-keys-dir>
+          -o standby.vouch --keys-dir=<primary-keys-dir> \
+          --expires-days 90
 
    The command prints the fingerprint of the certificate it vouched for.
    It refuses to vouch for the signing key's own certificate.
@@ -463,12 +467,13 @@ Limits
   is then not restored, and ``shirudo status`` does not report it: the
   node reads ``ok`` with a loaded set, in ``status`` and in the
   keepalive, that is one upatch short.
-- Vouches are historical authorizations. Revoking A does not
-  automatically revoke B merely because A vouched for it. After a
-  compromise, the config signer must explicitly revoke any certificate
-  whose authorization is no longer trusted.
-- A certificate's validity dates do not end its trust. shirudo verifies
-  vouches and index and tree signatures without checking them.
+- Revoking a signer invalidates vouches it signed. Any dependent signer
+  whose only vouch came from the revoked certificate must be re-vouched
+  by an active signer before activating the revocation config.
+- Userspace verifiers check X.509 ``notBefore`` and ``notAfter`` windows
+  on vouch, repository and Java upatch certificates and enforce the
+  signed expiration of bounded v2 vouches, whereas the kernel's ``.bpf``
+  keyring check does not expire enrolled certificates on its own.
 - Older signed configs can still be selected. Local rollback prevention
   is not provided; a verifier must check the approved config root and
   boot measurements. See :doc:`/security/threat-model`.

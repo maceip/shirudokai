@@ -58,6 +58,11 @@ static inline __be32 cpu_to_be32(__u32 v)
 	return (__force __be32)htobe32(v);
 }
 
+static inline __be64 cpu_to_be64(__u64 v)
+{
+	return (__force __be64)htobe64(v);
+}
+
 static inline __u16 be16_to_cpu(__be16 v)
 {
 	return be16toh((__force __u16)v);
@@ -66,6 +71,11 @@ static inline __u16 be16_to_cpu(__be16 v)
 static inline __u32 be32_to_cpu(__be32 v)
 {
 	return be32toh((__force __u32)v);
+}
+
+static inline __u64 be64_to_cpu(__be64 v)
+{
+	return be64toh((__force __u64)v);
 }
 
 /*
@@ -114,6 +124,14 @@ static inline __u32 get_be32(const void *p)
 	return be32_to_cpu(v);
 }
 
+static inline __u64 get_be64(const void *p)
+{
+	__be64 v;
+
+	memcpy(&v, p, sizeof(v));
+	return be64_to_cpu(v);
+}
+
 static inline void put_be16(void *p, __u16 v)
 {
 	__be16 b = cpu_to_be16(v);
@@ -124,6 +142,13 @@ static inline void put_be16(void *p, __u16 v)
 static inline void put_be32(void *p, __u32 v)
 {
 	__be32 b = cpu_to_be32(v);
+
+	memcpy(p, &b, sizeof(b));
+}
+
+static inline void put_be64(void *p, __u64 v)
+{
+	__be64 b = cpu_to_be64(v);
 
 	memcpy(p, &b, sizeof(b));
 }
