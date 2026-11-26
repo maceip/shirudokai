@@ -106,10 +106,12 @@ The properties above hold only on a deployment that provides the
 
 shirudo checks only some of these. The pre-flight of ``shirudo init``
 checks that the BPF LSM is active, that the kernel has the
-signed-loader ABI and that it checks module signatures. The target
-checks a config's signature against the runtime image's keys itself. It
-does not check the rest of the kernel configuration or the boot chain
-(U10).
+signed-loader ABI and the LSM hooks shirudo attaches to, and that
+module signatures are enabled, 32-bit compatibility and hibernation
+resume are off, and writes to mounted block devices are blocked. The
+target checks a config's signature against the runtime image's keys
+itself. It does not check Secure Boot, the UKI or bus access to the
+TPM.
 
 What you must do
 ----------------

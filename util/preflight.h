@@ -19,6 +19,9 @@ enum preflight_id {
 	PRE_SIGNED_LOADER_ABI,
 	PRE_LSM_HOOKS,
 	PRE_MODULE_SIG,
+	PRE_COMPAT_DISABLED,
+	PRE_HIBERNATION_DISABLED,
+	PRE_BDEV_WRITE_MOUNTED,
 	PRE_CERT_ON_DISK,
 	PRE_CERT_ALGORITHM,
 	PRE_CERT_KERNEL_ALGO,
@@ -30,15 +33,15 @@ enum preflight_id {
 
 struct preflight_check {
 	enum preflight_id	id;
-	const char			*name;
-	bool				ok;
-	char				detail[PREFLIGHT_DETAIL_MAX];
+	const char		*name;
+	bool			ok;
+	char			detail[PREFLIGHT_DETAIL_MAX];
 };
 
 struct preflight_result {
 	struct preflight_check	checks[PRE__MAX];
-	int				n;
-	int				n_failed;
+	int			n;
+	int			n_failed;
 };
 
 /*
