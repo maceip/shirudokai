@@ -71,8 +71,14 @@ kernel-cve
 ``sources/<slug>/observability/``, two mitigations in
 ``sources/<slug>/mitigation/``, ``manifest.json``, and one Beefile per
 shield, ``<shield>.bee``. Each source compiles with CO-RE against the
-target's ``vmlinux.h`` and maps ``__x86_64__``, ``__aarch64__`` and
-``__riscv`` to the ``__TARGET_ARCH_*`` macro ``bpf_tracing.h`` reads.
+target's ``vmlinux.h``. A detector reads a probed function's arguments
+through three CO-RE flavors of ``pt_regs``, one per architecture, and
+``bpf_core_field_exists()`` picks the one the running kernel has: that
+is what makes one build fit x86-64, arm64 and riscv64. The sources also
+map ``__x86_64__``, ``__aarch64__`` and ``__riscv`` to the
+``__TARGET_ARCH_*`` macro ``bpf_tracing.h`` reads, which takes effect
+only in a build that defines one of them: ``clang -target bpf``, as
+``shirudo build`` runs it, defines none.
 
 Each Beefile builds a package named after its shield with one upatch
 and one ``[upatches.tree]`` entry of the same name. The entry's

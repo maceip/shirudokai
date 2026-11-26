@@ -252,10 +252,13 @@ signed config image.
    * - ``t3015-kernel-cve-build``
      - Every ``kernel-cve`` Beefile builds with ``bpm build`` against the
        checkout's ``vmlinux.h`` without a local ``vmlinux.h`` or version
-       and architecture selector lock-in, packages a verified load and
-       unload directive inspected by ``bpm info`` and ``upatch info``,
-       maps ``__x86_64__``, ``__aarch64__`` and ``__riscv`` to
-       ``__TARGET_ARCH_*``, and passes the ``bpf_`` Coccinelle rules
+       and architecture selector lock-in, and packages a signed load
+       and unload directive that ``bpm info`` and ``upatch info`` read
+       back, the sources map ``__x86_64__``, ``__aarch64__`` and
+       ``__riscv`` to ``__TARGET_ARCH_*`` when a build defines one,
+       and where ``spatch`` is installed they pass the ``bpf_``
+       Coccinelle rules. It builds the packages and loads
+       none: the netem, rpl and e1000 detectors still load in no test
    * - ``t3016-observe-mode``
      - A BPF shield using ``bpf/lib/shield.h`` built with and without
        ``--observe``: ``upatch info`` mode, signed ``.rodata``
