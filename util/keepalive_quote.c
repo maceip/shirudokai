@@ -32,30 +32,43 @@ keepalive_quote_format(const struct tpm_attestation *att,
 }
 
 /*
- * The quote is over no PCR, which tells a keepalive quote from one of
- * attest. The key is created for this quote and flushed after it.
+ * The quote is over no PCR, which tells a keepalive or telemetry quote
+ * from one of attest. The key is created for this quote and flushed
+ * after it.
  */
+noinline_for_stack int
+tpm_quote_digest(const __u8 digest[CRYPTO_SHA256_LEN], struct tpm_key *ak,
+		 struct tpm_attestation *att)
+{
+	struct tpm *tpm = NULL;
+	int ret;
+
+	ret = tpm_open(&tpm);
+	if (ret)
+		return ret;
+	*ak = (struct tpm_key){};
+	*att = (struct tpm_attestation){};
+	ret = tpm_ak_create(tpm, ak);
+	if (!ret)
+		ret = tpm_quote(tpm, ak, digest, CRYPTO_SHA256_LEN, 0, att);
+	tpm_key_flush(tpm, ak);
+	tpm_close(tpm);
+	return ret;
+}
+
 noinline_for_stack int
 keepalive_quote(const char *body, size_t len, char *quote, size_t cap)
 {
-	struct tpm_key ak = {};
 	struct tpm_attestation att = {};
 	__u8 digest[CRYPTO_SHA256_LEN];
-	struct tpm *tpm = NULL;
+	struct tpm_key ak = {};
 	int ret;
 
 	ret = sha256_buffer(body, len, digest);
 	if (ret)
 		return ret;
-	ret = tpm_open(&tpm);
-	if (ret)
-		return ret;
-	ret = tpm_ak_create(tpm, &ak);
-	if (!ret)
-		ret = tpm_quote(tpm, &ak, digest, sizeof(digest), 0, &att);
+	ret = tpm_quote_digest(digest, &ak, &att);
 	if (!ret)
 		ret = keepalive_quote_format(&att, &ak, quote, cap);
-	tpm_key_flush(tpm, &ak);
-	tpm_close(tpm);
 	return ret;
 }

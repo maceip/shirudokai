@@ -211,6 +211,10 @@ Settings
      - ``true`` or ``false``
      - ``false``
      - Config image
+   * - ``map_export.tpm_sign``
+     - ``true`` or ``false``
+     - ``false``
+     - Config image
    * - ``map_export.otel_retries``
      - Decimal integer, 0 to 10
      - ``3``
@@ -274,6 +278,12 @@ Settings
    * - ``map_export.otel_insecure``
      - ``true`` allows ``http`` to any host and turns off certificate and
        host name verification for ``https``.
+   * - ``map_export.tpm_sign``
+     - ``true`` quotes the domain-separated origin digest of each OTLP
+       export with the target's TPM attestation key and attaches
+       ``X-Shirudo-TPM-AK-Name``, ``X-Shirudo-TPM-Attest``,
+       ``X-Shirudo-TPM-Signature``, ``X-Shirudo-Boot-ID`` and
+       ``X-Shirudo-Export-Seq``.
    * - ``map_export.otel_retries``
      - Further attempts after a failed OTLP or S3 request.
    * - ``map_export.s3_uri``

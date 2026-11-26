@@ -10,6 +10,7 @@
 
 #include <shirudo/misc.h>
 
+#include "tpm.h"
 #include "upatch_maps.h"
 
 enum otel_signal {
@@ -25,15 +26,36 @@ enum otel_mode {
 	OTEL_S3,
 };
 
+typedef int (*otel_quote_fn)(const __u8 digest[32], struct tpm_key *ak,
+			     struct tpm_attestation *att, void *ctx);
+
 struct otel_opts {
 	const char	*endpoint;
 	const char	*tenant_id;
 	const char	*s3_uri;
+	const char	*boot_id;
 	bool		allow_insecure;
+	bool		tpm_sign;
 	__u32		retries;
 	__u32		log_record_max_bytes;
 	__u32		otlp_max_bytes;
+	__u64		export_seq;
+	otel_quote_fn	quote_fn;
+	void		*quote_ctx;
 };
+
+struct otel_signed_headers {
+	char	ak_name[2 * TPM_NAME_LEN + 1];
+	char	attest[2 * TPM_ATTEST_MAX + 1];
+	char	signature[2 * TPM_SIGNATURE_MAX + 1];
+	char	boot_id[OTEL_BOOT_ID_MAX + 1];
+	char	export_seq[32];
+	__u64	seq;
+};
+
+int otel_sign_headers(const struct otel_opts *opts, const char *body,
+		      size_t body_len,
+		      struct otel_signed_headers *out) __must_check;
 
 int upatch_maps_otel_classify(const struct map_view *v,
 			      enum otel_signal *signal,

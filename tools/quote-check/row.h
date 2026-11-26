@@ -17,10 +17,18 @@
 #include "tpm.h"
 
 #define QUOTE_BODY_HEX_LEN	(2 * TPM_DIGEST_LEN)
+#define QUOTE_AK_NAME_HEX_LEN	(2 * TPM_NAME_LEN)
+#define QUOTE_ATTEST_HEX_MAX	(2 * TPM_ATTEST_MAX)
+#define QUOTE_SIG_HEX_MAX	(2 * TPM_SIGNATURE_MAX)
 /* attest, sig, ak and body_sha256 with the three tabs between them. */
 #define QUOTE_ROW_MAX							\
 	(BASE64_LEN(TPM_ATTEST_MAX) + BASE64_LEN(TPM_SIGNATURE_MAX) +	\
 	 BASE64_LEN(TPM_PUBLIC_MAX) + QUOTE_BODY_HEX_LEN + 3)
+/* ak_name, attest, sig, ak, boot_id, seq and body_sha256 with six tabs. */
+#define QUOTE_OTEL_ROW_MAX						\
+	(QUOTE_AK_NAME_HEX_LEN + QUOTE_ATTEST_HEX_MAX +			\
+	 QUOTE_SIG_HEX_MAX + BASE64_LEN(TPM_PUBLIC_MAX) +		\
+	 OTEL_BOOT_ID_MAX + 20 + QUOTE_BODY_HEX_LEN + 6)
 #define QUOTE_LINE_MAX		1024
 
 enum quote_verdict {
@@ -38,6 +46,19 @@ struct quote_result {
 	size_t			ak_public_len;
 	__u32			reset_count;
 	__u64			clock;
+	bool			has_seq;
+	__u64			seq;
+};
+
+struct quote_otel_envelope {
+	const char	*ak_name_hex;
+	const char	*attest_hex;
+	const char	*sig_hex;
+	const __u8	*ak_public;
+	size_t		ak_public_len;
+	const char	*boot_id;
+	const char	*export_seq;
+	const __u8	*body_sha256;
 };
 
 /*
@@ -47,6 +68,15 @@ struct quote_result {
  */
 int quote_row_check(const char *row, size_t len,
 		    struct quote_result *res) __must_check;
+
+/*
+ * Verify an origin-signed OTLP telemetry envelope (or TabSeparated
+ * --otel row) offline without a TPM.
+ */
+int quote_otel_check(const struct quote_otel_envelope *env,
+		     struct quote_result *res) __must_check;
+int quote_otel_row_check(const char *row, size_t len,
+			 struct quote_result *res) __must_check;
 
 /*
  * The verdict as its JSON object, without a newline, in the cap bytes at
