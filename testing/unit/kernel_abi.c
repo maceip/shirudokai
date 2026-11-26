@@ -19,10 +19,13 @@ enum fixture {
 	VALID,
 	NO_MAP,
 	NO_SHA,
+	SHA_BITFIELD,
+	SHA_NOT_ARRAY,
 	SHA_LENGTH,
 	SHA_WIDTH,
 	SHA_SIGNED,
 	NO_EXCL_PROG_SHA,
+	EXCL_PROG_SHA_BITFIELD,
 	EXCL_PROG_SHA_TYPE,
 	EXCL_PROG_SHA_TARGET,
 	NO_PROG_AUX,
@@ -35,15 +38,16 @@ enum fixture {
 	NO_VERDICT,
 	VERDICT_SIGNED,
 	NO_TPM_COMMAND,
+	NO_MM_READ_ACCESS,
 	TRAILING_DRIFT,
 };
 
 static struct btf *make_fixture(enum fixture fixture)
 {
-	struct btf *btf;
-	int raw_u8, raw_u32, u8, u16, u32, s8, s32, index;
+	int raw_u8, raw_u32, u8, u16, u32, s8, s32, index, proto;
 	int sha32, sha31, sha_u16, sha_s8, byte_ptr, u32_ptr;
 	int sig_struct = -1;
+	struct btf *btf;
 	int ret;
 
 	btf = btf__new_empty();
@@ -63,9 +67,11 @@ static struct btf *make_fixture(enum fixture fixture)
 	sha_s8 = btf__add_array(btf, index, s8, 32);
 	byte_ptr = btf__add_ptr(btf, raw_u8);
 	u32_ptr = btf__add_ptr(btf, u32);
+	proto = btf__add_func_proto(btf, s32);
 	if (raw_u8 < 0 || raw_u32 < 0 || u8 < 0 || u16 < 0 || u32 < 0 ||
 	    s8 < 0 || s32 < 0 || index < 0 || sha32 < 0 || sha31 < 0 ||
-	    sha_u16 < 0 || sha_s8 < 0 || byte_ptr < 0 || u32_ptr < 0)
+	    sha_u16 < 0 || sha_s8 < 0 || byte_ptr < 0 || u32_ptr < 0 ||
+	    proto < 0)
 		goto err;
 
 	if (fixture != NO_MAP) {
@@ -74,25 +80,37 @@ static struct btf *make_fixture(enum fixture fixture)
 			goto err;
 		if (fixture != NO_SHA) {
 			int sha_type = sha32;
+			__u32 bit_sz = 0;
 
-			if (fixture == SHA_LENGTH)
+			if (fixture == SHA_BITFIELD) {
+				sha_type = u32;
+				bit_sz = 4;
+			} else if (fixture == SHA_NOT_ARRAY) {
+				sha_type = u32;
+			} else if (fixture == SHA_LENGTH) {
 				sha_type = sha31;
-			else if (fixture == SHA_WIDTH)
+			} else if (fixture == SHA_WIDTH) {
 				sha_type = sha_u16;
-			else if (fixture == SHA_SIGNED)
+			} else if (fixture == SHA_SIGNED) {
 				sha_type = sha_s8;
-			if (btf__add_field(btf, "sha", sha_type, 0, 0) < 0)
+			}
+			if (btf__add_field(btf, "sha", sha_type, 0, bit_sz) < 0)
 				goto err;
 		}
 		if (fixture != NO_EXCL_PROG_SHA) {
 			int excl_type = byte_ptr;
+			__u32 bit_sz = 0;
 
-			if (fixture == EXCL_PROG_SHA_TYPE)
+			if (fixture == EXCL_PROG_SHA_BITFIELD) {
 				excl_type = u32;
-			else if (fixture == EXCL_PROG_SHA_TARGET)
+				bit_sz = 4;
+			} else if (fixture == EXCL_PROG_SHA_TYPE) {
+				excl_type = u32;
+			} else if (fixture == EXCL_PROG_SHA_TARGET) {
 				excl_type = u32_ptr;
+			}
 			if (btf__add_field(btf, "excl_prog_sha", excl_type,
-					   256, 0) < 0)
+					   256, bit_sz) < 0)
 				goto err;
 		}
 		if (fixture == TRAILING_DRIFT &&
@@ -133,13 +151,14 @@ static struct btf *make_fixture(enum fixture fixture)
 	if (fixture == TRAILING_DRIFT &&
 	    btf__add_field(btf, "future_aux_field", u32, 64, 0) < 0)
 		goto err;
-	if (fixture != NO_TPM_COMMAND) {
-		ret = btf__add_func_proto(btf, s32);
-		if (ret < 0 ||
-		    btf__add_func(btf, "bpf_lsm_tpm_command", BTF_FUNC_GLOBAL,
-				  ret) < 0)
-			goto err;
-	}
+	if (fixture != NO_TPM_COMMAND &&
+	    btf__add_func(btf, "bpf_lsm_tpm_command", BTF_FUNC_GLOBAL,
+			  proto) < 0)
+		goto err;
+	if (fixture != NO_MM_READ_ACCESS &&
+	    btf__add_func(btf, "bpf_lsm_mm_read_access", BTF_FUNC_GLOBAL,
+			  proto) < 0)
+		goto err;
 	return btf;
 
 err:
@@ -165,6 +184,16 @@ static void check(enum fixture fixture, int want_ok, const char *want)
 		   detail, want);
 }
 
+static void needs_btf(void)
+{
+	char detail[KERNEL_ABI_DETAIL_MAX] = {};
+
+	EXPECT_EQ(kernel_abi_validate_btf(NULL, detail, sizeof(detail)),
+		  -EOPNOTSUPP);
+	EXPECT_TRUE(str_contains(detail, "kernel BTF is unavailable"));
+	EXPECT_EQ(kernel_abi_validate_btf(NULL, NULL, 0), -EOPNOTSUPP);
+}
+
 static void accepts_the_required_prefix(void)
 {
 	check(VALID, 1, NULL);
@@ -185,6 +214,12 @@ static void needs_map_sha(void)
 	check(NO_SHA, 0, "bpf_map.sha is missing");
 }
 
+static void needs_map_sha_non_bitfield_and_array(void)
+{
+	check(SHA_BITFIELD, 0, "non-bitfield");
+	check(SHA_NOT_ARRAY, 0, "u8[32]");
+}
+
 static void needs_map_sha_of_32_bytes(void)
 {
 	check(SHA_LENGTH, 0, "u8[32]");
@@ -203,6 +238,11 @@ static void needs_map_sha_unsigned(void)
 static void needs_excl_prog_sha(void)
 {
 	check(NO_EXCL_PROG_SHA, 0, "bpf_map.excl_prog_sha is missing");
+}
+
+static void needs_excl_prog_sha_non_bitfield(void)
+{
+	check(EXCL_PROG_SHA_BITFIELD, 0, "non-bitfield");
 }
 
 static void needs_excl_prog_sha_pointer(void)
@@ -258,6 +298,173 @@ static void needs_verdict(void)
 static void needs_verdict_unsigned(void)
 {
 	check(VERDICT_SIGNED, 0, "verdict must have type u8");
+}
+
+static void needs_tpm_command(void)
+{
+	check(NO_TPM_COMMAND, 0, "tpm_command LSM hook is missing");
+}
+
+static void needs_mm_read_access(void)
+{
+	check(NO_MM_READ_ACCESS, 0, "mm_read_access LSM hook is missing");
+}
+
+/* Add the BTF symbols of carried patches 0021..0023 to an ABI fixture. */
+static int add_carried_patch_btf(struct btf *btf, bool add_xattr,
+				 const char *skip_inode_hook)
+{
+	static const char *const funcs[] = {
+		"bpf_get_dentry_xattr",
+		"bpf_get_file_xattr",
+		"bpf_lsm_inode_copy_up",
+		"bpf_lsm_inode_file_setattr",
+		"bpf_lsm_inode_link",
+		"bpf_lsm_inode_mkdir",
+		"bpf_lsm_inode_remove_acl",
+		"bpf_lsm_inode_set_acl",
+	};
+	int s32, proto;
+	size_t i;
+
+	s32 = btf__add_int(btf, "patch_int", 4, BTF_INT_SIGNED);
+	proto = btf__add_func_proto(btf, s32);
+	if (s32 < 0 || proto < 0)
+		return -1;
+	for (i = 0; i < ARRAY_SIZE(funcs); i++) {
+		if (!add_xattr && i < 2)
+			continue;
+		if (skip_inode_hook && !strcmp(funcs[i], skip_inode_hook))
+			continue;
+		if (btf__add_func(btf, funcs[i], BTF_FUNC_GLOBAL, proto) < 0)
+			return -1;
+	}
+	return 0;
+}
+
+static int add_self_referential_dentry(struct btf *btf)
+{
+	int mod, ptr, st;
+
+	/*
+	 * Point d_parent to the upcoming struct dentry id (mod + 2) so the
+	 * synthetic BTF carries the self-referential struct pahole emits.
+	 */
+	mod = btf__add_const(btf, 1);
+	if (mod < 0)
+		return -1;
+	ptr = btf__add_ptr(btf, mod + 2);
+	st = btf__add_struct(btf, "dentry", 8);
+	if (ptr < 0 || st != mod + 2)
+		return -1;
+	if (btf__add_field(btf, "d_parent", ptr, 0, 0) < 0)
+		return -1;
+	return 0;
+}
+
+static struct btf *make_patch_btf(enum fixture base, bool add_xattr,
+				  const char *skip_inode_hook,
+				  bool add_dentry_parent)
+{
+	struct btf *btf = make_fixture(base);
+
+	if (!btf)
+		return NULL;
+	if (add_carried_patch_btf(btf, add_xattr, skip_inode_hook) < 0)
+		goto err;
+	if (add_dentry_parent && add_self_referential_dentry(btf) < 0)
+		goto err;
+	return btf;
+err:
+	btf__free(btf);
+	return NULL;
+}
+
+static void patch_status_qualifies_complete_kernel(void)
+{
+	struct kernel_patch_status st;
+	struct btf *btf;
+
+	btf = make_patch_btf(VALID, true, NULL, true);
+	ASSERT_TRUE(btf);
+
+	EXPECT_EQ(kernel_abi_patch_status_btf(btf, &st), 0);
+	EXPECT_TRUE(st.signed_loader_abi);
+	EXPECT_UEQ(st.n_btf_ready, 2);
+	EXPECT_UEQ(st.n_runtime_only, 3);
+	EXPECT_UEQ(st.n_missing, 0);
+	EXPECT_UEQ(st.patches[KERNEL_PATCH_0020_TPM_COMMAND].number, 20);
+	EXPECT_EQ(st.patches[KERNEL_PATCH_0020_TPM_COMMAND].readiness,
+		  KERNEL_PATCH_BTF_READY);
+	EXPECT_EQ(st.patches[KERNEL_PATCH_0021_XATTR_UNPRIV].readiness,
+		  KERNEL_PATCH_RUNTIME_ONLY);
+	EXPECT_EQ(st.patches[KERNEL_PATCH_0022_SLEEPABLE_INODE].readiness,
+		  KERNEL_PATCH_RUNTIME_ONLY);
+	EXPECT_EQ(st.patches[KERNEL_PATCH_0023_TRUSTED_D_PARENT].readiness,
+		  KERNEL_PATCH_RUNTIME_ONLY);
+	EXPECT_EQ(st.patches[KERNEL_PATCH_0024_MM_READ_ACCESS].readiness,
+		  KERNEL_PATCH_BTF_READY);
+	EXPECT_STREQ(kernel_patch_readiness_name(KERNEL_PATCH_BTF_READY),
+		     "btf_ready");
+	EXPECT_STREQ(kernel_patch_readiness_name(KERNEL_PATCH_RUNTIME_ONLY),
+		     "runtime_only");
+	EXPECT_STREQ(kernel_patch_readiness_name(KERNEL_PATCH_MISSING),
+		     "missing");
+	btf__free(btf);
+}
+
+static void patch_status_reports_missing_patches_on_stock_kernel(void)
+{
+	const char *detail;
+	struct kernel_patch_status st;
+	struct btf *btf;
+
+	btf = make_patch_btf(NO_SHA, false, "bpf_lsm_inode_mkdir", false);
+	ASSERT_TRUE(btf);
+	EXPECT_EQ(kernel_abi_patch_status_btf(btf, &st), -EOPNOTSUPP);
+	EXPECT_FALSE(st.signed_loader_abi);
+	EXPECT_UEQ(st.n_btf_ready, 2);
+	EXPECT_UEQ(st.n_missing, 3);
+	EXPECT_EQ(st.patches[KERNEL_PATCH_0021_XATTR_UNPRIV].readiness,
+		  KERNEL_PATCH_MISSING);
+	EXPECT_EQ(st.patches[KERNEL_PATCH_0022_SLEEPABLE_INODE].readiness,
+		  KERNEL_PATCH_MISSING);
+	detail = st.patches[KERNEL_PATCH_0022_SLEEPABLE_INODE].detail;
+	EXPECT_TRUE(str_contains(detail, "inode_mkdir"));
+	EXPECT_EQ(st.patches[KERNEL_PATCH_0023_TRUSTED_D_PARENT].readiness,
+		  KERNEL_PATCH_MISSING);
+	btf__free(btf);
+
+	btf = make_fixture(NO_TPM_COMMAND);
+	ASSERT_TRUE(btf);
+	EXPECT_EQ(kernel_abi_patch_status_btf(btf, &st), -EOPNOTSUPP);
+	EXPECT_EQ(st.patches[KERNEL_PATCH_0020_TPM_COMMAND].readiness,
+		  KERNEL_PATCH_MISSING);
+	btf__free(btf);
+
+	btf = make_fixture(NO_MM_READ_ACCESS);
+	ASSERT_TRUE(btf);
+	EXPECT_EQ(kernel_abi_patch_status_btf(btf, &st), -EOPNOTSUPP);
+	EXPECT_EQ(st.patches[KERNEL_PATCH_0024_MM_READ_ACCESS].readiness,
+		  KERNEL_PATCH_MISSING);
+	btf__free(btf);
+}
+
+static void patch_status_handles_null_and_live_btf(void)
+{
+	struct kernel_patch_status st;
+	int ret;
+
+	EXPECT_EQ(kernel_abi_patch_status_btf(NULL, NULL), -EINVAL);
+	EXPECT_EQ(kernel_abi_patch_status(NULL), -EINVAL);
+	EXPECT_EQ(kernel_abi_patch_status_btf(NULL, &st), -EOPNOTSUPP);
+	EXPECT_FALSE(st.signed_loader_abi);
+	EXPECT_UEQ(st.n_missing, KERNEL_PATCH__MAX);
+
+	ret = kernel_abi_patch_status(&st);
+	EXPECT_TRUE(ret == 0 || ret == -EOPNOTSUPP);
+	EXPECT_UEQ(st.n_btf_ready + st.n_runtime_only + st.n_missing,
+		   KERNEL_PATCH__MAX);
 }
 
 /* A BTF with a bpf_lsm_<hook> function for each hook but skip's. */
@@ -325,6 +532,7 @@ static void lsm_hooks_come_from_the_embedded_objects(void)
 	embedded_hooks(&hooks);
 	EXPECT_TRUE(has_hook(&hooks, "bpf"));
 	EXPECT_TRUE(has_hook(&hooks, "inode_unlink"));
+	EXPECT_TRUE(has_hook(&hooks, "tpm_command"));
 	EXPECT_TRUE(has_hook(&hooks, "mm_read_access"));
 	EXPECT_FALSE(has_hook(&hooks, "lsm/bpf"));
 	for (i = 0; i < hooks.n; i++)
@@ -350,7 +558,9 @@ static void lsm_hooks_all_present(void)
 
 static void lsm_hooks_missing_are_named(void)
 {
-	static const char *const names[] = { "bpf", "file_open", "mm_read_access" };
+	static const char *const names[] = {
+		"bpf", "file_open", "mm_read_access",
+	};
 	static const char *const two[] = { "bpf", "x_one", "x_two" };
 	char detail[KERNEL_ABI_DETAIL_MAX] = {};
 	static struct lsm_hooks hooks;
@@ -407,21 +617,20 @@ static void lsm_hooks_need_btf(void)
 	EXPECT_TRUE(str_contains(detail, "kernel BTF is unavailable"));
 }
 
-static void needs_tpm_command(void)
-{
-	check(NO_TPM_COMMAND, 0, "tpm_command LSM hook is missing");
-}
-
 static const struct unit_case cases[] = {
+	UNIT_CASE(needs_btf),
 	UNIT_CASE(needs_tpm_command),
+	UNIT_CASE(needs_mm_read_access),
 	UNIT_CASE(accepts_the_required_prefix),
 	UNIT_CASE(accepts_fields_past_the_prefix),
 	UNIT_CASE(needs_struct_bpf_map),
 	UNIT_CASE(needs_map_sha),
+	UNIT_CASE(needs_map_sha_non_bitfield_and_array),
 	UNIT_CASE(needs_map_sha_of_32_bytes),
 	UNIT_CASE(needs_map_sha_of_bytes),
 	UNIT_CASE(needs_map_sha_unsigned),
 	UNIT_CASE(needs_excl_prog_sha),
+	UNIT_CASE(needs_excl_prog_sha_non_bitfield),
 	UNIT_CASE(needs_excl_prog_sha_pointer),
 	UNIT_CASE(needs_excl_prog_sha_byte_pointer),
 	UNIT_CASE(needs_struct_bpf_prog_aux),
@@ -433,6 +642,9 @@ static const struct unit_case cases[] = {
 	UNIT_CASE(needs_keyring_type_u8),
 	UNIT_CASE(needs_verdict),
 	UNIT_CASE(needs_verdict_unsigned),
+	UNIT_CASE(patch_status_qualifies_complete_kernel),
+	UNIT_CASE(patch_status_reports_missing_patches_on_stock_kernel),
+	UNIT_CASE(patch_status_handles_null_and_live_btf),
 	UNIT_CASE(lsm_hooks_come_from_the_embedded_objects),
 	UNIT_CASE(lsm_hooks_all_present),
 	UNIT_CASE(lsm_hooks_missing_are_named),
