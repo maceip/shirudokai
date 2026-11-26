@@ -46,19 +46,33 @@ public final class JndiGuard {
 
     private JndiGuard() {}
 
-    public static synchronized void install() throws NamingException {
+    /**
+     * The JVM takes one builder of each kind and never a second, so an
+     * application or container that set its own leaves that part of the
+     * guard out. Returns whether both parts are in place.
+     */
+    public static synchronized boolean install() throws NamingException {
         if (installed) {
-            return;
+            return true;
         }
+        boolean contexts = false;
+        boolean references = false;
         if (!NamingManager.hasInitialContextFactoryBuilder()) {
             NamingManager.setInitialContextFactoryBuilder(new GuardContextFactoryBuilder());
+            contexts = true;
+        } else {
+            System.err.println("[SHIRUDO GUARD] jndi: an InitialContextFactoryBuilder is"
+                    + " already set; remote JNDI names are NOT checked");
         }
         try {
             NamingManager.setObjectFactoryBuilder(new GuardObjectFactoryBuilder());
-        } catch (IllegalStateException ignored) {
-            // Another ObjectFactoryBuilder is already set in this JVM.
+            references = true;
+        } catch (IllegalStateException e) {
+            System.err.println("[SHIRUDO GUARD] jndi: an ObjectFactoryBuilder is"
+                    + " already set; remote Reference codebases are NOT checked");
         }
-        installed = true;
+        installed = contexts && references;
+        return installed;
     }
 
     public static void checkTarget(String name) throws NamingException {
@@ -71,7 +85,7 @@ public final class JndiGuard {
         }
         if (GuardMode.isObserve()) {
             GuardMode.recordObserve("jndi", "would block remote JNDI lookup " + name);
-            throw new NamingException("Observed remote JNDI lookup blocked from network egress: " + name);
+            return;
         }
         GuardMode.recordEnforce("jndi", "blocked remote JNDI lookup " + name);
         throw new SecurityException("Blocked remote JNDI lookup scheme '" + scheme + "': " + name);

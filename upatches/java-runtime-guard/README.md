@@ -2,8 +2,8 @@
 
 The `java-runtime-guard` package installs the `java-runtime-guard` Java
 upatch: a pure-JDK instrumentation agent with zero third-party
-dependencies that hardens JVMs on JDK 21 and newer against three classes
-of runtime exploitation:
+dependencies that hardens JVMs on JDK 21 and newer against two classes
+of runtime exploitation, and ships a helper for a third:
 
 - **Remote JNDI lookups**: installs `InitialContextFactoryBuilder` and
   `ObjectFactoryBuilder` hooks through `javax.naming.spi.NamingManager`
@@ -18,12 +18,30 @@ of runtime exploitation:
   `BeanComparator`, `BadAttributeValueExpException`,
   `UnicastRemoteObject`, Groovy closures and C3P0 data sources) while
   allowing standard JDK and application types.
-- **Shell command injection**: exposes `ShellExecGuard` to refuse shell
-  wrappers (`sh -c`, `bash -c`) and command strings carrying shell
-  chaining or substitution metacharacters.
+- **Shell command injection, as a helper only**: `ShellExecGuard`
+  refuses shell wrappers (`sh -c`, `bash -c`) and command strings
+  carrying shell chaining or substitution metacharacters in what an
+  application passes to it. The agent does **not** hook
+  `ProcessBuilder.start()` or `Runtime.exec()`: an application that does
+  not call `ShellExecGuard.checkCommand()` or `checkProcessBuilder()`
+  itself gets no protection against command injection from this package.
 
 Set `-Dshirudo.guard.mode=observe` to log and count matches without
-blocking; the default mode is `enforce`.
+blocking; the default mode is `enforce`. In observe mode a remote JNDI
+lookup goes on to the network as it would without the guard.
+
+## Limits
+
+- The JVM accepts one `InitialContextFactoryBuilder`, one
+  `ObjectFactoryBuilder` and one JVM-wide serial filter. Where the
+  application or its container set one first, that part of the guard is
+  not installed. The agent says so on standard error
+  (`PARTLY installed (jndi=off ...)`) and the JVM runs without it.
+- The mode is read from the system property at each check, so code in
+  the JVM that calls `System.setProperty("shirudo.guard.mode",
+  "observe")` turns blocking off. The guard mitigates a bug in an
+  application; it is no boundary against code that already runs in the
+  JVM.
 
 ## Build
 

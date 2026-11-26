@@ -8,6 +8,8 @@ import java.lang.instrument.Instrumentation;
 /**
  * Pure-JDK runtime guard agent installing JNDI scheme protections and
  * JVM-wide ObjectInputFilter gadget protections at startup or dynamic attach.
+ * It does not hook process creation: ShellExecGuard checks only what an
+ * application passes to it.
  */
 public final class RuntimeGuardAgent {
 
@@ -32,10 +34,11 @@ public final class RuntimeGuardAgent {
         if (installed) {
             return;
         }
-        JndiGuard.install();
-        DeserializationGuard.install();
-        installed = true;
-        System.err.println("java-runtime-guard installed (mode="
-                + (GuardMode.isObserve() ? "observe" : "enforce") + ")");
+        boolean jndi = JndiGuard.install();
+        boolean deser = DeserializationGuard.install();
+        installed = jndi && deser;
+        System.err.println("java-runtime-guard " + (installed ? "installed" : "PARTLY installed")
+                + " (jndi=" + (jndi ? "on" : "off") + " deser=" + (deser ? "on" : "off")
+                + " mode=" + (GuardMode.isObserve() ? "observe" : "enforce") + ")");
     }
 }
