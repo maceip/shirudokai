@@ -12,6 +12,7 @@
 #include <errno.h>
 
 #include "builtin.h"
+#include "util/crypto.h"
 #include "util/harden.h"
 #include "util/image_runtime.h"
 #include "util/help.h"
@@ -112,6 +113,10 @@ int main(int argc, const char **argv)
 	log_init();
 	if (harden_self())
 		return 1;
+#ifdef SHIRUDO_FIPS
+	if (crypto_fips_init())
+		return 1;
+#endif
 
 	if (argc < 2) {
 		cmd_help(0, NULL);
