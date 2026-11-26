@@ -36,5 +36,10 @@ int main(int argc, char **argv)
 		puts(map_type_name(BPF_MAP_TYPE_RINGBUF));
 		return 0;
 	}
+	if (strcmp(argv[1], "ringbuf-skip") == 0) {
+		s = map_skip_reason(BPF_MAP_TYPE_RINGBUF);
+		puts(s ? s : "");
+		return 0;
+	}
 	return 2;
 }

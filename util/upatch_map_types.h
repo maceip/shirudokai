@@ -47,7 +47,7 @@ static inline const char *map_skip_reason(__u32 type)
 {
 	switch (type) {
 	case BPF_MAP_TYPE_RINGBUF:
-		return "use `shirudo upatch ringbuf` (future work)";
+		return "use `shirudo upatch events`";
 	case BPF_MAP_TYPE_PERF_EVENT_ARRAY:
 		return "perf-event-array: use `shirudo upatch perfbuf` "
 		       "(future work)";
