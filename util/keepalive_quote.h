@@ -31,6 +31,14 @@ int keepalive_quote_format(const struct tpm_attestation *att,
 			   size_t cap) __must_check;
 
 /*
+ * Quotes digest with the attestation key of tpm_ak_create() over no PCR,
+ * filling *ak and *att and flushing the key before closing the TPM.
+ */
+int tpm_quote_digest(const __u8 digest[CRYPTO_SHA256_LEN],
+		     struct tpm_key *ak,
+		     struct tpm_attestation *att) __must_check;
+
+/*
  * Quotes the SHA-256 of the body with the attestation key of
  * tpm_ak_create() over no PCR and writes the quote as
  * keepalive_quote_format() does.

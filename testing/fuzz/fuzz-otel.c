@@ -61,6 +61,12 @@ int upatch_decode_map_file_otel(const char *path,
 	return -EOPNOTSUPP;
 }
 
+int tpm_quote_digest(const __u8 digest[CRYPTO_SHA256_LEN], struct tpm_key *ak,
+		     struct tpm_attestation *att)
+{
+	return -EOPNOTSUPP;
+}
+
 int LLVMFuzzerTestOneInput(const __u8 *data, size_t size)
 {
 	struct otel_response r = {};

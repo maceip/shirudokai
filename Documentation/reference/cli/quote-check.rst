@@ -29,10 +29,11 @@ Usage
 
 .. code-block:: none
 
-   shirudo-quote-check
+   shirudo-quote-check [--otel]
 
-The program takes no option besides ``-h`` and ``--help``, which print
-the usage on standard error. It reads rows from standard input until
+``--otel`` checks origin-signed OTLP telemetry envelopes instead of
+keepalive rows. ``-h`` and ``--help`` print the usage on standard error.
+It reads rows from standard input until
 the input ends and writes one line to standard output for each row, in
 the order of the rows. It flushes standard output after every line, so
 a caller that keeps the process running gets each answer before it sends
@@ -42,7 +43,12 @@ Input
 -----
 
 One row per line, in the TabSeparated format of ClickHouse: four fields
-with a tab between them.
+with a tab between them, or seven fields with ``--otel``
+(``ak_name``, ``attest``, ``sig``, ``ak``, ``boot_id``, ``seq`` and
+``body_sha256``, where ``ak_name``, ``attest`` and ``sig`` are hex from
+the ``X-Shirudo-TPM-*`` headers and the quote covers
+``otel_origin_digest(boot_id, seq, body_sha256)``; accepted rows add
+``"seq":<n>`` to the output object).
 
 .. list-table::
    :header-rows: 1

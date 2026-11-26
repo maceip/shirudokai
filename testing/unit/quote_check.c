@@ -517,6 +517,78 @@ static void field_longer_than_its_structure_is_malformed(void)
 	EXPECT_EQ(row_verdict(row), QUOTE_MALFORMED);
 }
 
+static void otel_row_format(const struct quote *q, const char *boot_id,
+			    const char *seq, const char *ak_name_override,
+			    char *row, size_t cap)
+{
+	char attest_hex[QUOTE_ATTEST_HEX_MAX + 1];
+	char sig_hex[QUOTE_SIG_HEX_MAX + 1];
+	char ak_name[QUOTE_AK_NAME_HEX_LEN + 1];
+	char ak_b64[BASE64_LEN(TPM_PUBLIC_MAX) + 1];
+
+	hex_encode(q->ak_name, sizeof(q->ak_name), ak_name);
+	hex_encode(q->attest, q->attest_len, attest_hex);
+	hex_encode(q->sig, sizeof(q->sig), sig_hex);
+	ASSERT_EQ(base64_encode(q->ak_public, q->ak_public_len, ak_b64,
+				sizeof(ak_b64)), 0);
+	ASSERT_TRUE(strsprintf(row, cap, "%s\t%s\t%s\t%s\t%s\t%s\t%s",
+			       ak_name_override ? ak_name_override : ak_name,
+			       attest_hex, sig_hex, ak_b64, boot_id, seq,
+			       q->body_sha256) > 0);
+}
+
+static void otel_envelope_row_is_verified(void)
+{
+	static const char otel_body[] = "{\"resourceLogs\":[]}";
+	static const char boot_id[] = "01234567-89ab-cdef-0123-456789abcdef";
+	char row[QUOTE_OTEL_ROW_MAX + 1], line[QUOTE_LINE_MAX];
+	char wrong_name[QUOTE_AK_NAME_HEX_LEN + 1];
+	__u8 body_digest[CRYPTO_SHA256_LEN];
+	struct quote_result res;
+	struct quote q;
+
+	quote_init(&q);
+	ASSERT_EQ(sha256_buffer(otel_body, strlen(otel_body), body_digest), 0);
+	hex_encode(body_digest, sizeof(body_digest), q.body_sha256);
+	ASSERT_EQ(otel_origin_digest(boot_id, 42, body_digest, q.extra), 0);
+	q.extra_len = CRYPTO_SHA256_LEN;
+	quote_sign(&q);
+
+	otel_row_format(&q, boot_id, "42", NULL, row, sizeof(row));
+	ASSERT_EQ(quote_otel_row_check(row, strlen(row), &res), 0);
+	ASSERT_EQ(res.verdict, QUOTE_OK);
+	EXPECT_TRUE(res.has_seq);
+	EXPECT_UEQ(res.seq, 42);
+	ASSERT_EQ(quote_row_emit(&res, line, sizeof(line)), 0);
+	EXPECT_TRUE(str_contains(line, "\"seq\":42"));
+
+	/* Tampered sequence, boot_id or body_sha256 fails origin check. */
+	otel_row_format(&q, boot_id, "43", NULL, row, sizeof(row));
+	ASSERT_EQ(quote_otel_row_check(row, strlen(row), &res), 0);
+	EXPECT_EQ(res.verdict, QUOTE_BODY_MISMATCH);
+
+	otel_row_format(&q, "other-boot-id", "42", NULL, row, sizeof(row));
+	ASSERT_EQ(quote_otel_row_check(row, strlen(row), &res), 0);
+	EXPECT_EQ(res.verdict, QUOTE_BODY_MISMATCH);
+
+	/* Claimed AK name mismatch fails signature check. */
+	hex_encode(q.ak_name, sizeof(q.ak_name), wrong_name);
+	wrong_name[QUOTE_AK_NAME_HEX_LEN - 1] =
+		wrong_name[QUOTE_AK_NAME_HEX_LEN - 1] == '0' ? '1' : '0';
+	otel_row_format(&q, boot_id, "42", wrong_name, row, sizeof(row));
+	ASSERT_EQ(quote_otel_row_check(row, strlen(row), &res), 0);
+	EXPECT_EQ(res.verdict, QUOTE_BAD_SIGNATURE);
+
+	/* Malformed sequence or boot_id is rejected as malformed. */
+	otel_row_format(&q, boot_id, "+42", NULL, row, sizeof(row));
+	ASSERT_EQ(quote_otel_row_check(row, strlen(row), &res), 0);
+	EXPECT_EQ(res.verdict, QUOTE_MALFORMED);
+
+	otel_row_format(&q, "bad boot id", "42", NULL, row, sizeof(row));
+	ASSERT_EQ(quote_otel_row_check(row, strlen(row), &res), 0);
+	EXPECT_EQ(res.verdict, QUOTE_MALFORMED);
+}
+
 static const struct unit_case cases[] = {
 	UNIT_CASE(good_row_is_accepted),
 	UNIT_CASE(rejects_are_one_reason_each),
@@ -532,6 +604,7 @@ static const struct unit_case cases[] = {
 	UNIT_CASE(base64_that_is_not_standard_is_malformed),
 	UNIT_CASE(row_that_does_not_split_is_malformed),
 	UNIT_CASE(field_longer_than_its_structure_is_malformed),
+	UNIT_CASE(otel_envelope_row_is_verified),
 	{}
 };
 
