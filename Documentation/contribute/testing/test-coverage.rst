@@ -257,6 +257,13 @@ signed config image.
        unload directive inspected by ``bpm info`` and ``upatch info``,
        maps ``__x86_64__``, ``__aarch64__`` and ``__riscv`` to
        ``__TARGET_ARCH_*``, and passes the ``bpf_`` Coccinelle rules
+   * - ``t3016-observe-mode``
+     - A BPF shield using ``bpf/lib/shield.h`` built with and without
+       ``--observe``: ``upatch info`` mode, signed ``.rodata``
+       ``shirudo_observe_mode`` value, rejection of an unsigned
+       ``DIRECTIVE_OBSERVE`` header bit flip and ``--observe --unload``,
+       and ``shirudo upatch check`` verdicts and captured stack IDs on
+       passing and failing exploit/benign snapshots
    * - ``t3017-runtime-shields``
      - ``SqlLexer`` passes its deterministic state-machine self-tests
        without external dependencies, ``java-runtime-guard`` builds a
@@ -1103,7 +1110,7 @@ OCI registry. The macOS workflow checks the Lima template with
 Unit suites and fuzz targets
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The unit suites in :src:`testing/unit/` cover 49 of the modules in
+The unit suites in :src:`testing/unit/` cover 50 of the modules in
 :src:`util/`: ``attest``, ``bpm_cleanup``, ``bpm_feed``, ``bpm_install``,
 ``bpm_oci``, ``bpm_package``, ``bpm_state``,
 ``bpm_tree``, ``bpm_tree_overlap``, ``bpm_tree_state``, ``chain``,
@@ -1115,7 +1122,7 @@ The unit suites in :src:`testing/unit/` cover 49 of the modules in
 ``keepalive``, ``keepalive_quote``, ``kernel_build_id``,
 ``kernel_prereq``, ``kernel_release``, ``keys``, ``log``, ``measured``,
 ``options``,
-``paths``, ``report``, ``seal``, ``string``, ``sysinfo``, ``timefmt``, ``upatch``,
+``paths``, ``report``, ``reproducer_check``, ``seal``, ``string``, ``sysinfo``, ``timefmt``, ``upatch``,
 ``upatch_decode``, ``upatch_pins``, ``upatch_resolve``, ``upatch_verify``
 and ``xdp``, and
 ``overflow`` the arithmetic of
