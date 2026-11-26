@@ -25,6 +25,126 @@ static __always_inline int shirudo_self_or_deny(enum tamper_point point)
 	return 0;
 }
 
+/*
+ * Shared mode trusts root with BPF of its own. A task that is not shirudo
+ * then answers to shirudo_shared_bpf() and the other shared-mode
+ * branches; shirudo's own tasks keep the strict rules.
+ */
+static __always_inline bool shirudo_shared_other(void)
+{
+	struct sb_id *id;
+	__u32 zero = 0;
+
+	id = bpf_map_lookup_elem(&shirudo_bpffs_sb, &zero);
+	return id && id->enforcement == ENFORCEMENT_SHARED &&
+	       !shirudo_task_is_self(id);
+}
+
+/*
+ * The maps and programs shirudo's tasks create in shared mode, by the
+ * address of the map or of the program's aux, which the verifier keeps
+ * when it reallocates the program. bpf2 and seal exist before the hooks
+ * that fill this set and are told by their names instead. A delete that
+ * fails leaves an entry that can refuse root an object at a reused
+ * address, never hand it one of shirudo's.
+ */
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+	__uint(max_entries, 8192);
+	__type(key, __u64);
+	__type(value, __u8);
+} shirudo_owned SEC(".maps");
+
+static __always_inline bool shirudo_owns(const void *object, const char *name)
+{
+	__u64 key = (__u64)object;
+	char head[8];
+
+	if (bpf_map_lookup_elem(&shirudo_owned, &key))
+		return true;
+	if (bpf_probe_read_kernel(head, sizeof(head), name))
+		return true;
+	return !bpf_strncmp(head, sizeof(head), "shirudo_");
+}
+
+/*
+ * Without a place in the set, a descriptor root holds could reach the
+ * object, so a creation that cannot be recorded fails.
+ */
+static __always_inline int shirudo_own(const void *object)
+{
+	__u64 key = (__u64)object;
+	struct sb_id *id;
+	__u32 zero = 0;
+	__u8 one = 1;
+
+	id = bpf_map_lookup_elem(&shirudo_bpffs_sb, &zero);
+	if (!id || id->enforcement != ENFORCEMENT_SHARED ||
+	    !shirudo_task_is_self(id))
+		return 0;
+	if (bpf_map_update_elem(&shirudo_owned, &key, &one, BPF_ANY))
+		return -ENOMEM;
+	return 0;
+}
+
+/*
+ * What shared mode still refuses is every route to shirudo's own
+ * objects. lsm/bpf_map and lsm/bpf_prog keep its maps and programs from
+ * every descriptor, but no hook sees a link descriptor handed out, so no
+ * link is handed out by id, and lsm/inode_permission keeps the pins of
+ * the private bpffs out of reach. A token would hand BPF to tasks root
+ * never vetted. A command not listed here stays refused until it is
+ * classified.
+ */
+static __always_inline int shirudo_shared_bpf(int cmd)
+{
+	switch (cmd) {
+	case BPF_LINK_GET_FD_BY_ID:
+		return shirudo_tamper_deny(TAMPER_OBJ_GET, -EACCES);
+
+	case BPF_MAP_CREATE:
+	case BPF_MAP_LOOKUP_ELEM:
+	case BPF_MAP_UPDATE_ELEM:
+	case BPF_MAP_DELETE_ELEM:
+	case BPF_MAP_GET_NEXT_KEY:
+	case BPF_MAP_LOOKUP_AND_DELETE_ELEM:
+	case BPF_MAP_FREEZE:
+	case BPF_MAP_LOOKUP_BATCH:
+	case BPF_MAP_LOOKUP_AND_DELETE_BATCH:
+	case BPF_MAP_UPDATE_BATCH:
+	case BPF_MAP_DELETE_BATCH:
+	case BPF_PROG_LOAD:
+	case BPF_PROG_ATTACH:
+	case BPF_PROG_DETACH:
+	case BPF_PROG_TEST_RUN:
+	case BPF_PROG_BIND_MAP:
+	case BPF_OBJ_PIN:
+	case BPF_OBJ_GET:
+	case BPF_BTF_LOAD:
+	case BPF_RAW_TRACEPOINT_OPEN:
+	case BPF_LINK_CREATE:
+	case BPF_LINK_UPDATE:
+	case BPF_LINK_DETACH:
+	case BPF_ITER_CREATE:
+	case BPF_ENABLE_STATS:
+	case BPF_OBJ_GET_INFO_BY_FD:
+	case BPF_PROG_QUERY:
+	case BPF_PROG_GET_NEXT_ID:
+	case BPF_MAP_GET_NEXT_ID:
+	case BPF_BTF_GET_NEXT_ID:
+	case BPF_LINK_GET_NEXT_ID:
+	case BPF_MAP_GET_FD_BY_ID:
+	case BPF_PROG_GET_FD_BY_ID:
+	case BPF_BTF_GET_FD_BY_ID:
+	case BPF_TASK_FD_QUERY:
+		return 0;
+
+	default:
+		return shirudo_tamper_deny(TAMPER_BPF_CMD, -EACCES);
+	}
+}
+
 SEC("lsm/bpf")
 int BPF_PROG(shirudo_lsm_bpf, int cmd, union bpf_attr *attr,
 	     unsigned int size, bool kernel, int ret)
@@ -35,6 +155,8 @@ int BPF_PROG(shirudo_lsm_bpf, int cmd, union bpf_attr *attr,
 		return ret;
 	if (kernel)
 		return 0;
+	if (shirudo_shared_other())
+		return shirudo_shared_bpf(cmd);
 
 	switch (cmd) {
 	case BPF_PROG_LOAD:
@@ -143,20 +265,57 @@ int BPF_PROG(shirudo_lsm_bpf_map, struct bpf_map *map, fmode_t fmode,
 {
 	if (ret)
 		return ret;
+	if (shirudo_shared_other() && !shirudo_owns(map, map->name))
+		return 0;
 	if (fmode & FMODE_WRITE)
 		return shirudo_self_or_deny(TAMPER_MAP_FD);
 	return shirudo_self_or_deny(TAMPER_OBJ_GET);
 }
 
-/* XDP descriptors also authorize netlink attachment, outside lsm/bpf. */
+/*
+ * XDP descriptors also authorize netlink attachment, outside lsm/bpf. In
+ * shared mode a descriptor of one of shirudo's programs would let root
+ * replace it with an extension program, test-run it or attach it again.
+ */
 SEC("lsm/bpf_prog")
 int BPF_PROG(shirudo_lsm_bpf_prog, struct bpf_prog *prog, int ret)
 {
 	if (ret)
 		return ret;
+	if (shirudo_shared_other()) {
+		if (shirudo_owns(prog->aux, prog->aux->name))
+			return shirudo_tamper_deny(TAMPER_OBJ_GET, -EACCES);
+		return 0;
+	}
 	if (BPF_CORE_READ(prog, type) == BPF_PROG_TYPE_XDP)
 		return shirudo_self_or_deny(TAMPER_OBJ_GET);
 	return 0;
+}
+
+SEC("lsm/bpf_map_create")
+int BPF_PROG(shirudo_lsm_bpf_map_create, struct bpf_map *map,
+	     union bpf_attr *attr, struct bpf_token *token, bool kernel,
+	     int ret)
+{
+	if (ret)
+		return ret;
+	return shirudo_own(map);
+}
+
+SEC("lsm/bpf_map_free")
+void BPF_PROG(shirudo_lsm_bpf_map_free, struct bpf_map *map)
+{
+	__u64 key = (__u64)map;
+
+	bpf_map_delete_elem(&shirudo_owned, &key);
+}
+
+SEC("lsm/bpf_prog_free")
+void BPF_PROG(shirudo_lsm_bpf_prog_free, struct bpf_prog *prog)
+{
+	__u64 key = (__u64)BPF_CORE_READ(prog, aux);
+
+	bpf_map_delete_elem(&shirudo_owned, &key);
 }
 
 /*
@@ -165,25 +324,19 @@ int BPF_PROG(shirudo_lsm_bpf_prog, struct bpf_prog *prog, int ret)
  * recorded the verdict on prog->aux->sig -- so the fields read here are
  * final. A userspace load is admitted only if the kernel verified it
  * against exactly shirudo's own sealed keyring; every other program is
- * denied, fail-closed.
+ * denied, fail-closed. In shared mode that holds for shirudo's own
+ * tasks, whose programs join shirudo_owned, and every other task loads
+ * what the kernel lets it.
  *
  * kernel == true means the load originates from inside an already-vetted
  * signed loader running in kernel context; those are always allowed
  * (the loader itself passed this gate when it was loaded from userspace).
  */
-SEC("lsm/bpf_prog_load")
-int BPF_PROG(shirudo_lsm_bpf_prog_load, struct bpf_prog *prog,
-	     union bpf_attr *attr, struct bpf_token *token,
-	     bool kernel, int ret)
+static __always_inline int shirudo_signed_load(struct bpf_prog *prog)
 {
 	struct sb_id *id;
 	__u32 zero = 0, verdict, ktype;
 	__s32 serial;
-
-	if (ret)
-		return ret;
-	if (kernel)
-		return 0;
 
 	/*
 	 * Fail closed if the identity record is missing or carries no
@@ -215,6 +368,37 @@ int BPF_PROG(shirudo_lsm_bpf_prog_load, struct bpf_prog *prog,
 		return shirudo_tamper_deny(TAMPER_LOAD_KEYRING, -EACCES);
 
 	return 0;
+}
+
+/*
+ * An LSM program of root's could call bpf_set_dentry_xattr() and its
+ * kin, which write security.bpf.* labels past every xattr hook, or label
+ * an inode at its creation, and so undo the seal. Checked here rather
+ * than in lsm/bpf to cover the loads root's own syscall programs make
+ * from inside the kernel.
+ */
+static __always_inline int shirudo_shared_load(struct bpf_prog *prog)
+{
+	if (BPF_CORE_READ(prog, type) == BPF_PROG_TYPE_LSM)
+		return shirudo_tamper_deny(TAMPER_LOAD_NOT_LOADER, -EACCES);
+	return 0;
+}
+
+SEC("lsm/bpf_prog_load")
+int BPF_PROG(shirudo_lsm_bpf_prog_load, struct bpf_prog *prog,
+	     union bpf_attr *attr, struct bpf_token *token,
+	     bool kernel, int ret)
+{
+	if (ret)
+		return ret;
+	if (shirudo_shared_other())
+		return shirudo_shared_load(prog);
+	if (!kernel) {
+		ret = shirudo_signed_load(prog);
+		if (ret)
+			return ret;
+	}
+	return shirudo_own(prog->aux);
 }
 
 SEC("lsm/task_prctl")
@@ -283,6 +467,32 @@ static __always_inline int shirudo_bpffs_guard(__u32 target_dev,
 	if (target_dev == id->sb_dev && point != TAMPER_MAX)
 		return shirudo_tamper_deny(point, -EPERM);
 	return -EPERM;
+}
+
+/*
+ * In shared mode BPF_OBJ_GET is open to root, and the link pins of
+ * shirudo's private bpffs would hand out a link to detach. BPF_OBJ_GET
+ * checks the pin's own permission, which lands here; directories stay
+ * listable, as lsm/file_open leaves them.
+ */
+SEC("lsm/inode_permission")
+int BPF_PROG(shirudo_lsm_inode_permission, const struct mnt_idmap *idmap,
+	     struct inode *inode, int mask, int ret)
+{
+	struct sb_id *id;
+	__u32 zero = 0;
+
+	if (ret)
+		return ret;
+	if ((BPF_CORE_READ(inode, i_mode) & S_IFMT) == S_IFDIR)
+		return 0;
+	id = bpf_map_lookup_elem(&shirudo_bpffs_sb, &zero);
+	if (!id || id->sb_dev == 0 ||
+	    BPF_CORE_READ(inode, i_sb, s_dev) != id->sb_dev)
+		return 0;
+	if (shirudo_task_is_self(id))
+		return 0;
+	return shirudo_tamper_deny(TAMPER_OBJ_GET, -EACCES);
 }
 
 /*

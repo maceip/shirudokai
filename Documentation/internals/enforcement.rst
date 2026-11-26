@@ -223,6 +223,51 @@ Writable state
     ``/var/lib/shirudo`` to tasks without runtime authority.
     :doc:`seal` explains the labels.
 
+Enforcement modes
+-----------------
+
+The runtime image's bootstrap selects the mode with
+``enforcement.mode``, and ``init`` freezes it into the identity record,
+where every hook reads it. ``strict``, the default, is what the rest of
+this page describes. ``shared`` is for hosts whose root is trusted with
+BPF of its own, a network datapath such as Cilium beside the upatches.
+It changes what a task without runtime authority may do; shirudo's own
+tasks keep the strict rules.
+
+The BPF system call
+    ``lsm/bpf`` admits the commands that create, load, write, attach,
+    detach and pin, and the ``*_GET_FD_BY_ID`` commands for maps,
+    programs and BTF. It refuses ``BPF_LINK_GET_FD_BY_ID``,
+    ``BPF_TOKEN_CREATE`` and every unclassified command.
+    ``lsm/bpf_prog_load`` admits every program type but
+    ``BPF_PROG_TYPE_LSM``, whose kfuncs write ``security.bpf.`` labels
+    past the seal's hooks.
+
+shirudo's objects
+    ``lsm/bpf_map`` and ``lsm/bpf_prog`` refuse a descriptor of an
+    object shirudo owns and allow every other. shirudo owns every map and
+    program whose name begins with ``shirudo_``, which covers ``bpf2``
+    and ``seal``, and every one its tasks create after ``init``,
+    including those the signed loaders they run create in kernel
+    context. ``lsm/bpf_map_create`` and ``lsm/bpf_prog_load`` record
+    those by the address of the map or of the program's ``aux``, which
+    the verifier keeps when it reallocates a program, in the hash map
+    ``shirudo_owned``; ``lsm/bpf_map_free`` and ``lsm/bpf_prog_free``
+    remove them. A creation that cannot be recorded fails, and a removal
+    that fails can only refuse root an object that reuses the address.
+
+The private bpffs
+    No hook sees a link descriptor handed out, so ``lsm/inode_permission``
+    refuses a task without authority the permission check on a pin of
+    the private bpffs, which ``BPF_OBJ_GET`` and every open make.
+    Directories stay listable, as in ``strict``.
+
+The ``shared`` hooks, ``inode_permission``, ``bpf_map_free``,
+``bpf_prog_free`` and ``bpf_map_create``, attach only in that mode, and
+``status`` checks their pins only then. Every other guard of this page
+applies in both modes. :doc:`/operate/plan/interoperability` lists what
+other software can do in each.
+
 Attach order
 ------------
 
@@ -246,6 +291,10 @@ order:
 #. Attach the mount guards ``sb_umount``, ``move_mount``, ``sb_mount``,
    ``sb_remount`` and the ``file_open`` recorder, open the bpffs root so
    the recorder notes the mount, and freeze that record.
+#. In shared mode, attach ``inode_permission``, ``bpf_map_free``,
+   ``bpf_prog_free`` and ``bpf_map_create``, so that the private bpffs
+   is closed before ``lsm/bpf`` opens ``BPF_OBJ_GET`` to root, and
+   ``seal``'s objects are recorded once they exist.
 #. Load ``seal`` on the shared maps, freeze its scratch map, and attach
    its twenty-nine hooks, then ``mmap_file`` and ``file_mprotect``.
 #. Attach ``lsm/bpf_map``, then ``lsm/bpf_prog``, then
@@ -330,7 +379,9 @@ Hooks in bpf2
        caller. Map create, update and freeze, test run, link create, raw
        tracepoint open, object pin, object get, map and link fd by id,
        to a task without authority. Every unclassified command to every
-       caller. Allows every call with ``kernel`` true and the read-only
+       caller. In shared mode, only link fd by id, token create and
+       unclassified commands to a task without authority. Allows every
+       call with ``kernel`` true and the read-only
        commands: map lookups, ``GET_NEXT_ID``, ``PROG_GET_FD_BY_ID``,
        ``BTF_GET_FD_BY_ID``, ``OBJ_GET_INFO_BY_FD``, ``PROG_QUERY``,
        ``TASK_FD_QUERY``.
@@ -341,21 +392,36 @@ Hooks in bpf2
    * - ``lsm/bpf_prog_load``
      - A userspace load the kernel did not verify, verified against
        another keyring kind than ``.bpf``, or with a non-zero keyring
-       serial other than the frozen one. Allows ``kernel`` true.
+       serial other than the frozen one. Allows ``kernel`` true. In
+       shared mode, an LSM program from a task without authority, and
+       records what a shirudo task loads in ``shirudo_owned``.
      - ``EACCES``: ``LoadUnverified``, ``LoadKeyringKind``,
        ``LoadKeyring`` (never reached: the kernel records serial 0 for
        ``.bpf``)
      - Closed: no frozen keyring serial refuses every load, uncounted.
    * - ``lsm/bpf_map``
-     - Every map descriptor to a task without authority.
+     - Every map descriptor to a task without authority; in shared mode,
+       a descriptor of a map shirudo owns.
      - ``EACCES``: ``MapFdWrite`` (writable), ``ObjGet``
        (read-only)
      - Closed.
    * - ``lsm/bpf_prog``
      - An XDP program descriptor to a task without authority, including
-       acquisition by program ID. Other program types stay allowed.
+       acquisition by program ID. Other program types stay allowed. In
+       shared mode, a descriptor of a program shirudo owns, of any type.
      - ``EACCES``: ``ObjGet``
      - Closed.
+   * - ``lsm/bpf_map_create``, ``lsm/bpf_map_free``,
+       ``lsm/bpf_prog_free``
+     - Shared mode only. Records a map a shirudo task creates in
+       ``shirudo_owned``, and removes a freed map or program.
+     - ``ENOMEM`` when the record fails, uncounted
+     - Closed: an unrecorded creation fails.
+   * - ``lsm/inode_permission``
+     - Shared mode only. A permission check on a non-directory inode of
+       the private bpffs, to a task without authority.
+     - ``EACCES``: ``ObjGet``
+     - Open before ``init`` records the bpffs.
    * - ``lsm/file_open``
      - Opening a non-directory inode of the private bpffs, through any
        mount of it, to a task without authority. Records the bpffs mount

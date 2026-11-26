@@ -135,6 +135,47 @@ What common software sees:
    * - systemd
      - Starts units without its BPF-based settings, see the next section.
 
+Other BPF users in shared enforcement
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:Mechanism: A runtime image built with ``enforcement.mode = shared``
+   leaves ``bpf()`` to root for objects of its own, and keeps shirudo's
+   maps, programs, links and private bpffs out of its reach, see
+   :doc:`/internals/enforcement`. Use it only where root is trusted with
+   BPF (A16 in :doc:`/security/threat-model`).
+:Still refused: an LSM program (``LoadNotLoader``),
+   ``BPF_LINK_GET_FD_BY_ID`` and opening a pin in ``/run/shirudo/bpffs``
+   (``ObjGet``), a descriptor of a map or program shirudo owns
+   (``ObjGet``, ``MapFdWrite``), ``BPF_TOKEN_CREATE`` and every command
+   shirudo has not classified (``BpfCommand``). The kexec, lockdown,
+   keyring, TPM, image and seal guards are those of ``strict``, so
+   ``bpf_probe_write_user()`` stays unavailable.
+:What to do: Load datapaths and tracing tools as on any host. Name no
+   map or program of your own with the ``shirudo_`` prefix, which
+   shirudo treats as its own.
+
+What common software sees in shared enforcement:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 76
+
+   * - Software
+     - Effect
+   * - Cilium and other BPF datapaths
+     - Create their maps, load and attach their tc, XDP, cgroup and
+       socket programs, and pin under ``/sys/fs/bpf``.
+   * - ``bpftool``
+     - ``prog show`` and ``map show`` skip shirudo's objects with
+       ``Permission denied`` for each; ``link show`` stops at the first
+       link, as links are not handed out by id.
+   * - bcc, bpftrace, ``perf`` with BPF
+     - Work, except tools that attach LSM programs.
+   * - Tetragon, Falco's eBPF drivers, bpfjailer
+     - The parts that load LSM programs fail; the rest works.
+   * - systemd
+     - Its BPF-based settings work.
+
 systemd's BPF-based settings
 ----------------------------
 
