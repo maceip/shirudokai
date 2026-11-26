@@ -9,6 +9,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <stdint.h>
 #include <linux/bpf.h>
 #include <linux/btf.h>
@@ -1720,4 +1721,761 @@ void upatch_maps_emit_json_object(struct json_emit *e,
 	json_obj_open(e);
 	upatch_maps_emit_json_fields(e, v);
 	json_obj_close(e);
+}
+
+static bool btf_is_char_elem(const struct btf *btf, __u32 type_id)
+{
+	const struct btf_type *t;
+	const char *name;
+	__u32 enc;
+
+	type_id = btf_unwrap(btf, type_id);
+	t = btf__type_by_id(btf, type_id);
+	if (!t || BTF_INFO_KIND(t->info) != BTF_KIND_INT || t->size != 1)
+		return false;
+	enc = *(const __u32 *)(t + 1);
+	if (BTF_INT_BITS(enc) != 8)
+		return false;
+	if (BTF_INT_ENCODING(enc) & BTF_INT_CHAR)
+		return true;
+	name = btf__name_by_offset(btf, t->name_off);
+	return name && strcmp(name, "char") == 0;
+}
+
+static void btf_emit_json_int(struct json_emit *e, const struct btf_type *t,
+			      const void *bytes, __u32 bytes_size)
+{
+	__u32 enc_word = *(const __u32 *)(t + 1);
+	__u32 bits = BTF_INT_BITS(enc_word);
+	__u32 encoding = BTF_INT_ENCODING(enc_word);
+	bool is_signed = (encoding & BTF_INT_SIGNED) != 0;
+	__u8 bytes_used = (__u8)DIV_ROUND_UP(bits, 8);
+	__u64 v = 0;
+	__u8 i;
+
+	if (bytes_used == 0 || bytes_used > bytes_size || bytes_used > 8) {
+		json_raw_value(e, "null", 4);
+		return;
+	}
+	for (i = 0; i < bytes_used; i++)
+		v |= (__u64)((const __u8 *)bytes)[i] << (8 * i);
+	if (encoding & BTF_INT_BOOL) {
+		json_raw_value(e, v ? "true" : "false", v ? 4 : 5);
+		return;
+	}
+	if (is_signed) {
+		char sbuf[32];
+		int n;
+
+		if (bits < 64 && (v & ((__u64)1 << (bits - 1))))
+			v |= ~(((__u64)1 << bits) - 1);
+		n = strsprintf(sbuf, sizeof(sbuf), "%lld", (__s64)v);
+		if (n < 0)
+			json_raw_value(e, "0", 1);
+		else
+			json_raw_value(e, sbuf, (size_t)n);
+		return;
+	}
+	json_u64_value(e, v);
+}
+
+static void btf_emit_json_bitfield(struct json_emit *e, const struct btf *btf,
+				   __u32 type_id, const void *bytes,
+				   __u32 bytes_size, __u32 bit_off,
+				   __u32 bit_size)
+{
+	__u32 shift = bit_off % 8, n = DIV_ROUND_UP(shift + bit_size, 8), i;
+	const __u8 *b = (const __u8 *)bytes + bit_off / 8;
+	const struct btf_type *t;
+	bool is_signed = false;
+	__u64 v = 0;
+
+	if (!bit_size || shift + bit_size > 64 || bit_off / 8 + n > bytes_size) {
+		json_raw_value(e, "null", 4);
+		return;
+	}
+	for (i = 0; i < n; i++)
+		v |= (__u64)b[i] << (8 * i);
+	v >>= shift;
+	if (bit_size < 64)
+		v &= ((__u64)1 << bit_size) - 1;
+	t = btf__type_by_id(btf, btf_unwrap(btf, type_id));
+	if (t && BTF_INFO_KIND(t->info) == BTF_KIND_INT)
+		is_signed = BTF_INT_ENCODING(*(const __u32 *)(t + 1)) &
+			    BTF_INT_SIGNED;
+	else if (t && (BTF_INFO_KIND(t->info) == BTF_KIND_ENUM ||
+		       BTF_INFO_KIND(t->info) == BTF_KIND_ENUM64))
+		is_signed = BTF_INFO_KFLAG(t->info);
+	if (is_signed) {
+		char sbuf[32];
+		int len;
+
+		if (bit_size < 64 && (v & ((__u64)1 << (bit_size - 1))))
+			v |= ~(((__u64)1 << bit_size) - 1);
+		len = strsprintf(sbuf, sizeof(sbuf), "%lld", (__s64)v);
+		if (len < 0)
+			json_raw_value(e, "0", 1);
+		else
+			json_raw_value(e, sbuf, (size_t)len);
+		return;
+	}
+	json_u64_value(e, v);
+}
+
+static void btf_emit_json_value(struct json_emit *e, const struct btf *btf,
+				__u32 type_id, const void *bytes,
+				__u32 bytes_size, int depth)
+{
+	const struct btf_type *t;
+	__u16 kind;
+
+	if (depth >= BTF_MAX_DEPTH || !btf || !type_id || !bytes || !bytes_size) {
+		json_raw_value(e, "null", 4);
+		return;
+	}
+	type_id = btf_unwrap(btf, type_id);
+	t = btf__type_by_id(btf, type_id);
+	if (!t) {
+		json_raw_value(e, "null", 4);
+		return;
+	}
+	kind = BTF_INFO_KIND(t->info);
+
+	if (kind == BTF_KIND_INT) {
+		btf_emit_json_int(e, t, bytes, bytes_size);
+		return;
+	}
+	if (kind == BTF_KIND_PTR) {
+		char pbuf[24];
+		__u64 v = 0;
+
+		if (bytes_size >= 8)
+			memcpy(&v, bytes, 8);
+		else if (bytes_size >= 4)
+			memcpy(&v, bytes, 4);
+		if (strsprintf(pbuf, sizeof(pbuf), "0x%llx", v) < 0)
+			json_str_value(e, "0x0");
+		else
+			json_str_value(e, pbuf);
+		return;
+	}
+	if (kind == BTF_KIND_ENUM) {
+		const struct btf_enum *en = (const struct btf_enum *)(t + 1);
+		int vlen = BTF_INFO_VLEN(t->info);
+		__u32 v = 0, size = t->size, i;
+
+		if (!size || size > 4 || size > bytes_size) {
+			json_raw_value(e, "null", 4);
+			return;
+		}
+		for (i = 0; i < size; i++)
+			v |= (__u32)((const __u8 *)bytes)[i] << (8 * i);
+		if (BTF_INFO_KFLAG(t->info) && size < 4 &&
+		    (v & (1u << (8 * size - 1))))
+			v |= ~((1u << (8 * size)) - 1);
+		for (i = 0; i < (__u32)vlen; i++) {
+			if ((__u32)en[i].val == v) {
+				const char *nm = btf__name_by_offset(btf,
+								     en[i].name_off);
+
+				if (nm && nm[0]) {
+					json_str_value(e, nm);
+					return;
+				}
+			}
+		}
+		if (BTF_INFO_KFLAG(t->info)) {
+			char sbuf[32];
+			int n = strsprintf(sbuf, sizeof(sbuf), "%d", (__s32)v);
+
+			json_raw_value(e, n < 0 ? "0" : sbuf,
+				       n < 0 ? 1 : (size_t)n);
+		} else {
+			json_u64_value(e, v);
+		}
+		return;
+	}
+	if (kind == BTF_KIND_ENUM64) {
+		const struct btf_enum64 *en = (const struct btf_enum64 *)(t + 1);
+		int vlen = BTF_INFO_VLEN(t->info);
+		__u64 v = 0;
+		int i;
+
+		if (bytes_size < 8) {
+			json_raw_value(e, "null", 4);
+			return;
+		}
+		memcpy(&v, bytes, 8);
+		for (i = 0; i < vlen; i++) {
+			__u64 ev = ((__u64)en[i].val_hi32 << 32) | en[i].val_lo32;
+
+			if (ev == v) {
+				const char *nm = btf__name_by_offset(btf,
+								     en[i].name_off);
+
+				if (nm && nm[0]) {
+					json_str_value(e, nm);
+					return;
+				}
+			}
+		}
+		json_u64_value(e, v);
+		return;
+	}
+	if (kind == BTF_KIND_STRUCT || kind == BTF_KIND_UNION) {
+		const struct btf_member *m = (const struct btf_member *)(t + 1);
+		int vlen = BTF_INFO_VLEN(t->info), i;
+
+		json_obj_value_open(e);
+		for (i = 0; i < vlen; i++) {
+			__u32 bit_off = BTF_INFO_KFLAG(t->info) ?
+					BTF_MEMBER_BIT_OFFSET(m[i].offset) :
+					m[i].offset;
+			__u32 byte_off = bit_off / 8, bit_size = 0;
+			const char *fname = btf__name_by_offset(btf, m[i].name_off);
+			__u32 fsize = 0, end;
+			char anon[24];
+			__s64 sz;
+
+			if (byte_off >= bytes_size)
+				continue;
+			if (BTF_INFO_KFLAG(t->info))
+				bit_size = BTF_MEMBER_BITFIELD_SIZE(m[i].offset);
+			if (!fname || !fname[0]) {
+				if (strsprintf(anon, sizeof(anon), "_%d", i) < 0)
+					strscpy_literal(anon, "_");
+				fname = anon;
+			}
+			json_key(e, fname);
+			if (bit_size) {
+				btf_emit_json_bitfield(e, btf, m[i].type,
+						       bytes, bytes_size,
+						       bit_off, bit_size);
+				continue;
+			}
+			sz = btf__resolve_size(btf, m[i].type);
+			if (sz > 0)
+				fsize = (__u32)sz;
+			if (!fsize || check_add_overflow(byte_off, fsize, &end) ||
+			    end > bytes_size)
+				fsize = bytes_size - byte_off;
+			btf_emit_json_value(e, btf, m[i].type,
+					    (const char *)bytes + byte_off,
+					    fsize, depth + 1);
+		}
+		json_obj_close(e);
+		return;
+	}
+	if (kind == BTF_KIND_ARRAY) {
+		const struct btf_array *a = (const struct btf_array *)(t + 1);
+		__s64 esz = btf__resolve_size(btf, a->type);
+		__u32 i, n = a->nelems;
+		size_t total;
+
+		if (esz <= 0 || check_mul_overflow((size_t)esz, n, &total) ||
+		    total > bytes_size) {
+			json_raw_value(e, "null", 4);
+			return;
+		}
+		if (btf_is_char_elem(btf, a->type)) {
+			const char *s = bytes;
+			size_t slen = strnlen(s, n);
+
+			json_str_lossy(e, s, slen);
+			return;
+		}
+		json_arr_open_value(e);
+		for (i = 0; i < n; i++)
+			btf_emit_json_value(e, btf, a->type,
+					    (const char *)bytes +
+					    (size_t)i * (size_t)esz,
+					    (__u32)esz, depth + 1);
+		json_arr_close(e);
+		return;
+	}
+	json_raw_value(e, "null", 4);
+}
+
+__u32 ringbuf_resolve_btf_value_type(const struct btf *btf, const char *map,
+				     __u32 info_value_type_id)
+{
+	__u32 id, cnt;
+
+	if (info_value_type_id)
+		return info_value_type_id;
+	if (!btf || !map || !map[0])
+		return 0;
+	cnt = btf__type_cnt(btf);
+	for (id = 1; id < cnt; id++) {
+		const struct btf_member *m;
+		const struct btf_type *t, *st;
+		const char *vname;
+		int i, vlen;
+
+		t = btf__type_by_id(btf, id);
+		if (!t || BTF_INFO_KIND(t->info) != BTF_KIND_VAR)
+			continue;
+		vname = btf__name_by_offset(btf, t->name_off);
+		if (!vname || strcmp(vname, map) != 0)
+			continue;
+		st = btf__type_by_id(btf, btf_unwrap(btf, t->type));
+		if (!st || BTF_INFO_KIND(st->info) != BTF_KIND_STRUCT)
+			continue;
+		m = (const struct btf_member *)(st + 1);
+		vlen = BTF_INFO_VLEN(st->info);
+		for (i = 0; i < vlen; i++) {
+			const char *mname = btf__name_by_offset(btf,
+								m[i].name_off);
+			const struct btf_type *pt;
+
+			if (!mname || strcmp(mname, "value") != 0)
+				continue;
+			pt = btf__type_by_id(btf, btf_unwrap(btf, m[i].type));
+			if (pt && BTF_INFO_KIND(pt->info) == BTF_KIND_PTR)
+				return pt->type;
+		}
+	}
+	return 0;
+}
+
+static char *format_ringbuf_hex(const void *data, __u32 size)
+{
+	__u32 cap = min(size, 256U);
+	size_t buf_sz = (size_t)cap * 2 + 8;
+	char *out = xmalloc(buf_sz);
+	size_t off = 0;
+
+	if (!out)
+		return NULL;
+	out[off++] = '0';
+	out[off++] = 'x';
+	if (cap) {
+		hex_encode(data, cap, out + off);
+		off += (size_t)cap * 2;
+	}
+	if (size > cap) {
+		memcpy(out + off, "...", 3);
+		off += 3;
+	}
+	out[off] = '\0';
+	return out;
+}
+
+int ringbuf_format_record(const struct ringbuf_record_spec *spec,
+			  const void *data, __u32 size, bool json,
+			  char **out)
+{
+	__s64 resolved_sz = 0;
+	bool typed = false;
+
+	if (!spec || !out || (!data && size > 0))
+		return -EINVAL;
+	*out = NULL;
+	if (size > RINGBUF_MAX_SAMPLE_BYTES)
+		return -E2BIG;
+	if (spec->btf && spec->value_type_id) {
+		resolved_sz = btf__resolve_size(spec->btf, spec->value_type_id);
+		if (resolved_sz > 0 && (__u64)resolved_sz <= size)
+			typed = true;
+	}
+	if (json) {
+		struct json_emit e = { .max = JSON_MAX_BYTES };
+		char *copy;
+
+		json_obj_open(&e);
+		json_kv_string(&e, "upatch", spec->upatch ? spec->upatch : "");
+		json_kv_string(&e, "map", spec->map ? spec->map : "");
+		json_kv_u64(&e, "size", size);
+		if (typed) {
+			const struct btf_type *vt;
+			const char *tname;
+			char tlabel[MAP_TYPENAME_MAX + 16];
+			__u32 uid = btf_unwrap(spec->btf, spec->value_type_id);
+
+			vt = btf__type_by_id(spec->btf, uid);
+			tname = btf_type_name((struct btf *)spec->btf,
+					      spec->value_type_id);
+			if (vt && tname && tname[0] &&
+			    strsprintf(tlabel, sizeof(tlabel), "%s%s",
+				       btf_kind_prefix(BTF_INFO_KIND(vt->info)),
+				       tname) >= 0)
+				json_kv_string(&e, "btf_type", tlabel);
+			json_key(&e, "value");
+			btf_emit_json_value(&e, spec->btf, spec->value_type_id,
+					    data, (__u32)resolved_sz, 0);
+		} else {
+			char *hex = size ? hex_alloc(data, size) : NULL;
+
+			if (size && !hex) {
+				xfree(e.buf, e.cap);
+				return -ENOMEM;
+			}
+			json_kv_string(&e, "data_hex", hex ? hex : "");
+			xfree(hex, size_add(size_mul(size, 2), 1));
+		}
+		json_obj_close(&e);
+		if (e.err) {
+			int err = e.err;
+
+			xfree(e.buf, e.cap);
+			return err;
+		}
+		copy = xstrdup(e.buf ? e.buf : "{}");
+		xfree(e.buf, e.cap);
+		if (!copy)
+			return -ENOMEM;
+		*out = copy;
+		return 0;
+	}
+	{
+		char *val = NULL, *line;
+
+		if (typed)
+			val = btf_format_value(spec->btf, spec->value_type_id,
+					       data, (__u32)resolved_sz, 0);
+		if (!val)
+			val = format_ringbuf_hex(data, size);
+		if (!val)
+			return -ENOMEM;
+		line = xasprintf("%s (%u B): %s",
+				 spec->map && spec->map[0] ? spec->map : "?",
+				 size, val);
+		xstrfree(val);
+		if (!line)
+			return -ENOMEM;
+		*out = line;
+		return 0;
+	}
+}
+
+void ringbuf_batch_free(struct ringbuf_batch *batch)
+{
+	size_t i;
+
+	if (!batch)
+		return;
+	for (i = 0; i < batch->n_records; i++)
+		xstrfree(batch->lines[i]);
+	xfree(batch->lines, size_mul(batch->cap, sizeof(*batch->lines)));
+	memset(batch, 0, sizeof(*batch));
+}
+
+int ringbuf_consume_record(const struct ringbuf_record_spec *spec,
+			   const void *data, __u32 size,
+			   struct ringbuf_batch *batch)
+{
+	char *line = NULL;
+	int err;
+
+	if (!spec || !batch)
+		return -EINVAL;
+	if (!batch->max_records || batch->n_records >= batch->max_records) {
+		batch->truncated = true;
+		return 0;
+	}
+	err = ringbuf_format_record(spec, data, size, batch->json, &line);
+	if (err) {
+		batch->err = err;
+		return err;
+	}
+	if (batch->n_records == batch->cap) {
+		size_t nc = batch->cap ? size_mul(batch->cap, 2) : 16;
+		char **grown;
+
+		grown = xreallocarray(batch->lines, batch->cap, nc,
+				      sizeof(*batch->lines));
+		if (!grown) {
+			xstrfree(line);
+			batch->err = -ENOMEM;
+			return -ENOMEM;
+		}
+		batch->lines = grown;
+		batch->cap = nc;
+	}
+	batch->lines[batch->n_records++] = line;
+	return 0;
+}
+
+struct ringbuf_slot {
+	char				name[MAP_NAME_MAX + 1];
+	int				fd;
+	struct btf			*btf;
+	struct ringbuf_record_spec	spec;
+	struct ringbuf_batch		*batch;
+};
+
+static int ringbuf_sample_cb(void *ctx, void *data, size_t size)
+{
+	struct ringbuf_slot *slot = ctx;
+
+	if (size > RINGBUF_MAX_SAMPLE_BYTES) {
+		slot->batch->err = -E2BIG;
+		return -E2BIG;
+	}
+	return ringbuf_consume_record(&slot->spec, data, (__u32)size,
+				      slot->batch);
+}
+
+static struct btf *try_load_upatch_btf(const char *upatch)
+{
+	struct bpf_prog_info pinfo = {};
+	struct bpf_link_info linfo = {};
+	struct upatch_pins pins = {};
+	__u32 linfo_len = sizeof(linfo), pinfo_len = sizeof(pinfo);
+	char dir[PATH_MAX], pin[PATH_MAX + 32];
+	int lfd = -1, pfd = -1;
+	struct btf *btf = NULL;
+
+	if (upatch_pins_read(upatch, &pins) != 0)
+		return NULL;
+	if (pins.has_link) {
+		if (upatch_pin_path(pin, sizeof(pin), upatch, "link", NULL))
+			return NULL;
+		lfd = bpf_obj_get(pin);
+	} else if (pins.nr_links) {
+		if (upatch_pin_path(dir, sizeof(dir), upatch, NULL) ||
+		    upatch_link_pin(pin, sizeof(pin), dir, pins.first_link))
+			return NULL;
+		lfd = bpf_obj_get(pin);
+	} else if (pins.nr_xdp_progs) {
+		__u32 id = 0;
+
+		pfd = upatch_xdp_prog_open(upatch, pins.first_xdp_prog, &id);
+	}
+	if (lfd >= 0) {
+		if (bpf_link_get_info_by_fd(lfd, &linfo, &linfo_len) == 0 &&
+		    linfo.prog_id)
+			pfd = bpf_prog_get_fd_by_id(linfo.prog_id);
+		close(lfd);
+	}
+	if (pfd >= 0) {
+		if (bpf_prog_get_info_by_fd(pfd, &pinfo, &pinfo_len) == 0)
+			btf = try_load_btf(pinfo.btf_id);
+		close(pfd);
+	}
+	return btf;
+}
+
+static int ringbuf_not_dot(const struct dirent *e)
+{
+	return e->d_name[0] != '.' && strcmp(e->d_name, SERIAL_MAP_NAME) != 0;
+}
+
+static void ringbuf_slots_free(struct ringbuf_slot *slots, size_t n, size_t cap)
+{
+	size_t i;
+
+	for (i = 0; i < n; i++) {
+		if (slots[i].fd >= 0)
+			close(slots[i].fd);
+		btf__free(slots[i].btf);
+	}
+	xfree(slots, size_mul(cap, sizeof(*slots)));
+}
+
+static int ringbuf_slot_add(struct ringbuf_slot **slots, size_t *n, size_t *cap,
+			    const char *upatch, const char *map_name, int fd,
+			    const struct bpf_map_info *info,
+			    struct ringbuf_batch *batch)
+{
+	struct ringbuf_slot *s;
+
+	if (*n == *cap) {
+		size_t nc = *cap ? size_mul(*cap, 2) : 4;
+		struct ringbuf_slot *grown;
+
+		grown = xreallocarray(*slots, *cap, nc, sizeof(**slots));
+		if (!grown)
+			return -ENOMEM;
+		*slots = grown;
+		*cap = nc;
+	}
+	s = &(*slots)[*n];
+	memset(s, 0, sizeof(*s));
+	s->fd = -1;
+	if (strscpy(s->name, map_name, sizeof(s->name)) < 0)
+		return -ENAMETOOLONG;
+	s->fd = fd;
+	s->btf = try_load_btf(info->btf_id);
+	if (!s->btf)
+		s->btf = try_load_upatch_btf(upatch);
+	s->batch = batch;
+	s->spec.upatch = upatch;
+	s->spec.map = s->name;
+	s->spec.btf = s->btf;
+	s->spec.value_type_id = ringbuf_resolve_btf_value_type(s->btf, s->name,
+							       info->btf_value_type_id);
+	(*n)++;
+	return 0;
+}
+
+static void ringbuf_rebind_specs(struct ringbuf_slot *slots, size_t n,
+				 const char *upatch, struct ringbuf_batch *batch)
+{
+	size_t i;
+
+	for (i = 0; i < n; i++) {
+		slots[i].batch = batch;
+		slots[i].spec.upatch = upatch;
+		slots[i].spec.map = slots[i].name;
+		slots[i].spec.btf = slots[i].btf;
+	}
+}
+
+static bool ringbuf_upatch_valid(const char *name)
+{
+	size_t i;
+
+	if (!name || !name[0] || name[0] == '.')
+		return false;
+	for (i = 0; name[i]; i++) {
+		char c = name[i];
+		bool ok = (c >= 'A' && c <= 'Z') ||
+			  (c >= 'a' && c <= 'z') ||
+			  (c >= '0' && c <= '9') ||
+			  c == '.' || c == '_' || c == '-';
+
+		if (!ok || i >= UPATCH_NAME_MAX)
+			return false;
+	}
+	return true;
+}
+
+int upatch_ringbuf_read(const char *upatch, const char *map,
+			__u32 max_records, __u32 timeout_ms, bool json,
+			struct ringbuf_batch *out)
+{
+	struct ringbuf_slot *slots = NULL;
+	struct ring_buffer *rb = NULL;
+	size_t n_slots = 0, cap_slots = 0, i;
+	int ret = 0, consumed, epfd;
+
+	if (!out)
+		return -EINVAL;
+	memset(out, 0, sizeof(*out));
+	if (!ringbuf_upatch_valid(upatch))
+		return -EINVAL;
+	if (!max_records || max_records > RINGBUF_MAX_RECORDS_LIMIT ||
+	    timeout_ms > RINGBUF_MAX_TIMEOUT_MS)
+		return -EINVAL;
+	if (map && (!map[0] || strchr(map, '/') || strlen(map) > MAP_NAME_MAX))
+		return -EINVAL;
+	out->max_records = max_records;
+	out->json = json;
+
+	if (map) {
+		struct bpf_map_info info = {};
+		int fd = -1;
+
+		ret = open_map_pin(upatch, map, &fd, &info);
+		if (ret)
+			return ret;
+		if (info.type != BPF_MAP_TYPE_RINGBUF) {
+			close(fd);
+			return -EINVAL;
+		}
+		ret = ringbuf_slot_add(&slots, &n_slots, &cap_slots, upatch,
+				       map, fd, &info, out);
+		if (ret) {
+			close(fd);
+			goto out;
+		}
+	} else {
+		struct dirent **ents = NULL;
+		char dir[PATH_MAX];
+		int nd, k;
+
+		if (upatch_pin_path(dir, sizeof(dir), upatch, "maps", NULL))
+			return -ENAMETOOLONG;
+		nd = scandir(dir, &ents, ringbuf_not_dot, alphasort);
+		if (nd < 0)
+			return -errno;
+		for (k = 0; k < nd; k++) {
+			struct bpf_map_info info = {};
+			int fd = -1;
+
+			if (!ret &&
+			    open_map_pin(upatch, ents[k]->d_name, &fd, &info) == 0) {
+				if (info.type == BPF_MAP_TYPE_RINGBUF) {
+					ret = ringbuf_slot_add(&slots, &n_slots,
+							       &cap_slots, upatch,
+							       ents[k]->d_name,
+							       fd, &info, out);
+					if (ret)
+						close(fd);
+				} else {
+					close(fd);
+				}
+			}
+			libc_free(ents[k]);
+		}
+		libc_free(ents);
+		if (ret)
+			goto out;
+		if (n_slots == 0)
+			return -ENODATA;
+	}
+
+	ringbuf_rebind_specs(slots, n_slots, upatch, out);
+	rb = ring_buffer__new(slots[0].fd, ringbuf_sample_cb, &slots[0], NULL);
+	if (!rb) {
+		ret = -errno;
+		goto out;
+	}
+	for (i = 1; i < n_slots; i++) {
+		ret = ring_buffer__add(rb, slots[i].fd, ringbuf_sample_cb,
+				       &slots[i]);
+		if (ret)
+			goto out;
+	}
+
+	consumed = ring_buffer__consume_n(rb, max_records);
+	if (consumed < 0) {
+		ret = out->err ? out->err : consumed;
+		goto out;
+	}
+	epfd = ring_buffer__epoll_fd(rb);
+	if (consumed == 0 && timeout_ms > 0) {
+		if (epfd >= 0) {
+			struct pollfd pfd = {
+				.fd	= epfd,
+				.events	= POLLIN,
+			};
+			int pr = poll(&pfd, 1, (int)timeout_ms);
+
+			if (pr < 0 && errno != EINTR) {
+				ret = -errno;
+				goto out;
+			}
+			if (pr > 0 && (pfd.revents & POLLIN)) {
+				consumed = ring_buffer__consume_n(rb, max_records);
+				if (consumed < 0) {
+					ret = out->err ? out->err : consumed;
+					goto out;
+				}
+			}
+		} else {
+			consumed = ring_buffer__poll(rb, (int)timeout_ms);
+			if (consumed < 0 && consumed != -EINTR) {
+				ret = out->err ? out->err : consumed;
+				goto out;
+			}
+		}
+	}
+	if (out->n_records == max_records && epfd >= 0) {
+		struct pollfd pfd = {
+			.fd	= epfd,
+			.events	= POLLIN,
+		};
+
+		if (poll(&pfd, 1, 0) > 0 && (pfd.revents & POLLIN))
+			out->truncated = true;
+	}
+
+out:
+	ring_buffer__free(rb);
+	ringbuf_slots_free(slots, n_slots, cap_slots);
+	if (ret)
+		ringbuf_batch_free(out);
+	return ret;
 }

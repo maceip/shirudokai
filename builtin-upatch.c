@@ -5474,6 +5474,156 @@ done:
 	return ret;
 }
 
+enum upatch_events_opt {
+	UPATCH_EVENTS_MAX_RECORDS,
+	UPATCH_EVENTS_TIMEOUT_MS,
+	UPATCH_EVENTS_JSON,
+};
+
+static const struct opt_spec upatch_events_opts[] = {
+	[UPATCH_EVENTS_MAX_RECORDS] = { "--max-records", 0, 0, "<n>",
+		"maximum records to consume (1..65536, default: 256)" },
+	[UPATCH_EVENTS_TIMEOUT_MS] = { "--timeout-ms", 0, 0, "<ms>",
+		"wait up to ms when empty (0..30000, default: 0)" },
+	[UPATCH_EVENTS_JSON] = { "--json", 0, 0, NULL,
+		"print one JSON object with decoded records" },
+};
+
+static const struct help_section upatch_events_sections[] = {
+	HELP_OPTIONS("options:", upatch_events_opts),
+};
+
+static const struct help upatch_events_help = {
+	.usage      = "shirudo upatch events <upatch> [<map>] "
+		      "[--max-records=<n>] [--timeout-ms=<ms>] [--json]",
+	.summary    = "Consume queued records from the pinned ring buffer "
+		      "map(s) of a\nloaded upatch in a single bounded pass. "
+		      "Records are formatted\nusing the map's BTF value type "
+		      "when available, or as hex bytes\nwhen untyped.",
+	.sections   = upatch_events_sections,
+	.n_sections = ARRAY_SIZE(upatch_events_sections),
+	.footer     =
+"Examples:\n"
+"  shirudo upatch events my-upatch\n"
+"  shirudo upatch events my-upatch events --max-records=64 --json\n"
+"  shirudo upatch events my-upatch events --timeout-ms=500 --json",
+};
+
+static int cmd_upatch_events(int argc, const char **argv)
+{
+	__u64 max_records = RINGBUF_MAX_RECORDS_DEFAULT, timeout_ms = 0;
+	const char *upatch = NULL, *map = NULL;
+	struct ringbuf_batch batch = {};
+	bool json = false;
+	struct opt_parser p;
+	int opt, err, ret = 0;
+	size_t i;
+
+	OPT_INIT(&p, "upatch events", upatch_events_opts, &upatch_events_help,
+		 argc, argv, 1);
+	for (opt = opt_next(&p); opt != OPT_END; opt = opt_next(&p)) {
+		switch (opt) {
+		case UPATCH_EVENTS_MAX_RECORDS:
+			if (opt_u64(&p, 1, RINGBUF_MAX_RECORDS_LIMIT,
+				    &max_records))
+				return EXIT_USAGE;
+			break;
+		case UPATCH_EVENTS_TIMEOUT_MS:
+			if (opt_u64(&p, 0, RINGBUF_MAX_TIMEOUT_MS,
+				    &timeout_ms))
+				return EXIT_USAGE;
+			break;
+		case UPATCH_EVENTS_JSON:
+			json = true;
+			break;
+		case OPT_ARG:
+			if (map) {
+				opt_usage(&p, "unexpected argument '%s'",
+					  p.value);
+				return EXIT_USAGE;
+			}
+			if (upatch)
+				map = p.value;
+			else
+				upatch = p.value;
+			break;
+		case OPT_DONE:
+			return 0;
+		default:
+			return EXIT_USAGE;
+		}
+	}
+	if (!upatch) {
+		opt_usage(&p, "takes <upatch> [<map>]");
+		return EXIT_USAGE;
+	}
+	if (!upatch_name_valid(upatch)) {
+		opt_usage(&p, "invalid upatch name '%s'", upatch);
+		return EXIT_USAGE;
+	}
+	if (map && (!map[0] || strchr(map, '/') || strlen(map) > MAP_NAME_MAX)) {
+		opt_usage(&p, "invalid map name '%s'", map);
+		return EXIT_USAGE;
+	}
+
+	err = upatch_ringbuf_read(upatch, map, (__u32)max_records,
+				  (__u32)timeout_ms, json, &batch);
+	if (err) {
+		if (err == -ENODATA)
+			pr_err("upatch events: %s: no pinned ringbuf maps",
+			       upatch);
+		else if (err == -EINVAL && map)
+			pr_err("upatch events: %s/%s: not a ringbuf map",
+			       upatch, map);
+		else if (map)
+			pr_err("upatch events: %s/%s: %s", upatch, map,
+			       strerror(-err));
+		else
+			pr_err("upatch events: %s: %s", upatch, strerror(-err));
+		return 1;
+	}
+
+	if (json) {
+		struct json_emit e = { .max = JSON_MAX_BYTES };
+
+		json_obj_open(&e);
+		json_kv_int(&e, "schema", 1);
+		json_kv_string(&e, "upatch", upatch);
+		if (map)
+			json_kv_string(&e, "map", map);
+		json_kv_u64(&e, "n_records", batch.n_records);
+		json_kv_bool(&e, "truncated", batch.truncated);
+		json_arr_open(&e, "records");
+		for (i = 0; i < batch.n_records; i++)
+			json_raw_value(&e, batch.lines[i],
+				       strlen(batch.lines[i]));
+		json_arr_close(&e);
+		json_obj_close(&e);
+		if (e.err) {
+			pr_err("upatch events: json encode failed: %s",
+			       strerror(-e.err));
+			ret = 1;
+		} else if (printf("%s\n", e.buf) < 0) {
+			ret = 1;
+		}
+		xfree(e.buf, e.cap);
+	} else {
+		printf("Events (%zu)%s:\n", batch.n_records,
+		       batch.truncated ? " (truncated)" : "");
+		if (batch.n_records == 0) {
+			printf("  none\n");
+		} else {
+			for (i = 0; i < batch.n_records; i++)
+				printf("  %s\n", batch.lines[i]);
+		}
+		if (ferror(stdout))
+			ret = 1;
+	}
+
+	ringbuf_batch_free(&batch);
+	return ret;
+}
+
 static const struct help_item upatch_subcmds[] = {
 	{ "load",   "load a signed .upatch into the target kernel (target-only)" },
 	{ "unload", "apply a signed UNLOAD directive (forward chain extension)" },
@@ -5481,6 +5631,7 @@ static const struct help_item upatch_subcmds[] = {
 	{ "info",   "describe a .upatch file (any host; offline, no kernel state)" },
 	{ "get",    "dump source of a loaded upatch from the target kernel (BTF line_info)" },
 	{ "map",    "read pinned map contents (target-only; BTF type-aware)" },
+	{ "events", "read queued records from pinned ringbuf maps (target-only; one-shot)" },
 	{ "reconcile", "attach loaded XDP upatches to devices that appeared later (target-only)" },
 };
 
@@ -5527,6 +5678,8 @@ int cmd_upatch(int argc, const char **argv)
 		return cmd_upatch_get(argc - 1, argv + 1);
 	if (strcmp(canonical, "map") == 0)
 		return cmd_upatch_map(argc - 1, argv + 1);
+	if (strcmp(canonical, "events") == 0)
+		return cmd_upatch_events(argc - 1, argv + 1);
 	if (strcmp(canonical, "reconcile") == 0)
 		return cmd_upatch_reconcile(argc - 1, argv + 1);
 	return 2;	/* unreachable */

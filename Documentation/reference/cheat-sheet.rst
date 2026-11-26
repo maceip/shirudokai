@@ -393,6 +393,13 @@ Look at a serializer-backed map without draining it with
 
    target# shirudo upatch map kernel-obs exec --json --peek
 
+Drain queued records from a ring buffer map in one pass with
+:doc:`cli/upatch-events`:
+
+.. code-block:: console
+
+   target# shirudo upatch events guard-demo events --max-records=64 --json
+
 Send one map to a collector with :doc:`cli/upatch-map`:
 
 .. code-block:: console
