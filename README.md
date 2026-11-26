@@ -4,9 +4,9 @@
 </picture>
 <br/><br/>
 
-shirudo is a BPF-based security platform for Linux. After boot-time
-initialization, it restricts BPF program loads from userspace to signed
-loaders. Operators ship signed micropatches, called
+shirudo is a BPF security platform for Linux. After boot-time
+initialization, it allows userspace to load BPF programs only through
+signed loaders. Operators ship signed micropatches, called
 [upatches](https://docs.shirudo.dev/upatches/learn/concepts.html),
 and verify a target's measured upatch state with TPM-signed evidence.
 
