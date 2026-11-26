@@ -1624,10 +1624,10 @@ a proof covers.
        :src:`util/image_runtime.c`, :src:`util/initrd.c`,
        :src:`util/integrity.c`, :src:`util/java_agent.c`,
        :src:`util/kernel_prereq.c`, :src:`util/keyring.c`,
-       :src:`util/preflight.c`, :src:`util/seal.c`,
-       :src:`util/tamper.c`, :src:`util/upatch_maps.c`,
-       :src:`util/upatch_pins.c`, :src:`util/upatch_resolve.c`,
-       :src:`util/upatch_verify.c`
+       :src:`util/preflight.c`, :src:`util/reproducer_check.c`,
+       :src:`util/seal.c`, :src:`util/tamper.c`,
+       :src:`util/upatch_maps.c`, :src:`util/upatch_pins.c`,
+       :src:`util/upatch_resolve.c`, :src:`util/upatch_verify.c`
      - Mostly calls into the kernel, which CBMC has no body for: files,
        extended attributes, mounts, the device mapper, keyrings,
        ``bpf()``, netlink, ``/proc`` and the process's own limits

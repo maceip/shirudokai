@@ -35,6 +35,7 @@ install beside ``shirudo``.
    upatch-info
    upatch-get
    upatch-map
+   upatch-check
    upatch-reconcile
    bpm
    attest

@@ -389,6 +389,9 @@ every verdict, ``tampered`` included. Parse ``.status`` of
    * - ``upatch map``
      - 0; 1 on a read or export failure; 2 for a usage error or an invalid
        ``map_export`` configuration.
+   * - ``upatch check``
+     - 0 for ``verdict: pass``; 1 for ``verdict: fail`` or a read, pin or
+       ``BPF_PROG_TEST_RUN`` failure; 2 for a usage error.
    * - ``bpm`` without a subcommand
      - 2.
    * - ``bpm install``, ``uninstall``, ``upgrade``, ``list``, ``pull``,
