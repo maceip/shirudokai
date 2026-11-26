@@ -27,6 +27,7 @@
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 
+#include <shirudo/enforcement.h>
 #include <shirudo/misc.h>
 #include <shirudo/overflow.h>
 #include <shirudo/string.h>
@@ -721,6 +722,7 @@ static int identity_build(struct identity *id)
 	memcpy(id->runtime_root, image_runtime_root(), 32);
 	id->nv_index = NV_INDEX;
 	id->config_pcr = shirudo_image_config_pcr();
+	id->enforcement = shirudo_image_enforcement();
 
 	err = bpf_anchor(id);
 	if (err)
@@ -786,6 +788,7 @@ struct lsm_links {
 	struct bpf_link *image_observers[IMAGE_OBSERVER_HOOK_COUNT];
 	struct bpf_link *gates[GATE_HOOK_COUNT];
 	struct bpf_link *mounts[MOUNT_HOOK_COUNT];
+	struct bpf_link *shared[SHARED_HOOK_COUNT];
 	struct bpf_link *seal[SEAL_HOOK_COUNT];
 	struct bpf_link *image_seal[IMAGE_SEAL_HOOK_COUNT];
 	struct bpf_object *seal_obj;
@@ -806,7 +809,8 @@ static const enum gate_guard bpf_gates[] = {
 	GUARD_BPF,
 };
 
-static int attach_guards(struct bpf_object *obj, struct lsm_links *links)
+static int attach_guards(struct bpf_object *obj, struct lsm_links *links,
+			 __u32 enforcement)
 {
 	struct bpf_program *gates[GATE_HOOK_COUNT] = {};
 	int err;
@@ -845,6 +849,13 @@ static int attach_guards(struct bpf_object *obj, struct lsm_links *links)
 	err = attach_mount_guards(obj, links->mounts);
 	if (err)
 		return err;
+	/* Before lsm/bpf opens BPF_OBJ_GET, the private bpffs is closed. */
+	if (enforcement == ENFORCEMENT_SHARED) {
+		err = attach_guard_group(obj, shirudo_shared_guards,
+					 SHARED_HOOK_COUNT, links->shared);
+		if (err)
+			return err;
+	}
 
 	err = attach_seal(obj, &links->seal_obj, links->seal,
 			  links->image_seal);
@@ -871,7 +882,7 @@ static int lsm_attach(struct bpf_object *obj, struct lsm_links *links)
 	err = identity_publish(obj, &id);
 	if (err)
 		return err;
-	return attach_guards(obj, links);
+	return attach_guards(obj, links, id.enforcement);
 }
 
 static const enum gate_guard gate_release_order[] = {
@@ -923,6 +934,7 @@ static void lsm_links_release(struct lsm_links *links, bool failed)
 	release_link_group(links->observers, ARRAY_SIZE(links->observers),
 			   failed);
 	release_link_group(links->seal, ARRAY_SIZE(links->seal), failed);
+	release_link_group(links->shared, ARRAY_SIZE(links->shared), failed);
 	release_link_group(links->mounts, ARRAY_SIZE(links->mounts), failed);
 	if (failed) {
 		for (i = 0; i < ARRAY_SIZE(gate_release_order); i++) {

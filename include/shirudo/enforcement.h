@@ -13,6 +13,13 @@
 #define SHIRUDO_PIN_GRANT_ACK	1003
 
 /*
+ * The enforcement mode init freezes into the identity record. Strict is
+ * zero, so that a record without a mode enforces in full.
+ */
+#define ENFORCEMENT_STRICT	0u
+#define ENFORCEMENT_SHARED	1u
+
+/*
  * vmlinux.h carries no UAPI macros, so BPF code takes the ioctl number
  * from here: _IOW('$', 8, __u32) on every supported architecture.
  * Userspace includes the UAPI header first, which defines it as is.
