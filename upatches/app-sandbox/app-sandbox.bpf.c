@@ -19,6 +19,7 @@ char _license[] SEC("license") = "Dual BSD/GPL";
 
 #define SANDBOX_MAX		32
 #define SANDBOX_CGROUP_MAX	32
+#define SANDBOX_CGROUP_DEPTH	12
 #define SANDBOX_NET_MAX		128
 #define SANDBOX_PORT_MAX	64
 #define SANDBOX_FIM_MAX		64
@@ -179,6 +180,25 @@ static __always_inline __u64 cgroup_matches(__u64 cg)
 	return matched;
 }
 
+/*
+ * A task of a Pod runs in a container's cgroup below the Pod's, so the
+ * Pod's ID is one of its ancestors' and never its own. Level 0 is the
+ * root, and the helper returns 0 past the task's own level.
+ */
+static __always_inline __u64 current_cgroup_sandboxes(void)
+{
+	__u64 matched = 0, cg;
+	__u32 level;
+
+	for (level = 1; level <= SANDBOX_CGROUP_DEPTH; level++) {
+		cg = bpf_get_current_ancestor_cgroup_id(level);
+		if (!cg)
+			break;
+		matched |= cgroup_matches(cg);
+	}
+	return matched;
+}
+
 static __always_inline __u64 current_sandboxes(void)
 {
 	struct task_policy *policy;
@@ -192,7 +212,7 @@ static __always_inline __u64 current_sandboxes(void)
 	scoped = active & sandbox_policy.cgroup_scoped;
 	if (scoped)
 		active = (active & ~scoped) |
-			 (scoped & cgroup_matches(bpf_get_current_cgroup_id()));
+			 (scoped & current_cgroup_sandboxes());
 	return active;
 }
 
