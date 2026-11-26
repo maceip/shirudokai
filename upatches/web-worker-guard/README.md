@@ -34,5 +34,5 @@ bit runs:
 
 ```sh
 shirudo bpm build upatches/web-worker-guard --version 1.0.0 \
-	--key signing.key --cert signing.crt
+	--keys-dir <keys>
 ```

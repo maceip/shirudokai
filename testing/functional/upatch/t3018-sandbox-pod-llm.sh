@@ -95,8 +95,8 @@ test_expect_success 'llm-agent.toml builds via --rodata-input sandbox=... and ro
 	# AF_UNIX (1<<1=2) | AF_INET (1<<2=4) | AF_INET6 (1<<10=1024) == 1030
 	assert sp["families"][0]["sandbox"] == 4, sp["families"][0]
 	assert sp["families"][0]["allowed"] == 1030, sp["families"][0]
-	assert sp["nr_net"] == 2, sp["nr_net"]
-	for rule in sp["net"][:2]:
+	assert sp["nr_net"] == 7, sp["nr_net"]
+	for rule in sp["net"][:7]:
 	    assert rule["deny_sandboxes"] == 4, rule
 	    assert rule["allow_sandboxes"] == 0, rule
 	read_rules = [r for r in sp["fim"][:sp["nr_fim"]] if r["ops"] & 0x8]
