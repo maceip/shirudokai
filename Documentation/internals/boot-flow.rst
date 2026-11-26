@@ -120,17 +120,17 @@ binary, which the boot chain measured. The runtime image that later
 commands run from is mounted under the guards.
 
 .. figure:: /images/internals-init-run.svg
-   :alt: The 18 steps of init in the initrd as a row of cells in four
-         phases: settings and mounts (1 to 4), images and keyrings (5 to
-         9), guards and the runtime image under them (10 to 13), and the
-         config boot event, the restore and the register (14 to 17),
-         then step 18. Markers show the keyrings sealed after step 8,
-         the guards attached after step 11 and the PCR 9 anchor after
-         step 16. Brackets below show what a stop leaves: in steps 1 to
-         11 nothing attached and shirudo.service skipped; in 12 and 13
+   :alt: The 19 steps of init in the initrd as a row of cells in four
+         phases: settings and mounts (1 to 5), images and keyrings (6 to
+         10), guards and the runtime image under them (11 to 14), and the
+         config boot event, the restore and the register (15 to 18),
+         then step 19. Markers show the keyrings sealed after step 9,
+         the guards attached after step 12 and the PCR 9 anchor after
+         step 17. Brackets below show what a stop leaves: in steps 1 to
+         12 nothing attached and shirudo.service skipped; in 13 and 14
          guards on, no runtime image and the service skipped; in step
-         14 before the selection is pending, the service runs init
-         again; from there to step 17 the selection stays pending until
+         15 before the selection is pending, the service runs init
+         again; from there to step 18 the selection stays pending until
          a reboot. Below the switch to the root file system, the private
          bpffs, the image mounts and eventlog.pending cross with
          /run/shirudo, and shirudo.service checks what the initrd run
