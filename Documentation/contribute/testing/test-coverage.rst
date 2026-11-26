@@ -1107,7 +1107,8 @@ The unit suites in :src:`testing/unit/` cover 49 of the modules in
 :src:`util/`: ``attest``, ``bpm_cleanup``, ``bpm_feed``, ``bpm_install``,
 ``bpm_oci``, ``bpm_package``, ``bpm_state``,
 ``bpm_tree``, ``bpm_tree_overlap``, ``bpm_tree_state``, ``chain``,
-``chain_history``, ``conditions``, ``config_update``, ``crypto_openssl``,
+``chain_history``, ``conditions``, ``config_update``, ``crypto`` and
+``crypto_openssl``,
 ``curl``, ``ek_cloud``, ``eventlog``, ``format``, ``freshness``, ``hex``,
 ``identity``, ``image_bootstrap``, ``io``,
 ``java_agent``, ``json``, ``kconfig``, ``kernel_abi``,
