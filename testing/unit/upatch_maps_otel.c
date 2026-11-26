@@ -23,6 +23,8 @@
 
 #include "crypto.h"
 #include "hex.h"
+#include "json.h"
+#include "malloc.h"
 #include "tools/quote-check/row.h"
 #include "upatch_maps_otel.h"
 #include "unit.h"
@@ -233,10 +235,109 @@ static void reserved_shirudo_headers_are_refused(void)
 	unsetenv("OTEL_EXPORTER_OTLP_LOGS_HEADERS");
 }
 
+struct shield_pair {
+	__u64	hits;
+	__u64	activity;
+};
+
+static void shield_metrics_export_and_origin_signature(void)
+{
+	struct shield_pair per_cpu[2] = {
+		{ .hits = 3, .activity = 50 },
+		{ .hits = 9, .activity = 70 },
+	};
+	__u32 k0 = 0;
+	struct map_entry entry = {
+		.key	= &k0,
+		.value	= per_cpu,
+	};
+	struct map_view v = {};
+	enum otel_signal signal = OTEL_LOG;
+	char reason[128] = {};
+	char *payload = NULL;
+	size_t payload_len = 0;
+	struct tpm_key ak = {};
+	struct otel_opts opts = {
+		.tpm_sign	= true,
+		.boot_id	= "boot-shield-01",
+		.export_seq	= 4,
+		.quote_fn	= software_quote_cb,
+		.quote_ctx	= &ak,
+	};
+	struct otel_signed_headers hdrs = {};
+	struct quote_otel_envelope env = {};
+	struct quote_result res = {};
+	__u8 body_sha256[32];
+	int u64_id, st_id;
+	struct btf *btf;
+
+	btf = btf__new_empty();
+	ASSERT_TRUE(btf);
+	u64_id = btf__add_int(btf, "__u64", 8, 0);
+	st_id = btf__add_struct(btf, "shield_pair", sizeof(per_cpu[0]));
+	ASSERT_TRUE(u64_id > 0 && st_id > 0);
+	ASSERT_EQ(btf__add_field(btf, "hits", u64_id, 0, 0), 0);
+	ASSERT_EQ(btf__add_field(btf, "activity", u64_id, 64, 0), 0);
+
+	strscpy_literal(v.upatch, "cve-2026-31431");
+	strscpy_literal(v.name, "shield_stats");
+	strscpy_literal(v.location, "kprobe/target_fn");
+	v.type = BPF_MAP_TYPE_PERCPU_ARRAY;
+	v.type_name = "percpu_array";
+	v.key_size = sizeof(__u32);
+	v.value_size = sizeof(per_cpu[0]);
+	v.value_stride = sizeof(per_cpu[0]);
+	v.max_entries = 1;
+	v.n_entries = 1;
+	v.n_cpus = 2;
+	v.lifetime_start_ns = 1700000000123456789ULL;
+	v.has_payload = true;
+	memset(v.payload, 0xab, sizeof(v.payload));
+	v.btf = btf;
+	v.value_type_id = (__u32)st_id;
+	v.entries = &entry;
+
+	ASSERT_EQ(upatch_maps_otel_classify(&v, &signal, reason,
+					    sizeof(reason)), 0);
+	EXPECT_EQ(signal, OTEL_METRIC);
+	EXPECT_STREQ(reason, "trusted shield counter map");
+
+	ASSERT_EQ(upatch_maps_otel_build_shield_metrics(&v, &payload,
+							&payload_len), 0);
+	ASSERT_TRUE(payload && payload_len > 0);
+	EXPECT_TRUE(str_contains(payload, "\"name\":\"shirudo.shield.hits\""));
+	EXPECT_TRUE(str_contains(payload, "\"asInt\":\"12\""));
+	EXPECT_TRUE(str_contains(payload, "\"name\":\"shirudo.shield.activity\""));
+	EXPECT_TRUE(str_contains(payload, "\"asInt\":\"120\""));
+	EXPECT_TRUE(str_contains(payload, "\"aggregationTemporality\":2"));
+	EXPECT_TRUE(str_contains(payload, "\"isMonotonic\":true"));
+	EXPECT_TRUE(str_contains(payload,
+				 "\"startTimeUnixNano\":\"1700000000123456789\""));
+	EXPECT_TRUE(str_contains(payload, "\"shirudo.upatch.payload_sha256\""));
+
+	/* TPM origin signature covers the exact shield metric OTLP body. */
+	ASSERT_EQ(otel_sign_headers(&opts, payload, payload_len, &hdrs), 0);
+	ASSERT_EQ(sha256_buffer(payload, payload_len, body_sha256), 0);
+	env.ak_name_hex = hdrs.ak_name;
+	env.attest_hex = hdrs.attest;
+	env.sig_hex = hdrs.signature;
+	env.ak_public = ak.public;
+	env.ak_public_len = ak.public_len;
+	env.boot_id = hdrs.boot_id;
+	env.export_seq = hdrs.export_seq;
+	env.body_sha256 = body_sha256;
+	ASSERT_EQ(quote_otel_check(&env, &res), 0);
+	EXPECT_EQ(res.verdict, QUOTE_OK);
+
+	xfree(payload, JSON_MAX_BYTES);
+	btf__free(btf);
+}
+
 static const struct unit_case cases[] = {
 	UNIT_CASE(origin_digest_binds_domain_boot_seq_and_body),
 	UNIT_CASE(signed_headers_roundtrip_through_quote_check),
 	UNIT_CASE(reserved_shirudo_headers_are_refused),
+	UNIT_CASE(shield_metrics_export_and_origin_signature),
 	{}
 };
 

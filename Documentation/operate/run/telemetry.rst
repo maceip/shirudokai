@@ -84,8 +84,13 @@ keepalive. Its severity follows the verdict:
 A map snapshot has the event name ``shirudo.bpf.map.snapshot``. Its body
 is what the map's signed decoder returns, or the map's entries when the
 upatch ships no decoder for it. A decoder can return metrics instead of
-a log record. Every request carries the resource attributes
-``service.name`` (``shirudo``), ``service.version`` and ``host.name``.
+a log record, and standard per-CPU shield counter maps (``hits``,
+``activity`` and ``shield_stats``) export cumulative monotonic OTLP sum
+metrics ``shirudo.shield.hits`` and ``shirudo.shield.activity`` without
+needing a Lua decoder. Every request carries the resource attributes
+``service.name`` (``shirudo``), ``service.version`` and ``host.name``,
+and is signed by the target's TPM attestation key when
+``map_export.tpm_sign = true``.
 :doc:`/reference/formats/otlp` describes every field.
 
 Before you begin

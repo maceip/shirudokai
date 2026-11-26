@@ -20,6 +20,12 @@ bool upatch_map_is_percpu(__u32 type)
 	return false;
 }
 
+int upatch_shield_hits_summary(const struct map_view *v,
+			       struct shield_hits_summary *out)
+{
+	return -ENOENT;
+}
+
 int upatch_decode_map_json(const struct map_view *v,
 			   char **out, size_t *out_len)
 {
