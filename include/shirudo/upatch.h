@@ -195,8 +195,11 @@ struct upatch_decoder_blob {
  * Programs without a special attach kind use RAW_TRACEPOINT, preserving
  * the original attach_btf_id behavior. The program bytes are hash-locked
  * by the signed loader; the site a kprobe, uprobe, cgroup or netfilter
- * program attaches at, and the classes XDP may attach to, come from
- * here, which is why it is signed.
+ * program attaches at, and the classes and optional filter XDP and TCX
+ * may attach to, come from here, which is why it is signed. A STRUCT_OPS
+ * program is not attached on its own: the struct_ops map the loader fills
+ * with it is, and the loader's instructions and data name the struct and
+ * its members.
  */
 #define UPATCH_ATTACH_TARGET_MAX	128u
 #define UPATCH_PROG_MAGIC	0x4d475055u	/* "UPGM" le */
@@ -227,6 +230,8 @@ enum upatch_attach_kind {
 	UPATCH_ATTACH_URETPROBE = 11,
 	UPATCH_ATTACH_KPROBE_MULTI = 12,
 	UPATCH_ATTACH_KRETPROBE_MULTI = 13,
+	UPATCH_ATTACH_TCX_INGRESS = 14,
+	UPATCH_ATTACH_TCX_EGRESS = 15,
 };
 
 /* Bit 4 is not a class: loopback has no native XDP, so nothing selects it. */
@@ -242,6 +247,7 @@ enum upatch_prog_role {
 	UPATCH_PROG_ROLE_ATTACH = 0,
 	UPATCH_PROG_ROLE_SERIALIZER = 1,
 	UPATCH_PROG_ROLE_TEST_RUN = 2,
+	UPATCH_PROG_ROLE_STRUCT_OPS = 3,
 };
 
 struct upatch_prog_entry {

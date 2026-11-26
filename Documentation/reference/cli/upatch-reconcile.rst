@@ -8,8 +8,8 @@
 shirudo upatch reconcile
 ========================
 
-Attach each loaded XDP upatch to the devices its signed classes select
-and that it is not attached to yet.
+Attach each loaded XDP and TCX upatch to the devices its signed classes
+and filter select and that it is not attached to yet.
 
 Runs on: target, as root with the runtime binary, after ``init`` has
 finished on the root file system. Requires: the sealed ``.bpf`` keyring.
@@ -25,11 +25,11 @@ Usage
 Description
 -----------
 
-``reconcile`` runs one pass and exits. For every upatch with an XDP
-program pinned under ``/run/shirudo/bpffs/upatches/``, it hashes the
+``reconcile`` runs one pass and exits. For every upatch with an XDP or
+TCX program pinned under ``/run/shirudo/bpffs/upatches/``, it hashes the
 sealed archive, compares the result with the pinned payload, and reads
-the signed device classes from that archive. It then asks each selected
-device what it runs:
+the signed device classes and optional ``ifname=`` or ``driver=`` filter
+from that archive. For XDP, it asks each selected device what it runs:
 
 .. list-table::
    :header-rows: 1
@@ -43,6 +43,11 @@ device what it runs:
      - Attaches a link and pins it as the next ``link_<n>``.
    * - Anything else
      - Leaves it. A program already on a device is never replaced.
+
+For TCX, it inspects the upatch's pinned ``BPF_LINK_TYPE_TCX`` links and
+attaches a new ``BPF_TCX_INGRESS`` or ``BPF_TCX_EGRESS`` link as the next
+``link_<n>`` on any selected device that does not yet carry that program
+and direction, chaining alongside other TCX programs on the interface.
 
 It also removes the pin of a link whose device is gone. A pass that has
 nothing to do does not take the register lock. A selected device that

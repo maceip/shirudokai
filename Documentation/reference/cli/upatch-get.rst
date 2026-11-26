@@ -29,7 +29,9 @@ Description
 - ``Location``: the attach point in ``SEC()`` form, for example
   ``fentry/do_nanosleep``, or ``?`` when it cannot be read.
 - the program ID, the load time and the payload digest recorded on the
-  pin.
+  pin. The first link of a ``struct_ops`` upatch without other programs
+  is that of its map, ``struct_ops/tcp_congestion_ops`` for example,
+  which has no program: the ID is 0 and no source lines follow.
 - ``Missed runs``: the runs of its programs the kernel skipped since the
   load, summed over every link of a kind that counts them, with one line
   per program when more than one does. ``not counted for this attach

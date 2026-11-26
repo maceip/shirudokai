@@ -91,10 +91,22 @@ the link against the metadata and pins it.
      - netfilter
      - ``BPF_LINK_CREATE``, ``BPF_NETFILTER``, IPv6 pre-routing
      - ``CONFIG_NETFILTER``, ``CONFIG_NETFILTER_BPF_LINK``
-   * - ``xdp/<decimal-mask>``
+   * - ``xdp/<decimal-mask>[:<filter>]``
      - XDP
      - ``BPF_LINK_CREATE``, ``BPF_XDP``, native driver mode
      - native XDP and multi-buffer support on selected devices
+   * - ``tcx/ingress[/<classes>][:<filter>]``,
+       ``tcx/egress[/<classes>][:<filter>]``
+     - sched_cls
+     - ``BPF_LINK_CREATE``, ``BPF_TCX_INGRESS`` or ``BPF_TCX_EGRESS``
+     - ``CONFIG_NET_CLS_ACT``
+   * - ``struct_ops/<name>``, ``struct_ops.s/<name>``, in a
+       ``SEC(".struct_ops.link")`` map
+     - struct_ops
+     - not attached itself: its map is, with ``BPF_LINK_CREATE`` and
+       ``BPF_STRUCT_OPS``
+     - ``struct_ops``-by-name kernel support and what the struct needs,
+       ``CONFIG_INET`` for ``tcp_congestion_ops``
    * - ``syscall``, named ``shirudo_serialize__<map>``
      - syscall
      - not attached, run by ``shirudo upatch map``
@@ -108,12 +120,13 @@ The base requirements are the kernel options shirudo itself needs, listed
 in :doc:`/operate/plan/system-requirements`. They include BPF trampolines, BTF
 and the BPF LSM, which is why the BTF-based kinds need nothing more.
 
-Every attached program becomes one link pinned at
-``/run/shirudo/bpffs/upatches/<name>/link`` when the upatch has one attach
-program, and at ``link_0``, ``link_1`` and so on, in the order of the
-object, when it has several. ``<name>`` has every ``.`` written as ``~d``.
-A upatch containing XDP always uses ``link_0``, ``link_1`` and so on,
-because one program can attach to several interfaces.
+Every attached program and every ``struct_ops`` map becomes one link
+pinned at ``/run/shirudo/bpffs/upatches/<name>/link`` when the upatch has
+one link, and at ``link_0``, ``link_1`` and so on, in the order of the
+object with ``struct_ops`` maps after the programs, when it has several.
+``<name>`` has every ``.`` written as ``~d``. A upatch containing XDP or
+TCX always uses ``link_0``, ``link_1`` and so on, because one program can
+attach to several interfaces.
 
 fentry and fexit
 ----------------
@@ -368,9 +381,12 @@ Mask and classes
 
 The mask is mandatory, nonzero and contains only the bits below. For
 example, ``SEC("xdp/3")`` selects network ports and virtual devices;
-``SEC("xdp/27")`` selects all classes. Bare ``xdp``, ``xdp.frags``,
-devmap and cpumap sections are refused; ``xdp/<decimal-mask>`` already
-means multi-buffer.
+``SEC("xdp/27")`` selects all classes. An optional ``:ifname=<glob>`` or
+``:driver=<glob>`` suffix narrows selection within those classes, for
+example ``SEC("xdp/1:ifname=eth*")`` or ``SEC("xdp/1:driver=mlx5*")``;
+an empty filter selects all devices of the signed classes. Bare ``xdp``,
+``xdp.frags``, devmap and cpumap sections are refused;
+``xdp/<decimal-mask>`` already means multi-buffer.
 
 .. list-table::
    :header-rows: 1
@@ -711,6 +727,59 @@ fails leaves the host ``reboot-pending``. :doc:`/reference/failure-categories`
 has the errno and the remedy of each category, and
 :doc:`/operate/run/read-status` each reason ``XdpCovered`` gives.
 
+TCX
+---
+
+``tcx/ingress`` and ``tcx/egress`` attach ``BPF_PROG_TYPE_SCHED_CLS``
+programs on the ``sk_buff`` dataplane with ``BPF_LINK_CREATE`` and
+``BPF_TCX_INGRESS`` or ``BPF_TCX_EGRESS``. Unlike native XDP, TCX uses
+the kernel's ``mprog`` list on each interface, so multiple dataplane
+shields — and existing TCX programs such as Cilium — chain on the same
+interface without occupying the slot.
+
+Bare ``SEC("tcx/ingress")`` and ``SEC("tcx/egress")`` select all device
+classes (mask ``27``). Optional device-class suffixes accept decimal
+masks matching XDP (``SEC("tcx/ingress/1")``, ``SEC("tcx/egress/3")``) or
+``+``-joined class names (``network``, ``virtual``, ``vm``, ``unknown``,
+``all``, as in ``SEC("tcx/ingress/network")`` or
+``SEC("tcx/egress/network+virtual")``). Optional ``ifname=<glob>`` or
+``driver=<glob>`` filters narrow selection further, as
+``SEC("tcx/ingress/ifname=eth*")`` or
+``SEC("tcx/ingress/network:driver=mlx5*")``.
+
+Each TCX program is pinned at ``tcx_prog_<i>``, its per-device links at
+``link_<n>``, and ``shirudo upatch reconcile`` attaches newly appearing
+interfaces and removes links whose devices have vanished alongside XDP.
+
+struct_ops
+----------
+
+A ``struct_ops`` program implements one member of a kernel struct of
+function pointers such as ``tcp_congestion_ops``. The struct goes in a
+map in ``SEC(".struct_ops.link")`` that names the programs:
+
+.. code-block:: c
+
+   SEC("struct_ops/cc_ssthresh")
+   __u32 BPF_PROG(cc_ssthresh, struct sock *sk)
+   {
+           return tcp_reno_ssthresh(sk);
+   }
+
+   SEC(".struct_ops.link")
+   struct tcp_congestion_ops cc = {
+           .ssthresh       = (void *)cc_ssthresh,
+           .name           = "cc",
+   };
+
+``struct_ops.s/<name>`` declares a sleepable member callback. The object
+names the struct and its members in BTF, which the signature covers, and
+the signed loader creates the map, loads the programs and populates the
+program FDs. ``shirudo`` then attaches the map with ``BPF_LINK_CREATE``
+and ``BPF_STRUCT_OPS`` and pins the link so ``upatch unload`` detaches
+and unregisters it atomically. ``shirudo build`` refuses a map in
+``SEC(".struct_ops")`` without ``.link``.
+
 Programs that attach nowhere
 ----------------------------
 
@@ -791,12 +860,19 @@ it generates a loader.
    * - ``fmod_ret``, ``fmod_ret.s`` without a function
      - ``unsupported fmod_ret section '<section>'; use fmod_ret/<symbol> or
        fmod_ret.s/<symbol>``
-   * - every other section, ``tp/``, ``raw_tp/``, ``xdp`` and ``tc`` among
-       them
+   * - ``tcx``, ``tcx/`` or another ``tcx/*`` direction
+     - ``unsupported tcx section '<section>'; use
+       tcx/ingress[/<classes>][:<filter>] or
+       tcx/egress[/<classes>][:<filter>]``
+   * - every other section, ``tp/``, ``raw_tp/``, ``xdp``, ``tc`` and
+       ``struct_ops`` without a name among them
      - ``unsupported section '<section>'; supported are fentry, fexit,
        fmod_ret, lsm, tp_btf, kprobe, kretprobe, kprobe.multi,
        kretprobe.multi, uprobe[.s], uretprobe[.s], uprobe.multi[.s],
-       uretprobe.multi[.s], cgroup_skb, netfilter and xdp/<mask>``
+       uretprobe.multi[.s], cgroup_skb, netfilter, xdp/<mask>,
+       tcx/ingress, tcx/egress and struct_ops``
+   * - a map in ``SEC(".struct_ops")``
+     - ``struct_ops map '<map>' must be in SEC(".struct_ops.link")``
    * - ``syscall`` with another program name
      - ``SEC("syscall") program '<name>' must be named shirudo_test__<id>``
 
@@ -839,6 +915,12 @@ signed metadata:
      - a tracing link with attach type ``BPF_MODIFY_RETURN``
    * - ``fentry``, ``fexit``, ``lsm``, ``tp_btf``
      - a tracing or raw tracepoint link
+   * - ``tcx``
+     - a TCX link on the target ``ifindex`` with attach type
+       ``BPF_TCX_INGRESS`` or ``BPF_TCX_EGRESS``
+   * - ``struct_ops``
+     - nothing per program: shirudo links each ``struct_ops`` map the
+       signed loader created with ``BPF_STRUCT_OPS``
 
 On a mismatch shirudo closes the link, which detaches it, removes the pins
 this load made and fails with ``attach_scope_mismatch`` in phase

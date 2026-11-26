@@ -96,11 +96,14 @@ static void kprobe_multi_valid(const struct prog_spec *s)
 static void attach_valid(const struct prog_spec *s)
 {
 	__CPROVER_assert(!s->map[0], "no map");
-	__CPROVER_assert(s->kind <= UPATCH_ATTACH_KRETPROBE_MULTI, "a known attach kind");
-	if (s->kind == UPATCH_ATTACH_XDP)
+	__CPROVER_assert(s->kind <= UPATCH_ATTACH_TCX_EGRESS, "a known attach kind");
+	if (kind_is_netdev(s->kind)) {
 		__CPROVER_assert(s->device_classes &&
-				 !(s->device_classes & ~(__u32)UPATCH_XDP_ALL),
-				 "known device classes");
+				 !(s->device_classes & ~(__u32)UPATCH_XDP_ALL) &&
+				 netdev_filter_valid(s->target) && !s->offset,
+				 "known device classes and optional filter");
+		return;
+	}
 	if (kind_is_kprobe_multi(s->kind))
 		kprobe_multi_valid(s);
 	if (!needs_target(s->kind)) {
@@ -124,9 +127,9 @@ static void spec_valid(const struct prog_spec *s)
 	if (!kind_has_uprobe_target(s->kind))
 		__CPROVER_assert(!s->uprobe_path && !s->uprobe_offsets,
 				 "uprobe targets for uprobes alone");
-	if (s->kind != UPATCH_ATTACH_XDP)
+	if (!kind_is_netdev(s->kind))
 		__CPROVER_assert(!s->device_classes,
-				 "device classes for XDP alone");
+				 "device classes for XDP and TCX alone");
 	if (!kind_is_kprobe_multi(s->kind))
 		__CPROVER_assert(!s->kprobe_syms && !s->kprobe_sym_buf,
 				 "kprobe names for kprobe multi alone");
@@ -139,6 +142,7 @@ static void spec_valid(const struct prog_spec *s)
 				 !s->offset, "a map and nothing else");
 		break;
 	case UPATCH_PROG_ROLE_TEST_RUN:
+	case UPATCH_PROG_ROLE_STRUCT_OPS:
 		__CPROVER_assert(!s->map[0] && !s->target[0] && !s->kind &&
 				 !s->offset, "nothing");
 		break;
