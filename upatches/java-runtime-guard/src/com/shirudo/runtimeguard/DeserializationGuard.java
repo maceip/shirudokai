@@ -42,9 +42,10 @@ public final class DeserializationGuard {
 
     private DeserializationGuard() {}
 
-    public static synchronized void install() {
+    /** Returns whether the JVM-wide filter holds the guard. */
+    public static synchronized boolean install() {
         if (installed) {
-            return;
+            return true;
         }
         ObjectInputFilter existing = ObjectInputFilter.Config.getSerialFilter();
         ObjectInputFilter guardFilter = DeserializationGuard::check;
@@ -54,9 +55,11 @@ public final class DeserializationGuard {
         try {
             ObjectInputFilter.Config.setSerialFilter(combined);
             installed = true;
-        } catch (IllegalStateException ignored) {
-            // A serial filter was already locked in by the host application.
+        } catch (IllegalStateException e) {
+            System.err.println("[SHIRUDO GUARD] deser: the JVM-wide serial filter is"
+                    + " already set; gadget classes are NOT rejected");
         }
+        return installed;
     }
 
     public static boolean isBlockedClassName(String name) {
