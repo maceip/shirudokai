@@ -106,6 +106,7 @@ static bool tls_classical_hosts_valid(const char *value)
 static void config_defaults(struct config *cfg)
 {
 	*cfg = (struct config){};
+	cfg->security_epoch_valid = true;
 	cfg->map_export_valid = true;
 	cfg->tls_classical_hosts_valid = true;
 	cfg->map_export_otel_retries = 3;
@@ -192,6 +193,16 @@ static int config_parse(struct config *cfg, FILE *f,
 					"bad value '%s' (ignored)", val);
 			else
 				cfg->eventlog_max_bytes = v;
+		} else if (strcmp(key, "security.epoch") == 0) {
+			__u64 v;
+
+			if (parse_u64(val, strlen(val), UINT64_MAX, &v)) {
+				cfg->security_epoch_valid = false;
+				pr_warn("config: security.epoch: "
+					"bad value '%s'", val);
+			} else {
+				cfg->security_epoch = v;
+			}
 		} else if (strcmp(key, "tpm.owner_auth") == 0) {
 			set_owner_auth(cfg, val);
 		} else if (strcmp(key, "tpm.tcti") == 0) {
@@ -263,6 +274,10 @@ static int config_parse(struct config *cfg, FILE *f,
 			} else if (str_has_prefix(key, "tls.")) {
 				cfg->tls_classical_hosts_valid = false;
 				pr_warn("config: %s: unknown TLS setting", key);
+			} else if (str_has_prefix(key, "security.")) {
+				cfg->security_epoch_valid = false;
+				pr_warn("config: %s: unknown security setting",
+					key);
 			} else {
 				pr_warn("config: unknown key '%s' (ignored)",
 					key);

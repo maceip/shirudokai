@@ -19,10 +19,15 @@ source_tree() {
 
 test_expect_success 'allowed settings are accepted while TPM bootstrap settings survive' '
 	source_tree good &&
+	printf "security.epoch = 7\n" >>"$WORK/good/etc/shirudo/shirudo.conf" &&
 	"$H" effective "$WORK/good" >"$WORK/effective" &&
 	grep -qx "limit=12345" "$WORK/effective" &&
+	grep -qx "epoch=7" "$WORK/effective" &&
 	grep -qx "owner=bootstrap-owner" "$WORK/effective" &&
-	grep -qx "tcti=bootstrap-tcti" "$WORK/effective"
+	grep -qx "tcti=bootstrap-tcti" "$WORK/effective" &&
+	source_tree bad-epoch &&
+	printf "security.epoch = -1\n" >>"$WORK/bad-epoch/etc/shirudo/shirudo.conf" &&
+	! "$H" validate "$WORK/bad-epoch"
 '
 
 test_expect_success 'config cannot override runtime, verification key, PCR or TPM bootstrap settings' '

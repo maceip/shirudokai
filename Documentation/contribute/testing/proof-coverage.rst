@@ -1618,7 +1618,8 @@ a proof covers.
    * - Files
      - Why no proof reads them
    * - :src:`util/bpm_cleanup.c`, :src:`util/bpm_install.c`,
-       :src:`util/harden.c`, :src:`util/identity.c`,
+       :src:`util/freshness.c`, :src:`util/harden.c`,
+       :src:`util/identity.c`,
        :src:`util/image_cache.c`, :src:`util/image_config.c`,
        :src:`util/image_guards.c`, :src:`util/image_keys.c`,
        :src:`util/image_runtime.c`, :src:`util/initrd.c`,

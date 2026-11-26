@@ -69,6 +69,11 @@ int cmd_config(int argc, const char **argv)
 	       "# the state-changing op refuses with category: eventlog_full.\n");
 	printf("eventlog.max_bytes = %llu\n\n", cfg.eventlog_max_bytes);
 
+	printf("# Monotonic configuration epoch floor. Config activation\n"
+	       "# refuses an image whose security.epoch is lower than the\n"
+	       "# target's sealed floor.\n");
+	printf("security.epoch = %llu\n\n", cfg.security_epoch);
+
 	printf("# TPM owner-hierarchy password used at NV-index define time.\n"
 	       "# Empty by default (works on fresh TPMs, swtpm, most cloud VMs);\n"
 	       "# set on TPMs whose owner auth was already provisioned by\n"
@@ -132,5 +137,6 @@ int cmd_config(int argc, const char **argv)
 	printf("map_export.otlp_max_bytes = %u\n",
 	       cfg.map_export_otlp_max_bytes);
 
-	return cfg.map_export_valid && cfg.tls_classical_hosts_valid ? 0 : 1;
+	return cfg.map_export_valid && cfg.tls_classical_hosts_valid &&
+	       cfg.security_epoch_valid ? 0 : 1;
 }

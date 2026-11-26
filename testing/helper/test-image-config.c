@@ -60,10 +60,11 @@ int main(int argc, char **argv)
 		if (!ret && !image_config_get(&effective))
 			ret = -EIO;
 		if (!ret) {
-			printf("owner=%.*s\ntcti=%s\nlimit=%llu\n",
+			printf("owner=%.*s\ntcti=%s\nlimit=%llu\nepoch=%llu\n",
 			       (int)effective.tpm_owner_auth_len,
 			       effective.tpm_owner_auth, effective.tpm_tcti,
-			       effective.eventlog_max_bytes);
+			       effective.eventlog_max_bytes,
+			       effective.security_epoch);
 			ret = image_open(IMAGE_REGISTRIES,
 					 O_RDONLY | O_DIRECTORY);
 			printf("registries=%s\n", ret >= 0 ? "open" : "missing");
