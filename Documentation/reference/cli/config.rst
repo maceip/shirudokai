@@ -142,6 +142,7 @@ The command prints:
    map_export.otel_endpoint =
    map_export.tenant_id = config-boot-keys
    map_export.otel_insecure = false
+   map_export.tpm_sign = false
    map_export.otel_retries = 3
    map_export.s3_uri =
    map_export.log_record_max_bytes = 1048576

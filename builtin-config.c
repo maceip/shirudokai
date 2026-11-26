@@ -124,6 +124,8 @@ int cmd_config(int argc, const char **argv)
 	printf("map_export.tenant_id = %s\n", cfg.map_export_tenant_id);
 	printf("map_export.otel_insecure = %s\n",
 	       cfg.map_export_otel_insecure ? "true" : "false");
+	printf("map_export.tpm_sign = %s\n",
+	       cfg.map_export_tpm_sign ? "true" : "false");
 	printf("map_export.otel_retries = %u\n",
 	       cfg.map_export_otel_retries);
 	printf("map_export.s3_uri = %s\n", cfg.map_export_s3_uri);

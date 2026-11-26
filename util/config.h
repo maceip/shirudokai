@@ -47,6 +47,7 @@ struct config {
 	char		map_export_otel_endpoint[MAP_EXPORT_ENDPOINT_MAX];
 	char		map_export_tenant_id[TENANT_ID_MAX + 1];
 	bool		map_export_otel_insecure;
+	bool		map_export_tpm_sign;
 	__u32		map_export_otel_retries;
 	char		map_export_s3_uri[MAP_EXPORT_URI_MAX];
 	__u32		map_export_log_record_max_bytes;

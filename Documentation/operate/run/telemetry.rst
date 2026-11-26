@@ -133,6 +133,7 @@ The destination belongs in the signed config image, in
       map_export.otel_endpoint =
       map_export.tenant_id = config-boot-keys
       map_export.otel_insecure = false
+      map_export.tpm_sign = false
       map_export.otel_retries = 3
       map_export.s3_uri =
       map_export.log_record_max_bytes = 1048576
@@ -164,6 +165,12 @@ The config image accepts these keys:
      - ``true`` allows ``http://`` to any host and turns off certificate
        and host name checks for ``https://``. The command prints a
        warning each time. Default: ``false``.
+   * - ``map_export.tpm_sign``
+     - ``true`` quotes the origin digest of each OTLP export with the
+       target's TPM attestation key and attaches ``X-Shirudo-TPM-*``,
+       ``X-Shirudo-Boot-ID`` and ``X-Shirudo-Export-Seq`` headers for
+       offline verification by ``shirudo-quote-check --otel``. Default:
+       ``false``.
    * - ``map_export.otel_retries``
      - Retries after a failed request, 0 to 10. Default: 3.
    * - ``map_export.json_path``

@@ -985,7 +985,10 @@ testing/helper/test-signed-load: testing/helper/test-signed-load.c
 	    -o $@ $^ -lcrypto
 
 testing/helper/test-otel-map: testing/helper/test-otel-map.c util/upatch_maps.o \
-                        util/upatch_maps_otel.o util/curl.o util/crypto_openssl.o \
+                        util/upatch_maps_otel.o util/keepalive_quote.o \
+                        util/tpm.o util/tpm_wire.o util/nv_writer.o \
+                        util/identity.o util/initrd.o \
+                        util/curl.o util/crypto_openssl.o \
                         util/tls_openssl.o util/serializer.o util/seal.o \
                         util/config.o util/image_config.o \
                         util/upatch_decode.o util/upatch_pins.o \
@@ -1129,6 +1132,8 @@ $(UNIT_LIB): $(UTIL_OBJS) $(VERSION_OBJ)
 # object the program is built from.
 build/unit/quote_check: UNIT_OBJS := tools/quote-check/row.o
 build/unit/quote_check: tools/quote-check/row.o
+build/unit/upatch_maps_otel: UNIT_OBJS := tools/quote-check/row.o
+build/unit/upatch_maps_otel: tools/quote-check/row.o
 
 # The same for the builder's jar check.
 build/unit/jar: UNIT_OBJS := tools/shirudo-build/jar.o
@@ -1272,7 +1277,7 @@ $(FUZZ_OUT)/fuzz-decoder: FUZZ_CFLAGS += $(LUAJIT_CFLAGS) -DHAVE_LUAJIT \
 	-DFUZZ_SOURCE_TREE='"$(CURDIR)"'
 $(FUZZ_OUT)/fuzz-decoder: FUZZ_LIBS += $(LUAJIT_LIBS)
 $(FUZZ_OUT)/fuzz-otel: testing/fuzz/fuzz-otel.c $(FUZZ_BASE) \
-                        util/upatch_maps_otel.c util/curl.c \
+                        util/upatch_maps_otel.c util/tpm_wire.c util/curl.c \
                         util/crypto_openssl.c \
                         util/tls_openssl.c util/io.c util/version_id.c \
                         $(FUZZ_SEAL)
@@ -1322,7 +1327,8 @@ $(FUZZ_OUT)/fuzz-upatch-info: testing/fuzz/fuzz-upatch-info.c $(FUZZ_BASE) \
                               util/options.c util/paths.c util/report.c \
                               util/serializer.c util/similar.c \
                               util/timefmt.c util/tls_openssl.c util/tpm.c \
-                              util/tpm_wire.c util/upatch.c \
+                              util/tpm_wire.c util/keepalive_quote.c \
+                              util/upatch.c \
                               util/upatch_decode.c util/upatch_maps.c \
                               util/upatch_maps_otel.c util/upatch_pins.c \
                               util/upatch_resolve.c util/upatch_table.c \

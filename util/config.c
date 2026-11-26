@@ -230,6 +230,10 @@ static int config_parse(struct config *cfg, FILE *f,
 					&cfg->map_export_otel_insecure))
 				map_export_bad(cfg, key, val,
 					       "expected true or false");
+		} else if (strcmp(key, "map_export.tpm_sign") == 0) {
+			if (!parse_bool(val, &cfg->map_export_tpm_sign))
+				map_export_bad(cfg, key, val,
+					       "expected true or false");
 		} else if (strcmp(key, "map_export.otel_retries") == 0) {
 			__u64 v;
 
