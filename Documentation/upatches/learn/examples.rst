@@ -140,12 +140,12 @@ app-sandbox
    * - Package
      - ``app-sandbox``, from :src:`upatches/app-sandbox/Beefile`
    * - upatch
-     - ``app-sandbox``, built from ``app-sandbox.bpf.c``: twelve ``lsm``
+     - ``app-sandbox``, built from ``app-sandbox.bpf.c``: fifteen ``lsm``
        programs and no state of its own
    * - Policy labels
-     - one ``[[upatches.policy]]`` table per sandbox, ``apache`` and
-       ``php-fpm``, each a bit and the executables that put a task in
-       the sandbox, those of PHP-FPM by the pattern
+     - one ``[[upatches.policy]]`` table per sandbox, ``apache``,
+       ``php-fpm`` and ``llm-agent``, each a bit and the executables
+       that put a task in the sandbox, those of PHP-FPM by the pattern
        ``/usr/sbin/php-fpm*``
    * - Generated data
      - ``sandbox_policy``, which ``gen_policy.py`` writes from
@@ -169,17 +169,23 @@ bit and the rules of ``sandbox_policy``, and refuse with ``EACCES``:
      - executing a file that carries neither the sandbox's bit nor one
        its ``exec`` rule names
    * - ``lsm/socket_connect``, ``lsm/socket_sendmsg``
-     - an IPv4 or IPv6 peer outside the networks of its ``network`` rule
+     - an IPv4 or IPv6 peer outside its ``network`` and ``ports`` rules
+       or matching ``deny.network`` or ``deny.ports``
    * - ``lsm/socket_create``
-     - a raw or packet socket, when it has a ``network`` rule
+     - a socket family outside ``families``, or a raw or packet socket
+       when network or port rules apply
+   * - ``lsm/unix_stream_connect``, ``lsm/unix_may_send``
+     - a UNIX peer matching a ``deny.unix`` path or name pattern
+   * - ``lsm/ptrace_access_check``
+     - ``ptrace`` when ``deny_ptrace = true``
    * - ``lsm/inode_create``, ``lsm/inode_mkdir``, ``lsm/inode_mknod``,
        ``lsm/inode_symlink``, ``lsm/inode_link``
      - a new name that matches a ``deny.create`` pattern
    * - ``lsm/inode_rename``
      - a rename from or to a name that matches a ``deny.rename`` pattern
    * - ``lsm/file_open``, ``lsm/inode_setattr``
-     - opening for writing, or truncating, a name that matches a
-       ``deny.write`` pattern
+     - opening for writing or truncating a name matching ``deny.write``,
+       or opening for reading a name matching ``deny.read``
 
 ``gen_policy.py`` joins the two halves of a sandbox by its name: it
 reads the bit from the Beefile and the rules from ``sandbox.toml``, and
