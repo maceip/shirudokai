@@ -268,6 +268,7 @@ static void forget_signed_sections(struct upatch *u)
 	u->signed_type = NULL;
 	u->signed_jar = NULL;
 	u->signed_jar_len = 0;
+	u->signed_mode = NULL;
 }
 
 /*
@@ -365,6 +366,13 @@ static void parse_signed_sections(struct upatch *u)
 			u->signed_jar = data + off;
 			u->signed_jar_len = len;
 			break;
+		case UPATCH_SECTION_MODE:
+			bit = 128;
+			if (len != sizeof(__le32) ||
+			    get_le32(data + off) > UPATCH_MODE_OBSERVE)
+				goto reject;
+			u->signed_mode = data + off;
+			break;
 		default:
 			goto reject;
 		}
@@ -401,6 +409,20 @@ static int upatch_parse(const void *data, size_t size,
 	 */
 	if (upatch_signed_type(out) != out->hdr.type) {
 		ret = -EINVAL;
+		goto err;
+	}
+	/*
+	 * DIRECTIVE_OBSERVE in the unsigned header must match the signed
+	 * MODE section, and an unload directive cannot be observe-mode.
+	 */
+	if (!!(out->hdr.flags & DIRECTIVE_OBSERVE) !=
+	    (upatch_signed_mode(out) == UPATCH_MODE_OBSERVE)) {
+		ret = -EBADMSG;
+		goto err;
+	}
+	if ((out->hdr.flags & DIRECTIVE_OBSERVE) &&
+	    (out->hdr.flags & DIRECTIVE_UNLOAD)) {
+		ret = -EBADMSG;
 		goto err;
 	}
 	return 0;
@@ -566,9 +588,19 @@ bool upatch_is_unload(const struct upatch *u)
 	return (u->hdr.flags & DIRECTIVE_UNLOAD) != 0;
 }
 
+bool upatch_is_observe(const struct upatch *u)
+{
+	return (u->hdr.flags & DIRECTIVE_OBSERVE) != 0;
+}
+
 const char *upatch_type_str(const struct upatch *u)
 {
 	return u->hdr.type == UPATCH_TYPE_JAVA ? "java" : "bpf";
+}
+
+const char *upatch_mode_str(const struct upatch *u)
+{
+	return upatch_is_observe(u) ? "observe" : "enforce";
 }
 
 __u32 upatch_signed_type(const struct upatch *u)
@@ -576,6 +608,13 @@ __u32 upatch_signed_type(const struct upatch *u)
 	if (!u->map || !u->signed_type)
 		return UPATCH_TYPE_BPF;
 	return get_le32(u->signed_type);
+}
+
+__u32 upatch_signed_mode(const struct upatch *u)
+{
+	if (!u->map || !u->signed_mode)
+		return UPATCH_MODE_ENFORCE;
+	return get_le32(u->signed_mode);
 }
 
 const void *upatch_signed_jar(const struct upatch *u, __u32 *len)

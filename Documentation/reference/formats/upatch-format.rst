@@ -93,8 +93,10 @@ Header
      - 4
      - ``flags``
      - Bit 0, ``DIRECTIVE_UNLOAD``: 0 for a load artifact, 1 for an
-       unload directive. Writers set bits 1 to 31 to 0. The reader does not
-       check them.
+       unload directive. Bit 1, ``DIRECTIVE_OBSERVE``: 0 for enforce mode,
+       1 for observe mode on a load artifact, matched against the signed
+       ``MODE`` section. Combining bits 0 and 1 is refused. Writers set
+       bits 2 to 31 to 0.
    * - 16
      - 256
      - ``name``
@@ -252,7 +254,7 @@ Trailer
    * - +12
      - 4
      - ``nr_sections``
-     - Number of directory entries, 1 to 8.
+     - Number of directory entries, 1 to 9.
 
 Directory entry
 ~~~~~~~~~~~~~~~
@@ -331,11 +333,18 @@ Section tags
      - variable, non-zero
      - The Java agent ``.jar``, byte for byte. Required in a Java load
        artifact.
+   * - ``MODE``
+     - ``0x45444f4d``
+     - 4
+     - Execution mode, a little-endian ``__u32``: ``0``
+       (``UPATCH_MODE_ENFORCE``) or ``1`` (``UPATCH_MODE_OBSERVE``).
+       Required when ``flags`` bit 1 (``DIRECTIVE_OBSERVE``) is set.
 
 For a BPF payload the writer emits ``NAME``, then ``UNLD`` for an unload
-directive, or ``UPGM`` and optional ``DCDB`` and ``SHPL`` sections for a
-load artifact. For a Java payload it emits ``NAME`` and ``PTYP``, then
-``UNLD`` for an unload directive or ``JAVA`` for a load artifact.
+directive, or ``UPGM`` and optional ``DCDB``, ``SHPL`` and ``MODE``
+sections for a load artifact. For a Java payload it emits ``NAME`` and
+``PTYP``, then ``UNLD`` for an unload directive or ``JAVA`` for a load
+artifact.
 
 Java payloads
 ~~~~~~~~~~~~~
@@ -745,7 +754,9 @@ signed bytes and trusts others as they are.
    * - ``flags``
      - Bit 0 selects the load or the unload path. Each path refuses an
        artifact without the signed section it requires (``UPGM`` or
-       ``UNLD``).
+       ``UNLD``). Bit 1 (``DIRECTIVE_OBSERVE``) must equal whether the
+       signed ``MODE`` section is ``UPATCH_MODE_OBSERVE`` (rejected with
+       ``EBADMSG`` otherwise), and cannot be combined with bit 0.
    * - ``nr_progs``
      - Must equal the ``nr_progs`` of the signed ``UPGM`` section.
    * - ``nr_maps``
@@ -799,23 +810,25 @@ unload later refuses for the section it lacks, and
 
 #. ``data`` is at least 16 bytes long and its last 16 bytes are a trailer
    with magic ``SGTR`` and version 1.
-#. ``nr_sections`` is 1 to 8, and the directory's entries start at
+#. ``nr_sections`` is 1 to 9, and the directory's entries start at
    ``dir_off`` and end where the trailer begins.
 #. Each entry has ``reserved`` 0 and a section that ends at or before
    ``dir_off``.
-#. Each tag is ``NAME``, ``UPGM``, ``UNLD``, ``DCDB``, ``SHPL``, ``PTYP``
-   or ``JAVA``, and appears at most once.
+#. Each tag is ``NAME``, ``UPGM``, ``UNLD``, ``DCDB``, ``SHPL``, ``PTYP``,
+   ``JAVA`` or ``MODE``, and appears at most once.
 #. ``NAME`` is 256 bytes and contains a NUL. ``UPGM`` is not empty.
    ``UNLD`` is 32 bytes. ``PTYP`` is 4 bytes. ``JAVA`` is not empty.
+   ``MODE`` is 4 bytes with value 0 or 1.
 #. ``DCDB`` has magic ``DCDB``, version 1, at least one entry, all entries
    inside the section, NUL-terminated strings, non-zero ``language``,
    ``api_version``, ``input_format`` and ``export_signal``, and each source
    inside the section behind the entries.
 
 Last, the reader rejects the file unless the header ``type`` equals the
-``PTYP`` value, or is 1 where the sections carry no ``PTYP``. A Java file
-whose directory is malformed is therefore rejected rather than read with
-no sections.
+``PTYP`` value, or is 1 where the sections carry no ``PTYP``, and unless
+``flags`` bit 1 (``DIRECTIVE_OBSERVE``) matches ``MODE == 1`` without
+``DIRECTIVE_UNLOAD``. A Java file or an observe-mode file whose directory
+is malformed is therefore rejected rather than read with no sections.
 
 CBMC proves these checks of the reader for every header, of a file of
 any size, and for the signed sections, decoders, policy labels and
@@ -907,8 +920,9 @@ A section tag the reader does not know makes it treat the directory as
 absent. A new section therefore needs readers that know its tag before
 writers emit it. Reserved fields are 0 in every file a writer emits. The
 reader checks ``reserved1`` to ``reserved3``, the directory entries'
-``reserved`` and the ``UPUT`` ``reserved`` field. It does not check
-``flags`` bits 1 to 31 or the ``DCDB`` ``reserved`` field.
+``reserved`` and the ``UPUT`` ``reserved`` field. It checks ``flags``
+bit 1 against ``MODE`` and does not check ``flags`` bits 2 to 31 or the
+``DCDB`` ``reserved`` field.
 
 Limits
 ------
@@ -924,7 +938,7 @@ Limits
    * - Signature
      - 16 KiB (writer), 64 KiB (kernel)
    * - Signed sections
-     - 1 to 8
+     - 1 to 9
    * - Name of a upatch
      - 255 characters of ``[A-Za-z0-9._-]``, each ``.`` counting as two,
        not starting with ``.``

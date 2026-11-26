@@ -17,6 +17,11 @@ int build_package_load(const char *bpf_o, const char *src_path,
 		       const struct upatch_policy_label_entry *policies,
 		       __u32 nr_policies,
 		       const char *pkey_path, const char *cert_path);
+int build_package_load_mode(const char *bpf_o, const char *src_path,
+			    const char *out_upatch, const char *upatch_name,
+			    const struct upatch_policy_label_entry *policies,
+			    __u32 nr_policies, bool observe,
+			    const char *pkey_path, const char *cert_path);
 
 int build_package_unload(const char *name,
 			 const __u8 payload_sha256[32],

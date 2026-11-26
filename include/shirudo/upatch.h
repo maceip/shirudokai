@@ -26,6 +26,12 @@
 #define UPATCH_HEADER_SIZE	360u
 
 #define DIRECTIVE_UNLOAD	(1u << 0)
+#define DIRECTIVE_OBSERVE	(1u << 1)
+
+enum upatch_mode {
+	UPATCH_MODE_ENFORCE = 0,
+	UPATCH_MODE_OBSERVE = 1,
+};
 
 enum upatch_type {
 	UPATCH_TYPE_BPF = 1,
@@ -80,7 +86,7 @@ BUILD_BUG_ON(sizeof(struct upatch_header) != UPATCH_HEADER_SIZE);
  */
 #define UPATCH_SIGNED_TRAILER_MAGIC	0x52544753u	/* "SGTR" le */
 #define UPATCH_SIGNED_VERSION		1u
-#define UPATCH_SIGNED_SECTIONS_MAX	8u
+#define UPATCH_SIGNED_SECTIONS_MAX	9u
 
 enum upatch_section_tag {
 	UPATCH_SECTION_NAME	= 0x454d414eu,	/* "NAME" le */
@@ -90,6 +96,7 @@ enum upatch_section_tag {
 	UPATCH_SECTION_POLICY_LABELS	= 0x4c504853u,	/* "SHPL" le */
 	UPATCH_SECTION_TYPE	= 0x50595450u,	/* "PTYP" le */
 	UPATCH_SECTION_JAR	= 0x4156414au,	/* "JAVA" le */
+	UPATCH_SECTION_MODE	= 0x45444f4du,	/* "MODE" le */
 };
 
 #define UPATCH_POLICY_LABELS_MAGIC	0x4c504853u	/* "SHPL" le */
