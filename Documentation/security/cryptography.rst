@@ -132,14 +132,26 @@ R16).
 FIPS 140-3 profile
 ------------------
 
-Building with ``make FIPS=1`` defines ``SHIRUDO_FIPS=1``. At process
-startup, ``shirudo`` and ``shirudo-build`` call ``crypto_fips_init()``,
-which loads OpenSSL's ``fips`` provider (``OSSL_PROVIDER_load(NULL,
-"fips")``), enables ``EVP_default_properties_enable_fips(NULL, 1)``, and
-verifies ``EVP_default_properties_is_fips_enabled(NULL)``. When the FIPS
-module is absent or fails self-tests, startup exits with status 1 before
+Building the operator profile with ``make FIPS=1`` defines
+``SHIRUDO_FIPS=1``. At process startup, ``shirudo`` and
+``shirudo-build`` call ``crypto_fips_init()``, which loads OpenSSL's
+``fips`` and ``base`` providers, enables
+``EVP_default_properties_enable_fips(NULL, 1)``, and verifies
+``EVP_default_properties_is_fips_enabled(NULL)``. When the FIPS module
+is absent or fails its self-tests, startup exits with status 1 before
 running any command. ``shirudo version`` reports ``fips: enabled`` or
 ``fips: disabled`` from ``crypto_fips_enabled()``.
+
+This is a switch, not a validated configuration:
+
+- The target has no FIPS profile. It links a static OpenSSL built with
+  ``no-module``, which cannot load the FIPS provider, and ``make target
+  FIPS=1`` stops with an error.
+- The operator build uses whatever FIPS provider the host's OpenSSL
+  installs. shirudo pins no validated provider version and does not run
+  ``openssl fipsinstall``; both are the host's to provide.
+- Nothing in the test suite runs with the provider loaded. The unit
+  case passes whether it loads or not.
 
 Digests
 -------
