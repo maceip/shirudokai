@@ -7,11 +7,13 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/utsname.h>
 #include <unistd.h>
 
 #include <linux/keyctl.h>
@@ -240,11 +242,97 @@ static void check_module_signatures(struct preflight_result *r,
 		     "signatures (needs CONFIG_MODULE_SIG=y, or CONFIG_MODULES=n)");
 }
 
-/* A BTF that cannot be read fails the check that needs it. */
+static void check_compat_disabled(struct preflight_result *r,
+				  const struct kernel_options *opts)
+{
+	struct preflight_check *c =
+		next_slot(r, PRE_COMPAT_DISABLED, "compat_disabled");
+
+	if (!opts)
+		fail(r, c, "cannot read the kernel BTF");
+	else if (!opts->compat)
+		pass(c);
+	else
+		fail(r, c, "32-bit compatibility is enabled "
+		     "(needs CONFIG_COMPAT=n, CONFIG_IA32_EMULATION=n and "
+		     "CONFIG_X86_X32_ABI=n)");
+}
+
+static void check_hibernation_disabled(struct preflight_result *r,
+				       const struct kernel_options *opts,
+				       const char *cmdline)
+{
+	struct preflight_check *c =
+		next_slot(r, PRE_HIBERNATION_DISABLED, "hibernation_disabled");
+
+	if (!opts)
+		fail(r, c, "cannot read the kernel BTF");
+	else if (!cmdline)
+		fail(r, c, "cannot read /proc/cmdline");
+	else if (!kernel_hibernation_allowed(opts, cmdline))
+		pass(c);
+	else
+		fail(r, c, "hibernation resume is not disabled "
+		     "(needs CONFIG_HIBERNATION=n or noresume, without "
+		     "resume= or resumewait)");
+}
+
+static void check_bdev_write_mounted(struct preflight_result *r,
+				     const struct kernel_options *opts,
+				     int kconfig_allow, const char *cmdline)
+{
+	struct preflight_check *c =
+		next_slot(r, PRE_BDEV_WRITE_MOUNTED, "bdev_write_mounted");
+
+	if (!opts)
+		fail(r, c, "cannot read the kernel BTF");
+	else if (kernel_bdev_write_mounted_protected(opts, kconfig_allow,
+						     cmdline))
+		pass(c);
+	else
+		fail(r, c, "writes to mounted block devices are not blocked "
+		     "(needs CONFIG_BLK_DEV_WRITE_MOUNTED=n and no "
+		     "bdev_allow_write_mounted=1)");
+}
+
+static bool read_proc_cmdline(char *buf, size_t cap)
+{
+	ssize_t n;
+	int fd;
+
+	fd = open("/proc/cmdline", O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		return false;
+	n = read(fd, buf, cap - 1);
+	close(fd);
+	if (n < 0)
+		return false;
+	return span_to_str(buf, cap, buf, (size_t)n) == 0;
+}
+
+static int probe_write_mounted_kconfig(void)
+{
+	char path[PATH_MAX];
+	struct utsname u;
+	int ret;
+
+	ret = kernel_config_file_allows_write_mounted("/proc/config.gz", true);
+	if (ret != -ENOENT)
+		return ret;
+	if (uname(&u) == 0 &&
+	    strsprintf(path, sizeof(path), "/boot/config-%s", u.release) > 0)
+		return kernel_config_file_allows_write_mounted(path, false);
+	return -ENOENT;
+}
+
+/* A BTF that cannot be read fails the checks that need it. */
 static void check_kernel_options(struct preflight_result *r)
 {
 	const struct kernel_options *have = NULL;
 	struct kernel_options opts = {};
+	char cmdline[8192] = {};
+	bool have_cmdline;
+	int kconfig_allow;
 	struct btf *btf;
 
 	btf = btf__load_vmlinux_btf();
@@ -253,7 +341,13 @@ static void check_kernel_options(struct preflight_result *r)
 		have = &opts;
 		btf__free(btf);
 	}
+	have_cmdline = read_proc_cmdline(cmdline, sizeof(cmdline));
+	kconfig_allow = probe_write_mounted_kconfig();
 	check_module_signatures(r, have);
+	check_compat_disabled(r, have);
+	check_hibernation_disabled(r, have, have_cmdline ? cmdline : NULL);
+	check_bdev_write_mounted(r, have, kconfig_allow,
+				 have_cmdline ? cmdline : NULL);
 }
 
 static void check_cert(struct preflight_result *r)

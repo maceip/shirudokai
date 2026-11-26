@@ -578,13 +578,18 @@ signature against the runtime image's certificates first; see
 is handled: the seal then sees no seccomp state. The attach kinds of
 upatches can need further options; see :doc:`/upatches/write/attach-kinds`.
 
-The pre-flight check ``module_signatures`` refuses a kernel that builds
-modules without ``CONFIG_MODULE_SIG``, and tells it from the running
-kernel, since a target need not have ``/proc/config.gz``: from a BTF
-function only the option builds, ``__module_address`` for
-``CONFIG_MODULES`` and ``mod_verify_sig`` for ``CONFIG_MODULE_SIG``.
-Without ``CONFIG_MODULE_SIG``, ``module_sig_check()`` is a stub that
-asks no LSM about an unsigned module.
+The pre-flight checks ``module_signatures``, ``compat_disabled``,
+``hibernation_disabled`` and ``bdev_write_mounted`` inspect the running
+kernel for the hardening options the threat model assumes, since a
+target need not have ``/proc/config.gz``: they probe BTF symbols only
+each option builds (``__module_address`` and ``mod_verify_sig``, the
+32-bit compatibility entry points, ``hibernation_set_ops`` and
+``software_resume``, and the block-layer mounted-write guard), read
+``/proc/cmdline`` for hibernation and ``bdev_allow_write_mounted``
+parameters, and read ``/proc/config.gz`` or ``/boot/config-<release>``
+where present for ``CONFIG_BLK_DEV_WRITE_MOUNTED``. Without
+``CONFIG_MODULE_SIG``, ``module_sig_check()`` is a stub that asks no LSM
+about an unsigned module.
 
 The test kernel configuration sets these options and the
 additional options the test fixtures and VM need.
