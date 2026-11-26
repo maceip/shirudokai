@@ -509,8 +509,9 @@ ADV-F, holder of a compromised or revoked signing key
    which both gates admit, so it can open shirudo's maps and attach
    programs that write them: the maps are frozen against ``bpf()``
    writes, not against programs. A upatch does what its author wrote,
-   disabling enforcement included. Keys it vouched for stay admitted
-   where a config lists them (U13). Tree publications require a
+   disabling enforcement included. Revoking the key also invalidates
+   vouches it signed, so dependent keys without another active voucher
+   are excluded. Tree publications require a
    non-revoked member of the active config's BPF signer set.
    A key that signs configs (A7) chooses repositories, vouched signers
    and revocations.
@@ -1866,8 +1867,9 @@ R13 Revocation reaches a target only through a config
    BPF loads require a complete CMS envelope, and the purge reads an
    archived signature by the same rule.
    At boot the revoked key is not enrolled, and the init event's
-   certificate list shows it. A target that has not activated the
-   config still trusts the key. Historical vouches are U13.
+   certificate list shows it. Revoking a signer also invalidates vouches
+   it signed, so dependent keys without an active voucher are excluded. A
+   target that has not activated the config still trusts the key.
 
 R14 Configs roll back
    shirudo accepts any validly signed config. A live activation cannot
@@ -1883,12 +1885,17 @@ R14 Configs roll back
    Mitigation: D2.
 
 R16 Any artifact ever signed loads at any time
-   There is no version floor, no expiry and no per-target
-   authorization. Neither shirudo nor the kernel checks a certificate's
-   validity period. Root can roll a upatch back to an older vulnerable
-   version or load a signed debug upatch. Detection: the load is
-   measured, and a verifier with an expected state sees it. The only
-   way to retire one artifact is to revoke the key that signed it.
+   Signed upatch artifacts carry no version floor, no signature expiry
+   and no per-target authorization. Userspace verifiers check X.509
+   ``notBefore`` and ``notAfter`` windows on vouch, repository and Java
+   upatch signer certificates (``cert_valid_at()``) and enforce the
+   signed ``not_after`` bound on v2 vouches (``shirudo keys vouch
+   --expires-days``, ``shirudo keys rotate``), whereas the kernel's
+   ``.bpf`` loader check accepts any loader signed by an enrolled key.
+   Root can roll a upatch back to an older vulnerable version or load a
+   signed debug upatch. Detection: the load is measured, and a verifier
+   with an expected state sees it. Retiring one BPF loader artifact
+   requires revoking the key that signed it.
 
 R17 Telemetry has no proof of origin
    Map snapshots are unsigned and not bound to the TPM. A keepalive
@@ -2200,17 +2207,6 @@ U11 The boot continues when init fails
       pinned, and treat a missing keepalive as a signal. A deployer who
       prefers a halted boot can add an ``OnFailure=`` drop-in to
       ``shirudo-initrd.service``; this is not tested.
-
-U13 A revoked signer's historical vouches remain valid
-   :Affects: Vouched keys (R13).
-   :Consequence: Vouches carry no time. A revoked key's vouch for another
-      key still admits it when a config lists that key. This supports
-      planned rotation but does not distinguish a legitimate earlier
-      vouch from one made with a compromised signing key.
-   :Status: Confirmed in code. Rotation preserves this existing rule.
-   :Meanwhile: When a signer is compromised, also remove or revoke every
-      dependent key whose authority should no longer be trusted. A
-      planned overlap is not sufficient compromise recovery by itself.
 
 U15 Certificates are fetched without a pin
    :Affects: ``tools/gen-initrd/install.sh --cert <url>`` and

@@ -1669,7 +1669,8 @@ a proof covers.
        ``upatch load`` and ``upatch unload``, by review, and the tree
        sync harnesses read ``builtin-bpm.c``; no proof reads the other
        commands. ``vouch.c`` has OpenSSL sign the bytes
-       ``keys_vouch_payload()`` gives it, which ``vouch-payload`` covers
+       ``keys_vouch_payload()`` or ``keys_vouch_payload_v2()`` gives it,
+       the first of which ``vouch-payload`` covers
 
 Not covered yet
 ---------------
@@ -1752,7 +1753,9 @@ proof: ``dns_name_valid()`` of :src:`util/string.c` at its limits of a
 :src:`util/tpm_wire.c`, the second of which the ``tpm-wire`` fuzz target
 round-trips; ``upatch_rodata_symbol_range()`` of
 :src:`util/upatch_rodata.c`, the range of ``.rodata`` the builder
-rewrites; ``chain_init_event()`` of :src:`util/chain.c` on a set that is
+rewrites; ``cert_valid_at()``, ``keys_vouch_payload_v2()``,
+``keys_vouch_encode_v2()``, ``keys_verify_signature_at()`` and
+``keys_verify_vouch_at()`` of :src:`util/keys.c`; ``chain_init_event()`` of :src:`util/chain.c` on a set that is
 not empty; ``upatch_name_signed()``, ``upatch_member_valid()`` and
 ``prog_specs_xdp_classes()`` of :src:`util/upatch.c`; the reading of
 the eventlog behind boot restore in :src:`util/measured.c`,

@@ -161,5 +161,6 @@ int build_download_package(const char *cmd, const char *reference,
 int build_upatch_name(const char *source, char *out, size_t cap);
 
 int build_keys_vouch(int argc, const char **argv);
+int build_keys_rotate(int argc, const char **argv);
 
 #endif /* SHIRUDO_BUILD_BPM_H */

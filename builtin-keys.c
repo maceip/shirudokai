@@ -484,6 +484,7 @@ static const struct help_item keys_subcmds[] = {
 	{ "add", "trust a certificate an enrolled key vouched for (target)" },
 	{ "revoke", "stop trusting a certificate now and for good (target)" },
 	{ "vouch", "sign a vouch for a certificate (operator)" },
+	{ "rotate", "generate a replacement keypair and vouch with the retiring key (operator)" },
 };
 
 enum keys_opt {
@@ -507,7 +508,8 @@ static const struct help keys_help = {
 	.usage   = "shirudo keys [--keys-dir <dir>] [--json]\n"
 		   "       shirudo keys add <cert.der> --vouch <file>\n"
 		   "       shirudo keys revoke\n"
-		   "       shirudo keys vouch <cert.der> [-o <file>]",
+		   "       shirudo keys vouch <cert.der> [-o <file>] [--expires-days <n>]\n"
+		   "       shirudo keys rotate --old-keys-dir <dir> --keys-dir <new-dir> [--expires-days <n>]",
 	.summary = "Inspect the shirudo key material this host holds: the "
 		   "on-disk cert and\nsigning key (if present), the trusted "
 		   "set a target enrols, and the kernel\nkeyring holding it "
@@ -547,21 +549,26 @@ static const struct help keys_add_help = {
 	.n_sections = ARRAY_SIZE(keys_add_sections),
 };
 
-/* The public key must be one the kernel verifies loaders with. */
+/* The public key must be ML-DSA-87 and within its X.509 validity window. */
 static int check_cert_algorithm(const __u8 *der, size_t der_sz,
 				const char *what)
 {
 	struct cert cert = {};
 	char name[64] = {};
-	int ret;
+	int ret, valid;
 
 	ret = cert_read_der(der, der_sz, &cert);
 	if (ret) {
 		pr_err("keys add: %s is not a certificate", what);
 		return ret;
 	}
+	valid = cert_valid_at(&cert, (__s64)time(NULL));
 	ret = cert_key_algorithm(&cert, name, sizeof(name));
 	cert_free(&cert);
+	if (valid) {
+		pr_err("keys add: %s is outside its validity period", what);
+		return valid;
+	}
 	if (ret || strcmp(name, "ML-DSA-87")) {
 		pr_err("keys add: %s is %s; shirudo accepts only ML-DSA-87",
 		       what, ret ? "of an unknown algorithm" : name);
@@ -1004,6 +1011,17 @@ static int keys_vouch(int argc, const char **argv)
 			     argc - 1, argv + 1);
 }
 
+static int keys_rotate(int argc, const char **argv)
+{
+	if ((argc < 2 || !is_help(argv[1])) && enforcement_active()) {
+		pr_err("keys rotate: refusing on a target: signing keys belong on the operator host");
+		return 1;
+	}
+	return build_forward("keys rotate",
+			     (const char *const[]){ "keys", "rotate", NULL },
+			     argc - 1, argv + 1);
+}
+
 static int keys_show(int argc, const char **argv);
 
 int cmd_keys(int argc, const char **argv)
@@ -1028,6 +1046,8 @@ int cmd_keys(int argc, const char **argv)
 		return keys_add(argc - 1, argv + 1);
 	if (!strcmp(sub, "revoke"))
 		return keys_revoke(argc - 1, argv + 1);
+	if (!strcmp(sub, "rotate"))
+		return keys_rotate(argc - 1, argv + 1);
 	return keys_vouch(argc - 1, argv + 1);
 }
 
