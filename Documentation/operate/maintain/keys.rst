@@ -474,9 +474,11 @@ Limits
   on vouch, repository and Java upatch certificates and enforce the
   signed expiration of bounded v2 vouches, whereas the kernel's ``.bpf``
   keyring check does not expire enrolled certificates on its own.
-- Older signed configs can still be selected. Local rollback prevention
-  is not provided; a verifier must check the approved config root and
-  boot measurements. See :doc:`/security/threat-model`.
+- Set ``security.epoch`` monotonically in each new config image so the
+  target's sealed floor under ``/var/lib/shirudo/config-update/epoch``
+  refuses rollback to an older signed config; a verifier should also
+  check the approved config root and boot measurements. See
+  :doc:`/security/threat-model`.
 
 
 Next steps

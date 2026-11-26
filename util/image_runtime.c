@@ -32,6 +32,7 @@
 #include "config_update.h"
 #include "crypto.h"
 #include "dm_verity.h"
+#include "freshness.h"
 #include "hex.h"
 #include "identity.h"
 #include "image_bootstrap.h"
@@ -734,6 +735,13 @@ static int prepare_config(struct image_context *current,
 	ret = mount_flags(current->candidate_fd, false);
 	if (!ret)
 		ret = image_config_validate(current->candidate_fd);
+	if (!ret) {
+		__u64 epoch = 0;
+
+		ret = image_config_read_epoch(current->candidate_fd, &epoch);
+		if (!ret)
+			ret = freshness_verify(FRESHNESS_EPOCH_PATH, epoch);
+	}
 	if (!ret && !trusted_boot)
 		ret = candidate_keys(current->candidate_fd, purpose);
 out:
@@ -777,6 +785,13 @@ static int activate_config(struct image_context *current, bool boot)
 	if (!ret)
 		ret = image_config_set(&current->bootstrap_config, fd);
 	close(fd);
+	if (!ret) {
+		struct config active_cfg __cleanup(config_clear) = {};
+
+		if (image_config_get(&active_cfg))
+			ret = freshness_advance(FRESHNESS_EPOCH_PATH,
+						active_cfg.security_epoch);
+	}
 	return ret;
 }
 
@@ -1069,6 +1084,13 @@ static int config_mount_check(const struct config_update_record *record)
 	if (!ret)
 		ret = image_config_set(&image.bootstrap_config, fd);
 	close(fd);
+	if (!ret) {
+		struct config active_cfg __cleanup(config_clear) = {};
+
+		if (image_config_get(&active_cfg))
+			ret = freshness_verify(FRESHNESS_EPOCH_PATH,
+					       active_cfg.security_epoch);
+	}
 out:
 	dm_verity_close(&device);
 	return ret;

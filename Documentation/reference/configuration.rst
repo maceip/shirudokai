@@ -177,6 +177,10 @@ Settings
      - Decimal integer, ``0`` for no limit
      - ``0``
      - Config image
+   * - ``security.epoch``
+     - Decimal integer, ``0`` to ``18446744073709551615``
+     - ``0``
+     - Config image
    * - ``tpm.owner_auth``
      - Literal password, or ``hex:<even number of hex digits>``, at most
        256 bytes
@@ -234,6 +238,12 @@ Settings
      - ``upatch load``, ``upatch unload`` and the register binding of
        ``init`` refuse with ``eventlog_full`` when the eventlog's size
        plus 4096 bytes exceeds this value.
+   * - ``security.epoch``
+     - Monotonic anti-rollback epoch for signed config images. Activating
+       a config persists any higher epoch to the sealed floor at
+       ``/var/lib/shirudo/config-update/epoch``; ``image update``,
+       ``image stage`` and ``init`` refuse a config whose
+       ``security.epoch`` is lower than that floor with ``ESTALE``.
    * - ``tpm.owner_auth``
      - Owner hierarchy authorization for defining the NV index. Needed
        only when the TPM's owner password is set. The initrd copy is
@@ -280,7 +290,8 @@ On a target, the effective settings combine the files as follows:
 
 - ``tpm.owner_auth``, ``tpm.tcti`` and ``tls.classical_hosts`` come from
   the bootstrap. The config image cannot carry them.
-- ``eventlog.max_bytes`` and ``map_export.*`` come from the config image.
+- ``eventlog.max_bytes``, ``security.epoch`` and ``map_export.*`` come
+  from the config image.
   A value in a bootstrap file applies only while no config image is
   active, as for ``status`` during an activation it cannot verify.
 - On a host without a config image, ``SHIRUDO_TPM_TCTI`` and
@@ -320,6 +331,9 @@ How each reader treats a bad value:
        status 1.
    * - Unknown ``tls.*`` key, or an invalid ``tls.classical_hosts``
      - Warning. No host may use classical key exchange. ``shirudo
+       config`` exits with status 1.
+   * - Unknown ``security.*`` key, or an invalid ``security.epoch``
+     - Warning. Config image validation refuses the image, and ``shirudo
        config`` exits with status 1.
    * - Invalid ``eventlog.max_bytes``, ``tpm.owner_auth`` or
        ``tpm.tcti``

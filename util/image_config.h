@@ -26,6 +26,7 @@ int image_config_get(struct config *out);
 int image_config_set(const struct config *bootstrap,
 		     int root_fd);
 int image_config_validate(int root_fd);
+int image_config_read_epoch(int root_fd, __u64 *epoch);
 void image_config_clear(void);
 /* An entry of the config image, opened from its verified root; -errno. */
 int image_open(enum image_path which, int flags);

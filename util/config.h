@@ -27,6 +27,8 @@
 
 struct config {
 	__u64		eventlog_max_bytes;	/* 0 = unlimited */
+	bool		security_epoch_valid;
+	__u64		security_epoch;		/* monotonic config floor */
 	/*
 	 * Owner-hierarchy auth used to define the NV index on TPMs whose
 	 * owner auth is set. Empty (len 0) = empty-password session.
