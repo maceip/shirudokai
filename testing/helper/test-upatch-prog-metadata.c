@@ -98,6 +98,52 @@ static int expect_serializer(const struct upatch *u)
 	return arena && error ? 0 : fail("serializer map mismatch");
 }
 
+/* Every program a struct_ops one, which the target's parser accepts. */
+static int expect_struct_ops(const struct upatch *u)
+{
+	struct prog_spec *specs;
+	const void *raw;
+	__u32 len, i;
+	int ret = 0;
+
+	raw = upatch_signed_attach(u, &len);
+	if (!raw)
+		return fail("missing signed metadata");
+	if (prog_specs_parse(raw, len, u->hdr.nr_maps, u->hdr.nr_progs,
+			     &specs))
+		return fail("the target refuses the metadata");
+	for (i = 0; i < u->hdr.nr_progs && !ret; i++) {
+		if (specs[i].role != UPATCH_PROG_ROLE_STRUCT_OPS)
+			ret = fail("program is not a struct_ops program");
+	}
+	prog_specs_free(specs, u->hdr.nr_progs);
+	return ret;
+}
+
+static int expect_netdev(const struct upatch *u, __u32 kind, const char *mask_str,
+			 const char *want_filter)
+{
+	struct prog_spec *specs = NULL;
+	const void *attach;
+	__u32 len;
+	__u64 mask;
+	int ret;
+
+	attach = upatch_signed_attach(u, &len);
+	ret = parse_u64(mask_str, strlen(mask_str), UPATCH_XDP_ALL, &mask);
+	if (!ret)
+		ret = prog_specs_parse(attach, len, u->hdr.nr_maps,
+				       u->hdr.nr_progs, &specs);
+	if (ret)
+		return fail("netdev metadata parse failed");
+	if (u->hdr.nr_progs != 1 || specs[0].kind != kind ||
+	    specs[0].device_classes != mask ||
+	    strcmp(specs[0].target, want_filter ? want_filter : "") != 0)
+		ret = fail("netdev metadata mismatch");
+	prog_specs_free(specs, u->hdr.nr_progs);
+	return ret;
+}
+
 /*
  * The one program attaches as kind to target in path at expected_offsets
  * file offsets, the first stored in *first; entry_offset is the offset
@@ -343,23 +389,20 @@ int main(int argc, char **argv)
 		ret = expect_attach(&u,
 				    UPATCH_ATTACH_NETFILTER_IPV6_PRE_ROUTING,
 				    NULL, 0);
-	} else if (strcmp(mode, "xdp") == 0 && argc == 4) {
-		struct prog_spec *specs = NULL;
-		const void *attach;
-		__u32 len;
-		__u64 mask;
+	} else if (strcmp(mode, "xdp") == 0 && (argc == 4 || argc == 5)) {
+		ret = expect_netdev(&u, UPATCH_ATTACH_XDP, argv[3],
+				    argc == 5 ? argv[4] : NULL);
+	} else if ((strcmp(mode, "tcx-ingress") == 0 ||
+		    strcmp(mode, "tcx-egress") == 0) &&
+		   (argc == 4 || argc == 5)) {
+		__u32 kind = strcmp(mode, "tcx-egress") == 0 ?
+			     UPATCH_ATTACH_TCX_EGRESS :
+			     UPATCH_ATTACH_TCX_INGRESS;
 
-		attach = upatch_signed_attach(&u, &len);
-		ret = parse_u64(argv[3], strlen(argv[3]), UPATCH_XDP_ALL, &mask);
-		if (!ret)
-			ret = prog_specs_parse(attach, len, u.hdr.nr_maps,
-					       u.hdr.nr_progs, &specs);
-		if (!ret) {
-			if (u.hdr.nr_progs != 1 || specs[0].kind != UPATCH_ATTACH_XDP ||
-			    specs[0].device_classes != mask)
-				ret = fail("XDP metadata mismatch");
-			prog_specs_free(specs, u.hdr.nr_progs);
-		}
+		ret = expect_netdev(&u, kind, argv[3],
+				    argc == 5 ? argv[4] : NULL);
+	} else if (strcmp(mode, "struct-ops") == 0 && argc == 3) {
+		ret = expect_struct_ops(&u);
 	} else if ((strcmp(mode, "uprobe-multi") == 0 ||
 		    strcmp(mode, "uretprobe-multi") == 0) && argc == 6) {
 		__u32 kind = strcmp(mode, "uretprobe-multi") == 0 ?

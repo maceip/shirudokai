@@ -41,7 +41,12 @@ where upstream reads it as a bitfield of no bits and shifts a `__u64` by
 shadows the system's copy, and the arm64 `asm/sigcontext.h` of current
 kernel headers, which `<signal.h>` pulls in, uses `__u128`. In the
 kernel tree `tools/include/linux/types.h` defines them first, which the
-shims do not stand in for. `bpf-deps` overwrites these files, so
+shims do not stand in for. `bpf/gen_loader.c`, `bpf/libbpf.c`,
+`bpf/bpf_gen_internal.h` and `include/uapi/linux/bpf.h` carry the libbpf
+`struct_ops`-by-name loader support so a generated loader names a
+`struct_ops` map and its programs by the struct and members in the
+object's BTF and stores the program FDs into the struct it updates.
+`bpf-deps` overwrites these files, so
 re-apply those changes after a refresh until they are upstream.
 
 `.github/scripts/check-spdx.sh` holds every vendored `.c` and `.h` to

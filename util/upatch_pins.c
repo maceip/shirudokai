@@ -53,19 +53,23 @@ void upatch_pins_note(struct upatch_pins *pins, const char *entry)
 		if (!pins->nr_xdp_progs || index < pins->first_xdp_prog)
 			pins->first_xdp_prog = index;
 		pins->nr_xdp_progs++;
+	} else if (pin_index(entry, TCX_PROG_PIN_PREFIX, &index)) {
+		if (!pins->nr_tcx_progs || index < pins->first_tcx_prog)
+			pins->first_tcx_prog = index;
+		pins->nr_tcx_progs++;
 	}
 }
 
 /*
  * Only link_0 stands for the numbered links: a non-XDP upatch that has
  * lost it must still read as not loaded, where restore calls that
- * tampering. XDP link pins come and go with devices, so its program pin
- * says it is loaded.
+ * tampering. XDP and TCX link pins come and go with devices, so their
+ * program pins say they are loaded.
  */
 bool upatch_pins_loaded(const struct upatch_pins *pins)
 {
 	return pins->has_link || (pins->nr_links && !pins->first_link) ||
-	       pins->nr_xdp_progs;
+	       pins->nr_xdp_progs || pins->nr_tcx_progs;
 }
 
 bool upatch_pins_complete(const struct upatch_pins *pins, __u32 nr_attach)
@@ -180,6 +184,39 @@ int upatch_xdp_prog_open(const char *name, __u32 index, __u32 *id)
 		return -errno;
 	ret = bpf_prog_get_info_by_fd(fd, &info, &len);
 	if (!ret && info.type != BPF_PROG_TYPE_XDP)
+		ret = -ESTALE;
+	if (ret) {
+		close(fd);
+		return ret;
+	}
+	*id = info.id;
+	return fd;
+}
+
+int upatch_tcx_prog_pin(char *out, size_t cap, const char *name, __u32 index)
+{
+	char entry[32];
+
+	if (strsprintf(entry, sizeof(entry), TCX_PROG_PIN_PREFIX "%u", index) < 0 ||
+	    upatch_pin_path(out, cap, name, entry, NULL))
+		return -ENAMETOOLONG;
+	return 0;
+}
+
+int upatch_tcx_prog_open(const char *name, __u32 index, __u32 *id)
+{
+	struct bpf_prog_info info = {};
+	__u32 len = sizeof(info);
+	char pin[PATH_MAX];
+	int fd, ret;
+
+	if (upatch_tcx_prog_pin(pin, sizeof(pin), name, index))
+		return -ENAMETOOLONG;
+	fd = bpf_obj_get(pin);
+	if (fd < 0)
+		return -errno;
+	ret = bpf_prog_get_info_by_fd(fd, &info, &len);
+	if (!ret && info.type != BPF_PROG_TYPE_SCHED_CLS)
 		ret = -ESTALE;
 	if (ret) {
 		close(fd);

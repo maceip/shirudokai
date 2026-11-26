@@ -24,6 +24,7 @@
 
 #include "log.h"
 #include "malloc.h"
+#include "upatch.h"
 #include "xdp.h"
 
 #define NETLINK_BUFFER_SIZE 65536U
@@ -378,6 +379,37 @@ bool xdp_device_selected(const struct xdp_device *devs, size_t count,
 		return true;
 	peer = veth_peer(devs, count, dev);
 	return peer && dev->ifindex < peer->ifindex;
+}
+
+bool xdp_device_filter_valid(const char *filter)
+{
+	return netdev_filter_valid(filter);
+}
+
+bool xdp_device_match_glob(const struct xdp_device *dev, const char *filter)
+{
+	const char *glob;
+
+	if (!dev || !netdev_filter_valid(filter))
+		return false;
+	if (!filter[0])
+		return true;
+	glob = str_after_prefix(filter, "ifname=");
+	if (glob)
+		return dev->name[0] &&
+		       name_glob_match(glob, dev->name, strlen(dev->name));
+	glob = str_after_prefix(filter, "driver=");
+	if (glob)
+		return dev->driver[0] &&
+		       name_glob_match(glob, dev->driver, strlen(dev->driver));
+	return false;
+}
+
+bool xdp_device_selected_filtered(const struct xdp_device *devs, size_t count,
+				  size_t index, __u32 mask, const char *filter)
+{
+	return xdp_device_selected(devs, count, index, mask) &&
+	       xdp_device_match_glob(&devs[index], filter);
 }
 
 enum xdp_reconcile xdp_reconcile_action(bool selected, __u32 attached,
