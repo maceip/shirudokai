@@ -20,6 +20,21 @@ bit runs:
   `.php0`..`.php9`, `.pht`, `.phtml`, `.phar` or `.sh` (case-insensitively)
   with `FMODE_WRITE`.
 
+## Limits
+
+The checks look at a file's name, not at what the file is:
+
+- The exec rule compares the last component of the path. A worker that
+  copies `/bin/sh` to `/tmp/x`, or reaches it through a link of another
+  name, executes it.
+- The write rule runs when a file is opened. A worker that writes
+  `shell.txt` and renames it to `shell.php` is not refused: no rename
+  hook is attached.
+
+The package raises the cost of the common web-shell and reverse-shell
+payloads. It is not a boundary; `app-sandbox`, which decides by policy
+label and not by name, is the one to use for that.
+
 ## Telemetry maps
 
 - `activity` (`BPF_MAP_TYPE_PERCPU_ARRAY`, 1 entry): number of confined worker

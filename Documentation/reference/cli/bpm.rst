@@ -450,6 +450,17 @@ detached ML-DSA-87 CMS signature (``--sig``) and signer certificate
 - ``feed match`` verifies the feed and filters its entries to those whose
   ``selector`` matches the running host (and ``--cve`` when given).
 
+A feed is advisory, and "verifies" means no more than that the
+signature checks under the certificate given with ``--cert``: the
+command trusts whatever certificate the caller names and consults no
+keyring or config. A feed carries no expiry, serial or floor, so an old
+feed verifies like a new one and nothing orders two of them. An entry
+names the CVEs a shield is for and has no affected or fixed version
+range, so ``feed match`` lists a shield for a host whose kernel already
+has the fix. What a target loads is still decided by the signed upatch
+tree, which has a sequence and replay protection of its own
+(:doc:`/security/threat-model`, R8).
+
 key
 ---
 
