@@ -24,18 +24,21 @@ Usage
 Description
 -----------
 
-Without an option, ``version`` prints two lines::
+Without an option, ``version`` prints three lines::
 
    shirudo (<describe><extraversion>, "<release-name>")
    version-id: <version-id>
+   fips: <enabled|disabled>
 
 ``<describe>`` is ``git describe`` of the build tree, or the :src:`VERSION`
 file outside a git checkout. ``<version-id>`` is a SHA-256 over the git
-commit, a dirty-tree flag and a digest of the build configuration
-(``config.mk`` and :src:`Makefile.shirudo`). Two builds of one commit with
+commit, a dirty-tree flag, a digest of the build configuration
+(``config.mk`` and :src:`Makefile.shirudo`) and the ``FIPS`` build flag.
+Two builds of one commit with
 different build configurations therefore have different ids, for
 example an operator package and a target package built on different
-hosts.
+hosts or a ``FIPS=1`` build. ``fips`` reports whether OpenSSL's FIPS
+default property is active in this process.
 
 Options
 -------
@@ -69,6 +72,7 @@ Print the release and the id:
    target# shirudo version
    shirudo (58d3fa7-dirty-rc0, "Social BPF Coding")
    version-id: 58b05ab35a2bcefaa649faf15f8c6be0211e24cea710450c1a29298c3b5c7de0
+   fips: disabled
 
 Print the id alone, to pass to ``--expect-version-id``:
 

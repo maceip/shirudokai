@@ -11,6 +11,7 @@
 #include <shirudo/misc.h>
 
 #include "builtin.h"
+#include "util/crypto.h"
 #include "util/help.h"
 #include "util/options.h"
 #include "util/version.h"
@@ -65,5 +66,6 @@ int cmd_version(int argc, const char **argv)
 	printf("shirudo (%s%s, \"%s\")\n",
 	       shirudo_version, shirudo_extraversion, shirudo_release_name);
 	printf("version-id: %s\n", shirudo_version_id);
+	printf("fips: %s\n", crypto_fips_enabled() ? "enabled" : "disabled");
 	return 0;
 }

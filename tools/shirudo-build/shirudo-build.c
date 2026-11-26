@@ -18,6 +18,7 @@
 
 #include "bpm.h"
 #include "compile.h"
+#include "crypto.h"
 #include "harden.h"
 #include "help.h"
 #include "log.h"
@@ -210,6 +211,10 @@ int main(int argc, char **argv)
 	log_init();
 	if (harden_self())
 		return 1;
+#ifdef SHIRUDO_FIPS
+	if (crypto_fips_init())
+		return 1;
+#endif
 
 	if (argc >= 2 && strcmp(args[1], "image") == 0)
 		return build_image(argc - 1, args + 1);

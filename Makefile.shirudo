@@ -156,6 +156,11 @@ ifeq ($(COVERAGE),1)
 CFLAGS_BASE += --coverage -fprofile-abs-path -fprofile-update=atomic
 endif
 
+FIPS ?= 0
+ifeq ($(FIPS),1)
+CFLAGS_BASE += -DSHIRUDO_FIPS=1
+endif
+
 # make SANITIZE=address,undefined instruments the host-side binaries and
 # the test helpers; BPF objects come from clang -target bpf and are never
 # affected. Recovery is off so that every report fails the run. The
@@ -517,7 +522,7 @@ util/version_id.c:
 	dirty=$$(git diff-index --quiet HEAD 2>/dev/null || echo -dirty); \
 	cfg=$$(sha256sum config.mk Makefile.shirudo 2>/dev/null | \
 	       sha256sum | cut -c1-16); \
-	id=$$(printf '%s%s|%s' "$$rev$$dirty" "$$cfg" | \
+	id=$$(printf '%s%s|%s|fips=%s' "$$rev$$dirty" "$$cfg" "$(FIPS)" | \
 	      sha256sum | cut -d' ' -f1); \
 	extra_c=$$(printf '%s' "$(EXTRAVERSION)" | sed 's/[\\"]/\\&/g'); \
 	name_c=$$(printf '%s' "$(NAME)" | sed 's/[\\"]/\\&/g'); \
@@ -1207,6 +1212,7 @@ FUZZ_CFLAGS := -O1 -g -std=gnu11 -fno-omit-frame-pointer $(LANG_CFLAGS) \
                -fsanitize=fuzzer $(FUZZ_SANITIZE) \
                -fno-sanitize-recover=all $(WARNINGS) $(FUZZ_WARNINGS) \
                -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE $(INCLUDES) \
+               $(if $(filter 1,$(FIPS)),-DSHIRUDO_FIPS=1) \
                $(LIBCRYPTO_CFLAGS) $(LIBCURL_CFLAGS) $(ZLIB_CFLAGS)
 FUZZ_LIBS := $(LIBCRYPTO_LIBS) $(LIBSSL_LIBS) $(LIBCURL_LIBS) $(ZLIB_LIBS)
 FUZZ_BASE := util/json.c util/string.c util/hex.c util/malloc.c \
