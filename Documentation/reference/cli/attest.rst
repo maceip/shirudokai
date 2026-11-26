@@ -21,6 +21,7 @@ Usage
 .. code-block:: none
 
    shirudo attest [--nonce=<nonce>] [--pcrs=<list>] [--challenge=<challenge>]
+                  [--ek-rsa]
                   [-o <path> | --output=<path>]
    shirudo attest verify ...
    shirudo attest predict ...
@@ -129,6 +130,16 @@ Options
      - ``<challenge>``, a file
      - none
      - Credential challenge from ``attest challenge`` to activate.
+   * - ``--ek-rsa``
+     - none
+     - off
+     - Present the RSA 2048 endorsement key where the TPM holds no
+       endorsement certificate and no ``--challenge`` names the key's
+       type; such a TPM otherwise presents its ECC P-256 key. A cloud
+       provider that publishes a virtual TPM's endorsement key publishes
+       the RSA one, which ``attest challenge --ek-pub`` and ``attest
+       verify --ek-pub`` then compare with this one. A challenge made
+       from such evidence asks for the same key.
    * - ``--output``, ``-o``
      - ``<path>``
      - standard output

@@ -55,6 +55,7 @@ enum evidence_opt {
 	EVIDENCE_NONCE,
 	EVIDENCE_PCRS,
 	EVIDENCE_CHALLENGE,
+	EVIDENCE_EK_RSA,
 	EVIDENCE_OUTPUT,
 };
 
@@ -65,6 +66,8 @@ static const struct opt_spec evidence_opts[] = {
 		"PCRs to quote, comma separated (default 0-7,9,11-15)" },
 	[EVIDENCE_CHALLENGE] = { "--challenge", 0, 0, "<path>",
 		"a challenge from the verifier to activate while attesting" },
+	[EVIDENCE_EK_RSA] = { "--ek-rsa", 0, 0, NULL,
+		"present the RSA endorsement key when the TPM has no certificate" },
 	[EVIDENCE_OUTPUT] = { "--output", 'o', 0, "<path>",
 		"write the evidence there (0600) instead of stdout" },
 };
@@ -1108,6 +1111,7 @@ static int cmd_attest_evidence(int argc, const char **argv)
 	char *doc = NULL;
 	size_t nonce_len = 0, len = 0, cap = 0;
 	struct opt_parser p;
+	bool rsa_ek = false;
 	int ret, opt;
 
 	OPT_INIT(&p, "attest", evidence_opts, &attest_help, argc, argv, 1);
@@ -1115,6 +1119,9 @@ static int cmd_attest_evidence(int argc, const char **argv)
 		switch (opt) {
 		case EVIDENCE_CHALLENGE:
 			challenge_path = p.value;
+			break;
+		case EVIDENCE_EK_RSA:
+			rsa_ek = true;
 			break;
 		case EVIDENCE_NONCE:
 			if (hex_decode_max(p.value, nonce, sizeof(nonce),
@@ -1152,7 +1159,7 @@ static int cmd_attest_evidence(int argc, const char **argv)
 	}
 
 	request = challenge_path ? &challenge : NULL;
-	ret = attest_evidence_config(nonce, nonce_len, mask, request,
+	ret = attest_evidence_config(nonce, nonce_len, mask, rsa_ek, request,
 				     image_update_context(),
 				     &doc, &len, &cap);
 	if (ret == -ENXIO) {

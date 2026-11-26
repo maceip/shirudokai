@@ -50,9 +50,11 @@ struct config_update;
  * -ENXIO when no TPM answers, -ENODEV when no register is bound this
  * boot, -EKEYREJECTED when the TPM refuses the challenge, and what the
  * eventlog's reader returns when this boot's records cannot be read.
+ * rsa_ek asks for the RSA 2048 endorsement key where neither a
+ * challenge nor an endorsement certificate names the key's type.
  */
 int attest_evidence_config(const __u8 *nonce, size_t nonce_len,
-			   __u32 pcr_mask,
+			   __u32 pcr_mask, bool rsa_ek,
 			   const struct attest_challenge *c,
 			   struct config_update *update,
 			   char **out, size_t *len, size_t *cap);

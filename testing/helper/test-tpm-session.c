@@ -236,7 +236,7 @@ static int evidence_begins(const char *array)
 	int ret;
 
 	ret = attest_evidence_config(nonce, sizeof(nonce), 1u << CHAIN_PCR,
-				     NULL, NULL, &doc, &len, &cap);
+				     false, NULL, NULL, &doc, &len, &cap);
 	if (ret)
 		return ret;
 	ret = str_contains(doc, array) ? 0 : -EBADMSG;

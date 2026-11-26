@@ -26,11 +26,22 @@ Every option takes its value after ``=`` or as the next argument.
 Description
 -----------
 
-Cloud vTPM control planes publish each instance's endorsement public key
-out of band without an endorsement certificate: PEM or DER
-``SubjectPublicKeyInfo`` (GCP Shielded VM ``getShieldedInstanceIdentity``,
-Azure Trusted Launch) or raw or base64 ``TPM2B_PUBLIC`` (AWS NitroTPM
-``GetInstanceTpmEkPub``, Azure Trusted Launch).
+Two cloud control planes publish an instance's endorsement public key
+out of band, without an endorsement certificate: GCP as PEM
+``SubjectPublicKeyInfo`` (Shielded VM ``getShieldedInstanceIdentity``)
+and AWS as base64 of a DER ``SubjectPublicKeyInfo`` (NitroTPM
+``GetInstanceTpmEkPub`` with ``--key-format der``). AWS offers the key
+types ``rsa-2048`` and ``ecc-sec-p384``; shirudo takes the RSA one and
+refuses P-384, and the target presents its RSA key with ``shirudo attest
+--ek-rsa``. The ``tpmt`` format of that call has not been tried.
+
+Azure publishes none. A Trusted Launch VM's vTPM holds no endorsement
+certificate, and neither the instance view nor the instance metadata
+service returns the key; they say only that the vTPM is enabled. An
+operator can read the key on the VM when provisioning it
+(``tpm2_readpublic -c 0x81010001 -f pem``) and keep it in an inventory.
+That pins the key as ``--ek-name`` does: it proves that the same TPM
+answers later, not that Azure vouches for it.
 
 ``ek-name`` parses RSA-2048 (exponent 65537) and ECC NIST P-256 keys in
 any of those formats, builds the canonical TCG endorsement key

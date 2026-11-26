@@ -3,7 +3,7 @@
  * Copyright (c) 2026 Authors of shirudo
  *
  * Cloud vTPM endorsement key public-key parsing and template matching
- * across AWS NitroTPM, GCP Shielded VM and Azure Trusted Launch vTPM.
+ * for the keys AWS NitroTPM and GCP Shielded VM publish.
  */
 
 #include <errno.h>

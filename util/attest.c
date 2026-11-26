@@ -218,7 +218,7 @@ static void emit_certification(struct json_emit *e,
 }
 
 int attest_evidence_config(const __u8 *nonce, size_t nonce_len,
-			   __u32 pcr_mask,
+			   __u32 pcr_mask, bool rsa_ek,
 			   const struct attest_challenge *c,
 			   struct config_update *update,
 			   char **out, size_t *len, size_t *cap)
@@ -358,11 +358,16 @@ int attest_evidence_config(const __u8 *nonce, size_t nonce_len,
 		}
 	}
 	/*
-	 * The endorsement key the certificate describes, or the one the
-	 * challenge was made for; a TPM without a certificate yields its
-	 * ECC key, which the operator pins by name.
+	 * The endorsement key the challenge was made for, or the one the
+	 * certificate describes; a TPM without a certificate yields its
+	 * ECC key, or its RSA key where the caller asked for that one.
 	 */
-	ek_rsa = challenge ? challenge->ek_rsa : ek_cert_rsa;
+	if (challenge)
+		ek_rsa = challenge->ek_rsa;
+	else if (ek_cert_len)
+		ek_rsa = ek_cert_rsa;
+	else
+		ek_rsa = rsa_ek;
 	ret = tpm_ek_create(tpm, ek_rsa, &ek);
 	if (ret)
 		goto out;
