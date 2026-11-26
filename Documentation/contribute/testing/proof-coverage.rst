@@ -1111,8 +1111,8 @@ or shorter, and "lengths 0 to 6" every input of each of those lengths.
      - One settings line of 0 to 8 bytes, failed reads and allocations,
        and an initially empty state with the root flag and runtime
        presence varied. These lines cannot contain a complete setting.
-     - A short line cannot add a certificate or set a PCR; the runtime
-       and root presence flags stay unchanged
+     - A short line cannot add a certificate, set a PCR or loosen
+       enforcement; the runtime and root presence flags stay unchanged
    * - ``image-bootstrap-certificates``
      - ``bootstrap_add_certificate()``
      - Every earlier key count through capacity, each of the runtime's

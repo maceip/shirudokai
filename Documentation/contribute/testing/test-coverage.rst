@@ -702,6 +702,14 @@ signed config image.
        renamed or opened, and the second mount is not unmounted,
        remounted or mounted over; each refusal is counted, and nothing
        reaches the namespace of ``init``
+   * - ``t6161-carried-kernel-patches``
+     - Qualification of the five carried kernel patches ``0020`` to
+       ``0024``: BTF readiness reporting, ``tpm_common_write()`` header
+       bounds and ``lsm/tpm_command`` refusals, ``security.bpf.shirudo``
+       reads without caller ``MAY_READ`` on uncached inodes, the
+       sleepable inode hooks including overlay copy-up, trusted
+       ``dentry->d_parent`` reads and ``lsm/mm_read_access`` refusals on
+       ``/proc/<pid>/`` under root
 
 ``shared`` (6)
 ~~~~~~~~~~~~~~
@@ -1343,13 +1351,13 @@ The threats are those of :doc:`/security/threat-model`.
      - ``t6001``, ``t6006``, ``t6007``, ``t6110``, ``t6111``,
        ``t6112``, ``t6114``, ``t6115``, ``t6118``, ``t6123``,
        ``t6124``, ``t6127``, ``t6129``, ``t6133``, ``t6134``,
-       ``t6135``, ``t6136``, ``t6137``
+       ``t6135``, ``t6136``, ``t6137``, ``t6161``
    * - T4 Substituting artifacts
      - ``t3001``, ``t3011``, ``t3104``, ``t3105``, ``t6117``,
        ``t6138``
    * - T5 Silent state change
      - ``t2005``, ``t4002``, ``t4003``, ``t4102``, ``t4103``,
-       ``t5007``, ``t6115``, ``t6122``, ``t6125``, ``t6128``
+       ``t5007``, ``t6115``, ``t6122``, ``t6125``, ``t6128``, ``t6161``
    * - T6 The boot window
      - ``t1006``, ``t4101``, ``t6115``, ``t6126``
    * - T7 The delivery path
