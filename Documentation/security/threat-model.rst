@@ -1977,17 +1977,22 @@ R13 Revocation reaches a target only through a config
    target that has not activated the config still trusts the key.
 
 R14 Configs roll back
-   shirudo accepts any validly signed config. A live activation cannot
-   add a key to ``.bpf`` this boot, but it can roll back every other
-   setting: repositories and their certificates, the tree subscription,
-   export endpoints, the eventlog limit and revocation records, and the
-   selection persists across reboots. The selection journal under
-   ``/var/lib/shirudo/config-update`` is not authenticated, so a change
-   to it between boots selects any config in the cache under
-   ``/var/lib/shirudo/images``, its trusted set included. The config
-   certificate itself changes only with the runtime image and a reboot.
+   Targets persist a sealed monotonic ``security.epoch`` floor at
+   ``/var/lib/shirudo/config-update/epoch`` and refuse to stage, activate
+   or boot a config image whose ``security.epoch`` is lower than the
+   floor (``freshness_verify()``, ``freshness_advance()``). Configs that
+   leave ``security.epoch`` unset (``0``) or share the same epoch can
+   still roll back among one another: a live activation cannot add a key
+   to ``.bpf`` this boot, but an equal-epoch config can roll back
+   repositories and their certificates, the tree subscription, export
+   endpoints, the eventlog limit and revocation records, and the
+   selection journal under ``/var/lib/shirudo/config-update`` is not
+   cryptographically authenticated beyond the sealed epoch floor. The
+   config certificate itself changes only with the runtime image and a
+   reboot.
    Detection: ``--expect-config-root`` with ``--expect-config-pcr``.
-   Mitigation: D2.
+   Mitigation: increment ``security.epoch`` on every config publication,
+   and D2 for journal authentication.
 
 R16 Any artifact ever signed loads at any time
    Signed upatch artifacts carry no version floor, no signature expiry
@@ -2380,9 +2385,9 @@ D1 Authenticated config PCR writers
    Restrict who extends the config PCR and bind its measurements to
    completed activations (R4).
 
-D2 Config rollback prevention
-   Refuse a config older than the one a target activated, and
-   authenticate the selection journal (R14).
+D2 Authenticated config selection journal
+   Cryptographically authenticate the selection journal beyond the sealed
+   ``security.epoch`` floor (R14).
 
 D3 The register as a systemd NvPCR
    Register the index as a systemd NvPCR, so that its name follows the

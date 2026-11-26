@@ -77,7 +77,8 @@ Exit status
      - The configuration was printed and is valid.
    * - 1
      - ``/etc/shirudo/shirudo.conf`` exists and cannot be loaded, or the
-       printed ``map_export`` or ``tls.classical_hosts`` settings are
+       printed ``map_export``, ``tls.classical_hosts`` or
+       ``security.epoch`` settings are
        invalid. In the second case the configuration is still printed.
    * - 2
      - An option or an argument: ``config`` takes none.
@@ -109,6 +110,11 @@ The command prints:
    # Eventlog cap; 0 = unlimited. When the log would exceed this,
    # the state-changing op refuses with category: eventlog_full.
    eventlog.max_bytes = 0
+
+   # Monotonic configuration epoch floor. Config activation
+   # refuses an image whose security.epoch is lower than the
+   # target's sealed floor.
+   security.epoch = 0
 
    # TPM owner-hierarchy password used at NV-index define time.
    # Empty by default (works on fresh TPMs, swtpm, most cloud VMs);
