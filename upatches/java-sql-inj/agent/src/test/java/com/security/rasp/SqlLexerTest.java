@@ -69,6 +69,14 @@ public final class SqlLexerTest {
         assertBlocked("SELECT id FROM items WHERE id = 1 /*!50000 UNION SELECT password FROM users */",
                 "mysql_conditional_comment");
 
+        // A backslash before a quote ends the string on PostgreSQL with
+        // standard_conforming_strings, SQL Server, Oracle and SQLite.
+        assertBlocked("SELECT * FROM users WHERE name = '\\' UNION SELECT password FROM users --'",
+                "comment_after_literal");
+        assertBlocked("SELECT * FROM users WHERE name = '\\' OR 1=1 --'", null);
+        assertAllowed("SELECT * FROM files WHERE path = 'C:\\\\temp\\\\a.txt'");
+        assertAllowed("SELECT * FROM users WHERE name = 'O\\'Brien'");
+
         // Stacked statements.
         assertBlocked("SELECT * FROM users WHERE id = 1; DROP TABLE users",
                 "stacked_statement");

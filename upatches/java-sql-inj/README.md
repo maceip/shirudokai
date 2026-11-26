@@ -11,6 +11,16 @@ MySQL `/*! ... */` conditional comments, stacked statements (`;`),
 `UNION [ALL] SELECT` queries, and boolean or numeric tautologies (`OR
 1=1`, `'a'='a'`).
 
+The agent does not know which database reads a statement. MySQL and
+MariaDB take `\'` in a string as an escaped quote; PostgreSQL with
+`standard_conforming_strings`, SQL Server, Oracle and SQLite end the
+string there. A statement with a backslash is read both ways and refused
+when either reading is an injection.
+
+It does not detect blind or time-based injection (`SLEEP()`,
+`pg_sleep()`), which changes no structure, MariaDB `/*M! ... */`
+comments, or PostgreSQL dollar-quoted strings (`$$...$$`).
+
 Set `-Dshirudo.sql.mode=observe` to log and count structural SQL
 injection matches without throwing `SecurityException`; the default mode
 is `enforce`, which throws `SecurityException` before the statement
