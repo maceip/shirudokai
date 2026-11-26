@@ -18,7 +18,7 @@ struct {
 	__uint(map_flags, BPF_F_NO_PREALLOC);
 	__type(key, int);
 	__type(value, struct seal_scratch);
-} seal_scratch_map SEC(".maps");
+} shirudo_seal_scratch SEC(".maps");
 
 /*
  * The label of an inode as the last hook with a handle on it read it: a
@@ -36,7 +36,7 @@ struct {
 	__uint(map_flags, BPF_F_NO_PREALLOC);
 	__type(key, int);
 	__type(value, struct seal_dir_mark);
-} seal_dir_marks SEC(".maps");
+} shirudo_dir_marks SEC(".maps");
 
 int bpf_get_dentry_xattr(struct dentry *dentry, const char *name__str,
 			 struct bpf_dynptr *value_p) __ksym;
@@ -73,7 +73,7 @@ static __always_inline bool seal_task_authorized(void)
 
 static __always_inline bool seal_marked(struct inode *inode)
 {
-	return inode && bpf_inode_storage_get(&seal_dir_marks, inode, NULL, 0);
+	return inode && bpf_inode_storage_get(&shirudo_dir_marks, inode, NULL, 0);
 }
 
 /*
@@ -144,7 +144,7 @@ static __always_inline bool seal_is_ancestor(const char *name)
 static __always_inline struct seal_scratch *
 seal_scratch_get(struct task_struct *task)
 {
-	return bpf_task_storage_get(&seal_scratch_map, task, NULL,
+	return bpf_task_storage_get(&shirudo_seal_scratch, task, NULL,
 				    BPF_LOCAL_STORAGE_GET_F_CREATE);
 }
 
@@ -166,10 +166,10 @@ static __always_inline void seal_mark(struct inode *inode, const char *label,
 	if (len < 0 && len != -ENODATA && len != -EOPNOTSUPP)
 		return;
 	if (len != LABEL_LEN) {
-		bpf_inode_storage_delete(&seal_dir_marks, inode);
+		bpf_inode_storage_delete(&shirudo_dir_marks, inode);
 		return;
 	}
-	m = bpf_inode_storage_get(&seal_dir_marks, inode, NULL,
+	m = bpf_inode_storage_get(&shirudo_dir_marks, inode, NULL,
 				  BPF_LOCAL_STORAGE_GET_F_CREATE);
 	if (m)
 		__builtin_memcpy(m->label, label, LABEL_LEN);
@@ -452,13 +452,13 @@ int BPF_PROG(shirudo_seal_inode_init_security, struct inode *inode,
 
 	if (!xattrs)
 		return 0;
-	m = bpf_inode_storage_get(&seal_dir_marks, dir, NULL, 0);
+	m = bpf_inode_storage_get(&shirudo_dir_marks, dir, NULL, 0);
 	if (!m)
 		return 0;
 	bpf_dynptr_from_mem(m->label, LABEL_LEN, 0, &dp);
 	if (bpf_inode_init_xattr(xattrs, xattr_count, XATTR_SEAL, &dp))
 		return -EACCES;
-	child = bpf_inode_storage_get(&seal_dir_marks, inode, NULL,
+	child = bpf_inode_storage_get(&shirudo_dir_marks, inode, NULL,
 				      BPF_LOCAL_STORAGE_GET_F_CREATE);
 	if (child)
 		__builtin_memcpy(child->label, m->label, LABEL_LEN);

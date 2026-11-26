@@ -98,7 +98,7 @@ The objects share eight maps, which ``init`` hands from ``bpf2`` to
 ``shirudo_roots``, which an authorized task writes before each config
 mapping. ``bpf2`` also keeps ``shirudo_mnt_rec`` for the bpffs
 mount it records, and ``seal`` keeps its scratch buffer and
-``seal_dir_marks``, the inode storage of its marks on files and
+``shirudo_dir_marks``, the inode storage of its marks on files and
 directories.
 
 A map no BPF program ever writes, such as ``shirudo_bpffs_sb``, is

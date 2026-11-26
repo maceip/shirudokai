@@ -513,7 +513,7 @@ static int attach_seal(struct bpf_object *policy, struct bpf_object **obj_out,
 	if (!err) {
 		struct bpf_map *scratch;
 
-		scratch = bpf_object__find_map_by_name(obj, "seal_scratch_map");
+		scratch = bpf_object__find_map_by_name(obj, "shirudo_seal_scratch");
 		err = scratch ? bpf_map_freeze(bpf_map__fd(scratch)) : -ENOENT;
 	}
 	if (err) {
