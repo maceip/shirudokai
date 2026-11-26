@@ -12,8 +12,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
+#include <shirudo/byteorder.h>
 #include <shirudo/misc.h>
 #include <shirudo/overflow.h>
 #include <shirudo/string.h>
@@ -196,6 +198,19 @@ int keys_cert_read(const struct trusted_cert *c,
 	return ret ? ret : cert_read_der(der, len, cert);
 }
 
+int cert_valid_at(const struct cert *c, __s64 unix_sec)
+{
+	__s64 nb = 0, na = 0;
+	int ret;
+
+	ret = cert_validity_window(c, &nb, &na);
+	if (ret)
+		return ret;
+	if (unix_sec < nb || unix_sec > na)
+		return -EKEYEXPIRED;
+	return 0;
+}
+
 /* The certificate at path, its digests, and its bytes kept for the set. */
 static int keys_take_file(const char *path, __u8 sha256[32],
 			  __u8 fingerprint[32])
@@ -280,6 +295,50 @@ int keys_vouch_payload(const __u8 *der, size_t der_sz,
 	return 0;
 }
 
+int keys_vouch_payload_v2(const __u8 *der, size_t der_sz, __s64 not_after,
+			  __u8 **out, size_t *out_sz)
+{
+	size_t n;
+	__u8 *buf;
+
+	*out = NULL;
+	*out_sz = 0;
+	if (!der || !der_sz || not_after <= 0)
+		return -EINVAL;
+	n = size_add(KEYS_VOUCH_V2_HDR_LEN, der_sz);
+	buf = xmalloc(n);
+	if (!buf)
+		return -ENOMEM;
+	memcpy(buf, KEYS_VOUCH_V2_PREFIX, sizeof(KEYS_VOUCH_V2_PREFIX));
+	put_be64(buf + sizeof(KEYS_VOUCH_V2_PREFIX), (__u64)not_after);
+	memcpy(buf + KEYS_VOUCH_V2_HDR_LEN, der, der_sz);
+	*out = buf;
+	*out_sz = n;
+	return 0;
+}
+
+int keys_vouch_encode_v2(__s64 not_after, const __u8 *cms, size_t cms_sz,
+			 __u8 **out, size_t *out_sz)
+{
+	size_t n;
+	__u8 *buf;
+
+	*out = NULL;
+	*out_sz = 0;
+	if (!cms || !cms_sz || not_after <= 0)
+		return -EINVAL;
+	n = size_add(KEYS_VOUCH_V2_HDR_LEN, cms_sz);
+	buf = xmalloc(n);
+	if (!buf)
+		return -ENOMEM;
+	memcpy(buf, KEYS_VOUCH_V2_PREFIX, sizeof(KEYS_VOUCH_V2_PREFIX));
+	put_be64(buf + sizeof(KEYS_VOUCH_V2_PREFIX), (__u64)not_after);
+	memcpy(buf + KEYS_VOUCH_V2_HDR_LEN, cms, cms_sz);
+	*out = buf;
+	*out_sz = n;
+	return 0;
+}
+
 int keys_verify_signature(const struct trusted_set *set,
 			  const __u8 *payload, size_t payload_sz,
 			  const __u8 *sig, size_t sig_sz,
@@ -305,6 +364,85 @@ int keys_verify_signature(const struct trusted_set *set,
 	return -EKEYREJECTED;
 }
 
+int keys_verify_signature_at(const struct trusted_set *set,
+			     const __u8 *payload, size_t payload_sz,
+			     const __u8 *sig, size_t sig_sz,
+			     __s64 unix_sec, __u8 signer[32])
+{
+	bool expired = false;
+	size_t i;
+
+	for (i = 0; i < set->n; i++) {
+		struct cert cert = {};
+		int ret, valid;
+
+		ret = keys_cert_read(&set->certs[i], &cert);
+		if (ret)
+			return ret;
+		valid = cert_valid_at(&cert, unix_sec);
+		ret = verify_detached(payload, payload_sz, sig, sig_sz, &cert);
+		cert_free(&cert);
+		if (!ret) {
+			if (valid) {
+				expired = true;
+				continue;
+			}
+			if (signer)
+				memcpy(signer, set->certs[i].fingerprint, 32);
+			return 0;
+		}
+	}
+	return expired ? -EKEYEXPIRED : -EKEYREJECTED;
+}
+
+static bool vouch_is_v2_prefix(const __u8 *sig, size_t sig_sz)
+{
+	return sig_sz >= sizeof(KEYS_VOUCH_V2_PREFIX) &&
+	       !memcmp(sig, KEYS_VOUCH_V2_PREFIX,
+		       sizeof(KEYS_VOUCH_V2_PREFIX));
+}
+
+int keys_verify_vouch_at(const struct trusted_set *set,
+			 const __u8 *der, size_t der_sz,
+			 const __u8 *sig, size_t sig_sz,
+			 __s64 unix_sec, __u8 voucher[32])
+{
+	size_t payload_sz = 0;
+	__u8 *payload = NULL;
+	int ret;
+
+	if (vouch_is_v2_prefix(sig, sig_sz)) {
+		__u64 raw_exp;
+		__s64 not_after;
+
+		if (sig_sz <= KEYS_VOUCH_V2_HDR_LEN)
+			return -EKEYREJECTED;
+		raw_exp = get_be64(sig + sizeof(KEYS_VOUCH_V2_PREFIX));
+		if (!raw_exp || raw_exp > (__u64)INT64_MAX)
+			return -EKEYREJECTED;
+		not_after = (__s64)raw_exp;
+		ret = keys_vouch_payload_v2(der, der_sz, not_after, &payload,
+					    &payload_sz);
+		if (ret)
+			return ret;
+		ret = keys_verify_signature_at(set, payload, payload_sz,
+					       sig + KEYS_VOUCH_V2_HDR_LEN,
+					       sig_sz - KEYS_VOUCH_V2_HDR_LEN,
+					       unix_sec, voucher);
+		xfree(payload, payload_sz);
+		if (ret)
+			return ret;
+		return unix_sec <= not_after ? 0 : -EKEYEXPIRED;
+	}
+	ret = keys_vouch_payload(der, der_sz, &payload, &payload_sz);
+	if (ret)
+		return ret;
+	ret = keys_verify_signature_at(set, payload, payload_sz, sig, sig_sz,
+				       unix_sec, voucher);
+	xfree(payload, payload_sz);
+	return ret;
+}
+
 int keys_verify_vouch(const struct trusted_set *set,
 		      const __u8 *der, size_t der_sz,
 		      const __u8 *sig, size_t sig_sz,
@@ -314,6 +452,9 @@ int keys_verify_vouch(const struct trusted_set *set,
 	__u8 *payload = NULL;
 	int ret;
 
+	if (vouch_is_v2_prefix(sig, sig_sz))
+		return keys_verify_vouch_at(set, der, der_sz, sig, sig_sz,
+					    (__s64)time(NULL), voucher);
 	ret = keys_vouch_payload(der, der_sz, &payload, &payload_sz);
 	if (ret)
 		return ret;
@@ -533,7 +674,7 @@ static int scan_trusted(const char *keys_dir, const char *revoked_dir,
  * trusted directory's descriptor outlives into admit_vouched: the
  * caller closes it after.
  */
-static int scan_trusted_at(int keys_fd, const char *display,
+static int scan_trusted_at(int keys_fd, int revoked_fd, const char *display,
 			   struct keys_candidate *cand, size_t *n_cand,
 			   int *trusted_fd)
 {
@@ -572,6 +713,11 @@ static int scan_trusted_at(int keys_fd, const char *display,
 			xfree(c->der, c->der_sz);
 			c->der = NULL;
 			break;
+		}
+		if (keys_is_revoked_at(revoked_fd, c->fingerprint)) {
+			xfree(c->der, c->der_sz);
+			c->der = NULL;
+			continue;
 		}
 		(*n_cand)++;
 	}
@@ -628,28 +774,30 @@ sort:
 /*
  * A config image's set: the primary and every vouched certificate under
  * keys/trusted, less what keys/revoked names, all read through the
- * image's descriptor. Historical vouches count before revocation, so a
- * revoked certificate's vouch for another still admits it.
+ * image's descriptor. Revocation applies before vouches are evaluated so
+ * a revoked signer's historical vouches cannot admit dependent keys.
  */
 static int load_set_at(const char *primary, int keys_fd, const char *display,
 		       bool with_trusted, struct trusted_set *set)
 {
 	struct keys_candidate *cand = NULL;
 	__u8 sha256[32], fingerprint[32];
-	int revoked_fd, trusted_fd = -1;
-	size_t n_cand = 0, i, kept = 0;
+	int revoked_fd = -1, trusted_fd = -1;
+	size_t n_cand = 0;
 	int ret;
 
 	memset(set, 0, sizeof(*set));
 	ret = keys_take_file(primary, sha256, fingerprint);
 	if (ret)
 		return ret;
-	ret = set_add(set, primary, sha256, fingerprint, NULL, NULL, 0);
-	if (ret)
-		return ret;
 	if (keys_fd == -ENOENT)
-		return 0;
+		return set_add(set, primary, sha256, fingerprint, NULL, NULL, 0);
 	revoked_fd = open_beneath(keys_fd, "revoked", O_RDONLY | O_DIRECTORY);
+	if (!keys_is_revoked_at(revoked_fd, fingerprint)) {
+		ret = set_add(set, primary, sha256, fingerprint, NULL, NULL, 0);
+		if (ret)
+			goto out;
+	}
 	set->n_revoked = count_der_at(revoked_fd);
 	if (with_trusted) {
 		cand = xcalloc(KEYS_SCAN_MAX, sizeof(*cand));
@@ -657,18 +805,14 @@ static int load_set_at(const char *primary, int keys_fd, const char *display,
 			ret = -ENOMEM;
 			goto out;
 		}
-		ret = scan_trusted_at(keys_fd, display, cand, &n_cand,
-				      &trusted_fd);
+		ret = scan_trusted_at(keys_fd, revoked_fd, display, cand,
+				      &n_cand, &trusted_fd);
 		if (!ret)
 			ret = admit_vouched(set, cand, n_cand);
 		candidates_free(cand, n_cand);
 		if (ret)
 			goto out;
 	}
-	for (i = 0; i < set->n; i++)
-		if (!keys_is_revoked_at(revoked_fd, set->certs[i].fingerprint))
-			set->certs[kept++] = set->certs[i];
-	set->n = kept;
 	if (set->n > 1)
 		qsort(set->certs, set->n, sizeof(set->certs[0]), cert_cmp);
 out:

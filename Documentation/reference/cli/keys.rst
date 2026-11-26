@@ -8,12 +8,13 @@
 shirudo keys
 ============
 
-Show the key material this host holds, and vouch for or add a signing
-certificate.
+Show the key material this host holds, vouch for or add a signing
+certificate, and rotate an operator signing keypair.
 
-Runs on: any host for the display, the operator host for ``vouch``, and
-only a host without an active config image for ``add``. Requires: root on a target,
-with the runtime binary. Changes measured state: no.
+Runs on: any host for the display, the operator host for ``vouch`` and
+``rotate``, and only a host without an active config image for ``add``.
+Requires: root on a target, with the runtime binary. Changes measured
+state: no.
 
 Usage
 -----
@@ -26,6 +27,9 @@ Usage
    shirudo keys vouch <certificate> [-o <vouch> | --output <vouch>]
                       [--keys-dir <dir> | --keys-dir=<dir>]
                       [--key <signing-key>] [--cert <certificate>]
+                      [--expires-days <n>]
+   shirudo keys rotate --old-keys-dir <dir> --keys-dir <new-dir>
+                       [--expires-days <n>]
    shirudo keys revoke
    shirudo keys --list-cmds
 
@@ -85,10 +89,25 @@ keys vouch
 for another certificate with this operator's key:
 
 #. It resolves the key and certificate like :doc:`build`.
-#. It refuses a certificate that is not ML-DSA-87 and the operator's own
-   certificate.
+#. It refuses a certificate that is not ML-DSA-87 or is outside its
+   validity window, the operator's own certificate, and a signing
+   certificate listed under ``<dir>/revoked``.
+#. With ``--expires-days <n>``, it writes a bounded v2 vouch
+   (``shirudo-key-vouch-v2``) expiring ``<n>`` days after signing.
 #. It writes the vouch to ``-o``, else ``<certificate>.vouch``, and prints
    the vouched certificate's fingerprint.
+
+keys rotate
+-----------
+
+``keys rotate`` executes the ``shirudo-build`` helper to generate a
+replacement ML-DSA-87 signing keypair and X.509 certificate under
+``--keys-dir <new-dir>`` and sign a bounded v2 vouch
+(``<new-dir>/cert.der.vouch``) with the retiring key in
+``--old-keys-dir <dir>``. It refuses on an enforced target, when
+``<new-dir>`` already holds key material, or when the retiring
+certificate is revoked or outside its validity window, and prints the new
+certificate's fingerprint.
 
 keys revoke
 -----------
@@ -120,7 +139,18 @@ Options
    * - ``--keys-dir``
      - ``<dir>``, next argument or after ``=``
      - ``$SHIRUDO_KEYS_DIR``, else ``/var/lib/shirudo/keys``
-     - Display, ``add`` and ``vouch``: the keys directory.
+     - Display, ``add`` and ``vouch``: the keys directory. ``rotate``:
+       new directory for the replacement keypair and vouch (required).
+   * - ``--old-keys-dir``
+     - ``<dir>``, next argument or after ``=``
+     - none, required
+     - ``rotate``: directory holding the retiring ``signing_key.pem`` and
+       ``cert.der``.
+   * - ``--expires-days``
+     - ``<n>``, 1 to 36500
+     - unbounded for ``vouch``; ``90`` for ``rotate``
+     - ``vouch`` and ``rotate``: bound the vouch to expire ``<n>`` days
+       after signing.
    * - ``--json``
      - none
      - off
@@ -149,10 +179,7 @@ Options
    * - ``--list-cmds``
      - none
      -
-     - Print ``add``, ``revoke`` and ``vouch``, one per line.
-
-``vouch`` takes ``-o``, ``--output``, ``--key`` and ``--cert`` with the
-value as the next argument only.
+     - Print ``add``, ``revoke``, ``rotate`` and ``vouch``, one per line.
 
 Exit status
 -----------
@@ -166,14 +193,16 @@ Exit status
    * - 0
      - Display: key material was found and the keyring is consistent.
        ``add``: the certificate is trusted. ``vouch``: the vouch was
-       written.
+       written. ``rotate``: the new keypair and vouch were written.
    * - 1
      - Display: no key material on the host, the certificate or a keyring
        cannot be read, the signing key is not the certificate's, or a
        keyring ``init`` froze is gone. ``add``: refused or failed,
-       including on a host with an active config image. ``vouch``: the
-       key is unusable, the certificate cannot be read, is not ML-DSA-87
-       or is the signing key's own, or signing or writing failed.
+       including on a host with an active config image. ``vouch`` or
+       ``rotate``: the key is unusable or revoked, a certificate cannot
+       be read, is outside its validity window, is not ML-DSA-87 or is
+       the signing key's own, the destination directory already holds key
+       material, or signing or writing failed.
        ``revoke``: always.
    * - 2
      - A usage error: an unknown option or subcommand, an option given
@@ -181,7 +210,7 @@ Exit status
        ``--vouch``, or an extra argument. Or an unusable keys directory
        path.
    * - 127
-     - ``vouch``: ``shirudo`` cannot execute the helper.
+     - ``vouch`` or ``rotate``: ``shirudo`` cannot execute the helper.
 
 Files and environment
 ---------------------
