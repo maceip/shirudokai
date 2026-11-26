@@ -265,6 +265,7 @@ UTIL_SRCS := \
     util/hex.c \
     util/string.c \
     util/bpm_tree.c \
+    util/bpm_feed.c \
     util/bpm_tree_overlap.c \
     util/bpm_tree_state.c \
     util/bpm_oci.c \
@@ -1215,6 +1216,8 @@ $(FUZZ_OUT)/fuzz-oci-manifest: testing/fuzz/fuzz-oci-manifest.c \
                                 $(FUZZ_BASE) $(FUZZ_OCI)
 $(FUZZ_OUT)/fuzz-bpm-index: testing/fuzz/fuzz-bpm-index.c \
                              $(FUZZ_BASE) $(FUZZ_PACKAGE)
+$(FUZZ_OUT)/fuzz-bpm-feed: testing/fuzz/fuzz-bpm-feed.c $(FUZZ_BASE) \
+                            util/bpm_feed.c $(FUZZ_PACKAGE)
 $(FUZZ_OUT)/fuzz-tree: testing/fuzz/fuzz-tree.c $(FUZZ_BASE) \
                         util/bpm_tree.c util/chain_history.c \
                         util/upatch.c $(FUZZ_OCI)
@@ -1336,6 +1339,7 @@ $(FUZZ_OUT)/fuzz-upatch-info: FUZZ_LIBS += $(TSS2_LIBS) $(LIBBPF_A) \
                                            $(LIBELF_LIBS) $(LUAJIT_LIBS)
 $(FUZZ_OUT)/fuzz-bpm-info: testing/fuzz/fuzz-bpm-info.c $(FUZZ_BASE) \
                            testing/fuzz/output.c builtin-bpm.c builtin.h \
+                           util/bpm_feed.c \
                            $(FUZZ_PACKAGE) util/bpm_source_config.c \
                            util/bpm_state.c util/bpm_tree_state.c \
                            util/chain.c util/eventlog.c util/help.c \

@@ -8,8 +8,8 @@
 # `shirudo bpm tree append` takes a package by.
 #
 #   tools/put-shields --version <version> [--keys-dir <dir>] [--new-index]
-#                     [--catalog <file>] oci://<registry>/<namespace>
-#                     [<beefile>|<dir>...]
+#                     [--catalog <file>] [--feed <file>]
+#                     oci://<registry>/<namespace> [<beefile>|<dir>...]
 #
 # A shield is a package whose Beefile has an [upatches.tree] entry. The
 # Beefiles are the ones given and, for each directory given, every
@@ -47,6 +47,7 @@ keys=${SHIRUDO_KEYS_DIR:-}
 version=
 new_index=
 catalog=
+feed=
 work=
 
 die()
@@ -59,7 +60,7 @@ usage()
 {
 	printf '%s\n' \
 		'usage: put-shields --version <version> [--keys-dir <dir>] [--new-index]' \
-		'                   [--catalog <file>] oci://<registry>/<namespace> [<beefile>|<dir>...]' >&2
+		'                   [--catalog <file>] [--feed <file>] oci://<registry>/<namespace> [<beefile>|<dir>...]' >&2
 	exit 2
 }
 
@@ -79,10 +80,35 @@ write_catalog()
 	} >"$catalog" || die "cannot write $catalog"
 }
 
+# Canonical curated CVE shield feed JSON for --feed.
+write_feed()
+{
+	[ -n "$feed" ] && [ -s "$work/pushed" ] || return 0
+	feed_id=${namespace#oci://*/}
+	generated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	python3 - "$feed_id" "$generated_at" "$work/feed_entries" "$feed" <<-'PY' || die "cannot write $feed"
+	import json, pathlib, sys
+
+	feed_id, generated_at, entries_path, out_path = sys.argv[1:]
+	p = pathlib.Path(entries_path)
+	entries = [json.loads(line) for line in p.read_text().splitlines() if line] if p.exists() else []
+	doc = {
+	    "schema": 1,
+	    "feed_id": feed_id,
+	    "generated_at": generated_at,
+	    "entries": entries,
+	}
+	pathlib.Path(out_path).write_text(
+	    json.dumps(doc, ensure_ascii=False, separators=(",", ":")) + "\n"
+	)
+	PY
+}
+
 # A build or a push failed: what is pushed stays pushed, so it is listed.
 fail()
 {
 	write_catalog
+	write_feed
 	die "$1"
 }
 
@@ -121,6 +147,11 @@ while [ $# -gt 0 ]; do
 	--catalog)
 		[ $# -ge 2 ] || usage
 		catalog=$2
+		shift 2
+		;;
+	--feed)
+		[ $# -ge 2 ] || usage
+		feed=$2
 		shift 2
 		;;
 	-*) usage ;;
@@ -195,8 +226,12 @@ while read -r beefile; do
 	set -- $pushed
 	printf 'shirudo bpm tree append %s --package-digest %s oci://<registry>/<tree> --tree-id <tree-id>\n' \
 		"$1" "$2"
+	printf '%s\n' "$1" >>"$work/pushed"
 	python3 "$repo/tools/shield-entries.py" "$beefile" "$1" "$2" "$version" \
 		>>"$work/entries" || fail "cannot read the tree entries of $beefile"
+	python3 "$repo/tools/shield-entries.py" --feed "$beefile" "$1" "$2" "$version" \
+		>>"$work/feed_entries" || fail "cannot read the feed entries of $beefile"
 	rm -f "$work/out/$bee"
 done <"$work/beefiles"
 write_catalog
+write_feed

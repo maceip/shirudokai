@@ -1631,7 +1631,8 @@ a proof covers.
      - Mostly calls into the kernel, which CBMC has no body for: files,
        extended attributes, mounts, the device mapper, keyrings,
        ``bpf()``, netlink, ``/proc`` and the process's own limits
-   * - :src:`util/crypto_openssl.c`, :src:`util/curl.c`,
+   * - :src:`util/bpm_feed.c`, :src:`util/crypto_openssl.c`,
+       :src:`util/curl.c`,
        :src:`util/elf_target.c`, :src:`util/kernel_abi.c`,
        :src:`util/nv_writer.c`, :src:`util/sign.c`,
        :src:`util/tls_openssl.c`, :src:`util/tpm.c`,
