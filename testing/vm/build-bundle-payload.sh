@@ -697,8 +697,8 @@ build_obs_fixture()
 	mkdir -p "$source_dir/decoders"
 	for source in \
 		kernel-obs.bpf.c obs_common.h obs_table.h obs_priv.bpf.c \
-		obs_exec.bpf.c obs_net.bpf.c obs_dns.bpf.c obs_file.bpf.c \
-		gen_watch.py gen_file_watch.py file-watch.list; do
+		obs_exec.bpf.c obs_net.bpf.c obs_dns_parse.h obs_dns.bpf.c \
+		obs_file.bpf.c gen_watch.py gen_file_watch.py file-watch.list; do
 		cp "$REPO_ROOT/upatches/kernel-obs/$source" "$source_dir/$source"
 	done
 	cp "$REPO_ROOT/upatches/kernel-obs/decoders/"*.lua "$source_dir/decoders/"
