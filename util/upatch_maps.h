@@ -142,4 +142,39 @@ char *upatch_map_format_percpu_sum(const struct map_view *v,
 int prog_test_run(int prog_fd, void *ctx, __u32 ctx_sz,
 		  __u32 *retval);
 
+#define RINGBUF_MAX_RECORDS_DEFAULT	256u
+#define RINGBUF_MAX_RECORDS_LIMIT	65536u
+#define RINGBUF_MAX_TIMEOUT_MS		30000u
+#define RINGBUF_MAX_SAMPLE_BYTES	(1024u * 1024u)
+
+struct ringbuf_record_spec {
+	const char		*upatch;
+	const char		*map;
+	const struct btf	*btf;
+	__u32			value_type_id;
+};
+
+struct ringbuf_batch {
+	char	**lines;
+	size_t	n_records;
+	size_t	cap;
+	__u32	max_records;
+	bool	json;
+	bool	truncated;
+	int	err;
+};
+
+void ringbuf_batch_free(struct ringbuf_batch *batch);
+__u32 ringbuf_resolve_btf_value_type(const struct btf *btf, const char *map,
+				     __u32 info_value_type_id);
+int  ringbuf_format_record(const struct ringbuf_record_spec *spec,
+			   const void *data, __u32 size, bool json,
+			   char **out);
+int  ringbuf_consume_record(const struct ringbuf_record_spec *spec,
+			    const void *data, __u32 size,
+			    struct ringbuf_batch *batch);
+int  upatch_ringbuf_read(const char *upatch, const char *map,
+			 __u32 max_records, __u32 timeout_ms, bool json,
+			 struct ringbuf_batch *out);
+
 #endif /* SHIRUDO_UTIL_UPATCH_MAPS_H */

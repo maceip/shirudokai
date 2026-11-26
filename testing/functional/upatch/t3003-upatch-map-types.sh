@@ -23,7 +23,8 @@ test_expect_success 'plain array maps are still generic-readable' '
 '
 
 test_expect_success 'existing skipped map type names remain stable' '
-	[ "$("$H" ringbuf-name)" = ringbuf ]
+	[ "$("$H" ringbuf-name)" = ringbuf ] &&
+	"$H" ringbuf-skip | grep -q "shirudo upatch events"
 '
 
 test_done
