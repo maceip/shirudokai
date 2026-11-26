@@ -182,8 +182,9 @@ static int validate_settings(int root_fd)
 		while (end > p && (end[-1] == ' ' || end[-1] == '\t'))
 			end--;
 		*end = 0;
-		if (!strcmp(p, "eventlog.max_bytes")) {
-			__u64 bytes;
+		if (!strcmp(p, "eventlog.max_bytes") ||
+		    !strcmp(p, "security.epoch")) {
+			__u64 number;
 
 			while (*value == ' ' || *value == '\t')
 				value++;
@@ -192,7 +193,7 @@ static int validate_settings(int root_fd)
 					       end[-1] == '\t' || end[-1] == '\r' ||
 			       end[-1] == '\n'))
 				end--;
-			if (parse_u64(value, end - value, ~0ULL, &bytes)) {
+			if (parse_u64(value, end - value, ~0ULL, &number)) {
 				ret = -EINVAL;
 				break;
 			}
@@ -225,9 +226,26 @@ int image_config_validate(int root_fd)
 	if (!ret) {
 		ret = config_load_root(&candidate, root_fd);
 		if (!ret && (!candidate.map_export_valid ||
-			     !candidate.tls_classical_hosts_valid))
+			     !candidate.tls_classical_hosts_valid ||
+			     !candidate.security_epoch_valid))
 			ret = -EINVAL;
 	}
+	return ret;
+}
+
+int image_config_read_epoch(int root_fd, __u64 *epoch)
+{
+	struct config candidate __cleanup(config_clear);
+	int ret;
+
+	if (!epoch)
+		return -EINVAL;
+	*epoch = 0;
+	ret = config_load_root(&candidate, root_fd);
+	if (!ret && !candidate.security_epoch_valid)
+		ret = -EINVAL;
+	if (!ret)
+		*epoch = candidate.security_epoch;
 	return ret;
 }
 
@@ -247,7 +265,8 @@ int image_config_set(const struct config *bootstrap,
 			return -errno;
 		ret = config_load_root(&candidate, fd);
 		if (ret || !candidate.map_export_valid ||
-		    !candidate.tls_classical_hosts_valid) {
+		    !candidate.tls_classical_hosts_valid ||
+		    !candidate.security_epoch_valid) {
 			close(fd);
 			return ret ? ret : -EINVAL;
 		}

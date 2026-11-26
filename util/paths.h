@@ -128,6 +128,7 @@
 #define CONFIG_IMAGE_DIR		RUN_DIR "/config"
 #define CONFIG_CANDIDATE_DIR	RUN_DIR "/config-candidate"
 #define CONFIG_UPDATE_DIR	VAR_LIB "/config-update"
+#define FRESHNESS_EPOCH_PATH	CONFIG_UPDATE_DIR "/epoch"
 #define IMAGE_CACHE_DIR		VAR_LIB "/images"
 #define RUNTIME_CONF_PATH \
 	RUNTIME_DIR "/etc/shirudo/shirudo.conf"
