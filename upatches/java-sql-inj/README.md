@@ -1,11 +1,20 @@
 # java-sql-inj
 
 The `java-sql-inj` package installs the `java-sql-inj` Java upatch: a
-Byte Buddy agent that instruments every JDBC `Statement` and blocks an
-`execute`, `executeQuery` or `executeUpdate` whose SQL carries a
-structural SQL injection, a quote that ends a literal before a comment
-or a tautology such as `OR 1=1`. A blocked statement throws a
-`SecurityException` in the application before it reaches the database.
+Byte Buddy agent that instruments every JDBC `Statement` and inspects
+`execute`, `executeQuery` and `executeUpdate` queries with `SqlLexer`, a
+deterministic single-pass state-machine SQL lexer with no regular
+expressions or backtracking. It detects structural SQL injection across
+single-quoted (`'...'`), double-quoted (`"..."`) and backtick (`` `...` ``)
+tokens, escaped quotes (`''`, `\'`), `--`, `#` and `/*...*/` comments,
+MySQL `/*! ... */` conditional comments, stacked statements (`;`),
+`UNION [ALL] SELECT` queries, and boolean or numeric tautologies (`OR
+1=1`, `'a'='a'`).
+
+Set `-Dshirudo.sql.mode=observe` to log and count structural SQL
+injection matches without throwing `SecurityException`; the default mode
+is `enforce`, which throws `SecurityException` before the statement
+reaches the database.
 
 The package also ships `vulnerable-app.jar`, a small application that
 concatenates its argument into a query against an in-memory H2
@@ -18,10 +27,20 @@ systemd's user managers read, and only after it is loaded. Root can
 start a JVM without it. It is a mitigation inside the application, not
 a boundary against root; see `Documentation/upatches/write/java-agents.rst`.
 
-## Build
+## Build and test
 
-The build needs Maven and a JDK of release 11 or newer, and fetches
-Byte Buddy and H2 on first use:
+`SqlLexer` and `SqlLexerTest` use only the JDK standard library and run
+directly without Maven:
+
+```sh
+javac -d /tmp/sqli-classes \
+	upatches/java-sql-inj/agent/src/main/java/com/security/rasp/SqlLexer.java \
+	upatches/java-sql-inj/agent/src/test/java/com/security/rasp/SqlLexerTest.java
+java -cp /tmp/sqli-classes com.security.rasp.SqlLexerTest
+```
+
+Building the full Byte Buddy agent and H2 demo application needs Maven
+and a JDK of release 11 or newer:
 
 ```sh
 upatches/java-sql-inj/build.sh 0.1.0 --keys-dir <keys>
@@ -39,13 +58,6 @@ with a benign one, which runs:
 sudo shirudo bpm install <repository>/java-sql-inj
 sql_inj_vuln
 sql_inj_vuln admin
-```
-
-The blocked run prints:
-
-```text
-[RASP ALERT] SQL Injection Attempt Detected: SELECT * FROM users WHERE username = 'admin' OR 1=1'
-[App] RASP safely aborted execution: Request blocked by RASP: Malicious SQL patterns detected.
 ```
 
 `sudo shirudo bpm uninstall java-sql-inj` removes the agent; JVMs
