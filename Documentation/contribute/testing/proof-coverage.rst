@@ -1632,7 +1632,7 @@ a proof covers.
        extended attributes, mounts, the device mapper, keyrings,
        ``bpf()``, netlink, ``/proc`` and the process's own limits
    * - :src:`util/bpm_feed.c`, :src:`util/crypto_openssl.c`,
-       :src:`util/curl.c`,
+       :src:`util/curl.c`, :src:`util/ek_cloud.c`,
        :src:`util/elf_target.c`, :src:`util/kernel_abi.c`,
        :src:`util/nv_writer.c`, :src:`util/sign.c`,
        :src:`util/tls_openssl.c`, :src:`util/tpm.c`,
@@ -1747,8 +1747,9 @@ proof.
 Of the other files the proofs read in part, these functions have no
 proof: ``dns_name_valid()`` of :src:`util/string.c` at its limits of a
 63-byte label and a 253-byte name, as names that long take CBMC past
-8 GB; ``tpm_public_marshal()`` and ``tpm_writer_public()`` of
-:src:`util/tpm_wire.c`, the first of which the ``tpm-wire`` fuzz target
+8 GB; ``tpm_public_unmarshal()``, ``tpm_public_marshal()`` and
+``tpm_writer_public()`` of
+:src:`util/tpm_wire.c`, the second of which the ``tpm-wire`` fuzz target
 round-trips; ``upatch_rodata_symbol_range()`` of
 :src:`util/upatch_rodata.c`, the range of ``.rodata`` the builder
 rewrites; ``chain_init_event()`` of :src:`util/chain.c` on a set that is

@@ -1106,7 +1106,7 @@ The unit suites in :src:`testing/unit/` cover 46 of the modules in
 ``bpm_package``, ``bpm_state``,
 ``bpm_tree``, ``bpm_tree_overlap``, ``bpm_tree_state``, ``chain``,
 ``chain_history``, ``conditions``, ``config_update``, ``crypto_openssl``,
-``curl``, ``eventlog``, ``format``, ``hex``, ``identity``,
+``curl``, ``ek_cloud``, ``eventlog``, ``format``, ``hex``, ``identity``,
 ``image_bootstrap``, ``io``,
 ``java_agent``, ``json``, ``kconfig``, ``kernel_abi``,
 ``keepalive``, ``keepalive_quote``, ``kernel_build_id``,
@@ -1159,6 +1159,9 @@ the functional tests run.
      - The config activation history in the target's state
    * - ``decoder``
      - Map data a Lua decoder reads
+   * - ``ek-pub``
+     - Cloud vTPM endorsement public keys (PEM SPKI, DER SPKI, raw and
+       base64 ``TPM2B_PUBLIC``) and presented-key template matching
    * - ``elf``
      - The build ID of a uprobe target binary
    * - ``eventlog``

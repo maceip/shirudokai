@@ -25,6 +25,7 @@
 #include "util/chain.h"
 #include "util/crypto.h"
 #include "util/config_measure.h"
+#include "util/ek_cloud.h"
 #include "util/eventlog.h"
 #include "util/image_runtime.h"
 #include "util/help.h"
@@ -47,6 +48,7 @@ static const struct help_item attest_subcmds[] = {
 	{ "verify",    "check an evidence document against the expected state" },
 	{ "predict",   "compute the register value a set of upatches yields" },
 	{ "challenge", "make a credential challenge for a target's attestation key" },
+	{ "ek-name",   "compute the TPM name of a cloud endorsement public key" },
 };
 
 enum evidence_opt {
@@ -85,6 +87,7 @@ enum verify_opt {
 	VERIFY_STRICT_ANCHOR,
 	VERIFY_EXPECT_CREDENTIAL,
 	VERIFY_EK_NAME,
+	VERIFY_EK_PUB,
 	VERIFY_EXPECT_BIND_PCR,
 	VERIFY_REQUIRE_INITRD,
 };
@@ -124,6 +127,8 @@ static const struct opt_spec verify_opts[] = {
 		"the credential the challenge given to the target carried" },
 	[VERIFY_EK_NAME] = { "--ek-name", 0, 0, "<hex>",
 		"the endorsement key name pinned at enrollment" },
+	[VERIFY_EK_PUB] = { "--ek-pub", 0, 0, "<path>",
+		"cloud endorsement public key (PEM, DER or TPM2B_PUBLIC)" },
 	[VERIFY_EXPECT_BIND_PCR] = { "--expect-bind-pcr", 0, OPT_REPEAT, "<n>=<hex>",
 		"a PCR value the register was bound under (repeatable)" },
 	[VERIFY_REQUIRE_INITRD] = { "--require-initrd", 0, 0, NULL,
@@ -135,6 +140,7 @@ enum challenge_opt {
 	CHALLENGE_AK_NAME,
 	CHALLENGE_EK_CA,
 	CHALLENGE_EK_NAME,
+	CHALLENGE_EK_PUB,
 	CHALLENGE_TRUST_PRESENTED_EK,
 	CHALLENGE_OUTPUT,
 };
@@ -148,10 +154,27 @@ static const struct opt_spec challenge_opts[] = {
 		"PEM issuers the endorsement certificate must chain to" },
 	[CHALLENGE_EK_NAME] = { "--ek-name", 0, 0, "<hex>",
 		"an endorsement key name known out of band" },
+	[CHALLENGE_EK_PUB] = { "--ek-pub", 0, 0, "<path>",
+		"cloud endorsement public key (PEM, DER or TPM2B_PUBLIC)" },
 	[CHALLENGE_TRUST_PRESENTED_EK] = { "--trust-presented-ek", 0, 0, NULL,
 		"accept an endorsement key nothing vouches for" },
 	[CHALLENGE_OUTPUT] = { "--output", 'o', 0, "<path>",
 		"write the challenge there (0600)" },
+};
+
+enum ek_name_opt {
+	EK_NAME_PUB,
+	EK_NAME_TEMPLATE,
+	EK_NAME_JSON,
+};
+
+static const struct opt_spec ek_name_opts[] = {
+	[EK_NAME_PUB] = { "--ek-pub", 0, 0, "<path>",
+		"cloud endorsement public key (PEM, DER or TPM2B_PUBLIC)" },
+	[EK_NAME_TEMPLATE] = { "--template", 0, 0, "l1|l2",
+		"TCG endorsement key template policy (default l1)" },
+	[EK_NAME_JSON] = { "--json", 0, 0, NULL,
+		"print the endorsement key metadata and name as JSON" },
 };
 
 enum predict_opt {
@@ -191,6 +214,7 @@ static const struct help_section attest_help_sections[] = {
 	HELP_OPTIONS("verify options (operator):", verify_opts),
 	HELP_OPTIONS("predict options (operator):", predict_opts),
 	HELP_OPTIONS("challenge options (operator):", challenge_opts),
+	HELP_OPTIONS("ek-name options (operator):", ek_name_opts),
 };
 
 static const struct help attest_help = {
@@ -200,15 +224,17 @@ static const struct help attest_help = {
 		      "--ak-name=<hex> [options]\n"
 		      "       shirudo attest predict --cert=<cert.der> [options]\n"
 		      "       shirudo attest challenge --evidence=<path> "
-		      "--output=<path> --ek-ca=<bundle>|--ek-name=<hex>|"
-		      "--trust-presented-ek [options]",
+		      "--output=<path> --ek-ca=<bundle>|--ek-pub=<path>|"
+		      "--ek-name=<hex>|--trust-presented-ek [options]\n"
+		      "       shirudo attest ek-name --ek-pub=<path> "
+		      "[--template=l1|l2] [--json]",
 	.summary    = "Without a subcommand: emit a TPM-signed evidence document "
 		      "for this\ntarget (quote over the PCRs, certification of "
 		      "the measurement register,\nthis boot's eventlog, the "
 		      "firmware and systemd measurement logs), activating\n"
 		      "the verifier's challenge when given one.\n"
-		      "verify, predict and challenge run on the operator and "
-		      "touch no TPM.",
+		      "verify, predict, challenge and ek-name run on the "
+		      "operator and touch no TPM.",
 	.sections   = attest_help_sections,
 	.n_sections = ARRAY_SIZE(attest_help_sections),
 };
@@ -590,6 +616,35 @@ static int report_emit_json(const char *report, const char *verdict)
 	return ret;
 }
 
+static int read_ek_pub(const char *path, __u8 **out, size_t *len)
+{
+	struct ek_cloud_key key;
+	int ret;
+
+	*out = NULL;
+	*len = 0;
+	ret = read_file(path, EK_CLOUD_MAX, out, len);
+	if (!ret && !*len) {
+		xfree(*out, 1);
+		*out = NULL;
+		ret = -ENODATA;
+	}
+	if (!ret) {
+		ret = ek_cloud_parse(*out, *len, &key);
+		if (ret) {
+			xfree(*out, *len + 1);
+			*out = NULL;
+			*len = 0;
+		}
+	}
+	if (ret)
+		pr_err("attest: --ek-pub %s: %s", path,
+		       ret == -EKEYREJECTED ? "not a valid endorsement key" :
+		       ret == -EPROTONOSUPPORT ? "unsupported key algorithm" :
+		       strerror(-ret));
+	return ret;
+}
+
 static int read_evidence(const char *path, char **out, size_t *len)
 {
 	int ret;
@@ -613,10 +668,11 @@ static int cmd_attest_verify(int argc, const char **argv)
 	__u8 cert_shas[KEYS_MAX][32];
 	size_t n_certs = 0;
 	__u8 tree_root[32] = {};
+	__u8 *ek_pub = NULL;
 	const char *evidence_path = NULL;
 	struct members m = {};
 	char *evidence = NULL, *report;
-	size_t evidence_len = 0, nonce_len = 0;
+	size_t evidence_len = 0, nonce_len = 0, ek_pub_len = 0;
 	struct opt_parser p;
 	bool have_cert = false, have_nonce = false, have_tree_root = false;
 	int err, ret = EXIT_USAGE, opt;
@@ -741,6 +797,13 @@ static int cmd_attest_verify(int argc, const char **argv)
 			}
 			x.have_ek_name = true;
 			break;
+		case VERIFY_EK_PUB:
+			if (read_ek_pub(p.value, &ek_pub, &ek_pub_len))
+				goto out;
+			x.ek_pub = ek_pub;
+			x.ek_pub_len = ek_pub_len;
+			x.have_ek_pub = true;
+			break;
 		case VERIFY_EXPECT_BIND_PCR: {
 			const char *value;
 			__u64 n;
@@ -832,6 +895,7 @@ static int cmd_attest_verify(int argc, const char **argv)
 		ret = err ? 1 : 0;
 	}
 out:
+	xfree(ek_pub, ek_pub ? ek_pub_len + 1 : 0);
 	xfree(evidence, evidence ? evidence_len + 1 : 0);
 	xfree(report, report ? ATTEST_REPORT_MAX : 0);
 	xfree(m.set, m.set ? ATTEST_MEMBERS_MAX * sizeof(*m.set) : 0);
@@ -844,10 +908,11 @@ static int cmd_attest_challenge(int argc, const char **argv)
 	struct attest_challenge_policy pol = {};
 	__u8 credential[TPM_CREDENTIAL_LEN];
 	__u8 ak_name[TPM_NAME_LEN], ek_name[TPM_NAME_LEN];
+	__u8 *ek_pub = NULL;
 	const char *evidence_path = NULL, *out_path = NULL;
 	char *evidence = NULL, *doc = NULL, *report;
 	char hex[2 * TPM_CREDENTIAL_LEN + 1];
-	size_t evidence_len = 0, len = 0, cap = 0;
+	size_t evidence_len = 0, len = 0, cap = 0, ek_pub_len = 0;
 	int err, ret = EXIT_USAGE, opt;
 	struct opt_parser p;
 
@@ -878,6 +943,12 @@ static int cmd_attest_challenge(int argc, const char **argv)
 				goto out;
 			}
 			pol.ek_name = ek_name;
+			break;
+		case CHALLENGE_EK_PUB:
+			if (read_ek_pub(p.value, &ek_pub, &ek_pub_len))
+				goto out;
+			pol.ek_pub = ek_pub;
+			pol.ek_pub_len = ek_pub_len;
 			break;
 		case CHALLENGE_TRUST_PRESENTED_EK:
 			pol.trust_presented = true;
@@ -938,9 +1009,92 @@ static int cmd_attest_challenge(int argc, const char **argv)
 	ret = 0;
 out:
 	memzero_explicit(credential, sizeof(credential));
+	xfree(ek_pub, ek_pub ? ek_pub_len + 1 : 0);
 	xfree(doc, cap);
 	xfree(evidence, evidence ? evidence_len + 1 : 0);
 	xfree(report, ATTEST_REPORT_MAX);
+	return ret;
+}
+
+static int cmd_attest_ek_name(int argc, const char **argv)
+{
+	enum ek_template tmpl = EK_TEMPLATE_L1, used_tmpl = EK_TEMPLATE_L1;
+	bool force_tmpl = false, json = false, rsa = false;
+	char hex[2 * TPM_NAME_MAX + 1];
+	__u8 name[TPM_NAME_MAX];
+	const char *ek_path = NULL;
+	__u8 *ek_pub = NULL;
+	size_t ek_pub_len = 0;
+	struct opt_parser p;
+	int ret = EXIT_USAGE, opt, err;
+
+	OPT_INIT(&p, "attest ek-name", ek_name_opts, &attest_help, argc, argv, 2);
+	for (opt = opt_next(&p); opt != OPT_END; opt = opt_next(&p)) {
+		switch (opt) {
+		case EK_NAME_PUB:
+			ek_path = p.value;
+			break;
+		case EK_NAME_TEMPLATE:
+			if (!strcmp(p.value, "l1")) {
+				tmpl = EK_TEMPLATE_L1;
+			} else if (!strcmp(p.value, "l2")) {
+				tmpl = EK_TEMPLATE_L2;
+			} else {
+				opt_usage(&p, "--template must be l1 or l2");
+				goto out;
+			}
+			force_tmpl = true;
+			break;
+		case EK_NAME_JSON:
+			json = true;
+			break;
+		case OPT_ARG:
+			opt_usage(&p, "unexpected argument '%s'", p.value);
+			goto out;
+		case OPT_DONE:
+			ret = 0;
+			goto out;
+		default:
+			goto out;
+		}
+	}
+	if (!ek_path) {
+		opt_usage(&p, "--ek-pub is required");
+		goto out;
+	}
+	if (read_ek_pub(ek_path, &ek_pub, &ek_pub_len))
+		goto out;
+	err = ek_cloud_name(ek_pub, ek_pub_len, tmpl, force_tmpl, &rsa,
+			    &used_tmpl, name);
+	if (err) {
+		pr_err("attest ek-name: %s", strerror(-err));
+		ret = 1;
+		goto out;
+	}
+	hex_encode(name, TPM_NAME_LEN, hex);
+	if (json) {
+		char buf[512];
+		struct json_emit e = { .buf = buf, .cap = sizeof(buf) };
+
+		json_obj_open(&e);
+		json_kv_int(&e, "schema", 1);
+		json_kv_string(&e, "type", rsa ? "rsa" : "ecc");
+		json_kv_string(&e, "template",
+			       used_tmpl == EK_TEMPLATE_L1 ? "l1" : "l2");
+		json_kv_string(&e, "ek_name", hex);
+		json_obj_close(&e);
+		if (e.err) {
+			pr_err("attest ek-name: json encode failed");
+			ret = 1;
+			goto out;
+		}
+		puts(buf);
+	} else {
+		puts(hex);
+	}
+	ret = 0;
+out:
+	xfree(ek_pub, ek_pub ? ek_pub_len + 1 : 0);
 	return ret;
 }
 
@@ -1063,6 +1217,8 @@ int cmd_attest(int argc, const char **argv)
 			return cmd_attest_verify(argc, argv);
 		if (!strcmp(sub, "challenge"))
 			return cmd_attest_challenge(argc, argv);
+		if (!strcmp(sub, "ek-name"))
+			return cmd_attest_ek_name(argc, argv);
 		return cmd_attest_predict(argc, argv);
 	}
 	return cmd_attest_evidence(argc, argv);

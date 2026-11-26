@@ -16,7 +16,6 @@
 #include "tpm_wire.h"
 
 #define TPM_NV_DIGEST_LEN	TPM_DIGEST_LEN
-#define TPM_PUBLIC_MAX		512
 #define TPM_ATTEST_MAX		1024
 #define TPM_SIGNATURE_MAX	160
 
