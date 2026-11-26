@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Authors of shirudo
+#
+# Confinement rules for autonomous LLM agents (policy ID "llm-agent" in
+# Beefile). Build with:
+#   shirudo bpm build upatches/app-sandbox --version 1.0.0 \
+#       --rodata-input sandbox=upatches/app-sandbox/llm-agent.toml \
+#       --keys-dir <keys>
+
+[networks]
+cloud_imds = [
+	"169.254.169.254/32",
+	"fd00:ec2::254/128",
+]
+
+[sandbox.llm-agent]
+families = ["inet", "inet6", "unix"]
+deny_ptrace = true
+
+[sandbox.llm-agent.deny]
+network = ["@cloud_imds"]
+read = [
+	"*.pem",
+	"id_rsa*",
+	"id_ed25519*",
+	".env*",
+	"*credentials*",
+	"token",
+]
+write = [
+	"*.pem",
+	"id_rsa*",
+	"id_ed25519*",
+	"authorized_keys",
+]
+unix = [
+	"docker.sock",
+	"*/docker.sock",
+	"*containerd*",
+	"crio.sock",
+]
