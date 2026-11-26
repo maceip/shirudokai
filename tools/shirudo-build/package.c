@@ -2149,6 +2149,16 @@ static int write_artifact(const char *out_path, const struct upatch_header *hdr,
 }
 
 /*
+ * A program without the variable cannot tell the two modes apart and
+ * would enforce under an artifact that says it observes.
+ */
+static int observe_mode_missing(void)
+{
+	pr_err("--observe needs a 32-bit shirudo_observe_mode in .rodata, and the object has none");
+	return -ENOENT;
+}
+
+/*
  * In observe mode, rewrite `const volatile __u32 shirudo_observe_mode` in
  * .rodata to 1 before loader generation so the signed loader data and
  * payload_sha256 cover the rewritten value.
@@ -2171,10 +2181,10 @@ static int rewrite_observe_rodata(struct bpf_object *obj)
 	rodata = find_rodata(obj);
 	btf = bpf_object__btf(obj);
 	if (!rodata || !btf)
-		return 0;
+		return observe_mode_missing();
 	sec_id = btf__find_by_name_kind(btf, ".rodata", BTF_KIND_DATASEC);
 	if (sec_id <= 0)
-		return 0;
+		return observe_mode_missing();
 	sec = btf__type_by_id(btf, (__u32)sec_id);
 	if (!sec || BTF_INFO_KIND(sec->info) != BTF_KIND_DATASEC)
 		return -EINVAL;
@@ -2234,7 +2244,7 @@ static int rewrite_observe_rodata(struct bpf_object *obj)
 		}
 		found = true;
 	}
-	return 0;
+	return found ? 0 : observe_mode_missing();
 }
 
 /*

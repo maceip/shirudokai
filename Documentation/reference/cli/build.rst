@@ -80,9 +80,11 @@ Building a upatch
    refused.
 #. It names the upatch: ``--name``, else the input file name without
    ``.bpf.c``, ``.bpf.o``, ``.o`` or ``.jar``.
-#. With ``--observe``, if the BPF object's ``.rodata`` declares a 32-bit
+#. With ``--observe``, the BPF object's ``.rodata`` must declare a 32-bit
    integer ``shirudo_observe_mode`` (for example ``const volatile __u32
-   shirudo_observe_mode``), the helper rewrites its initial value to ``1``
+   shirudo_observe_mode``); the build fails when it does not, since such
+   a program would enforce under an artifact that says it observes. The
+   helper rewrites the variable's initial value to ``1``
    before generating the loader, sets ``DIRECTIVE_OBSERVE`` in the header
    and appends the signed ``MODE`` section (``UPATCH_MODE_OBSERVE``). Both
    ``payload_sha256`` and the detached CMS signature cover the rewritten
@@ -200,7 +202,8 @@ Options
      - off
      - Build a BPF load artifact in observe mode: set ``DIRECTIVE_OBSERVE``,
        append the signed ``MODE`` section, and rewrite ``shirudo_observe_mode``
-       in ``.rodata`` to ``1`` before signing when defined.
+       in ``.rodata`` to ``1`` before signing. An object without the
+       variable is refused.
    * - ``--emit-artifacts``
      - none
      - off
