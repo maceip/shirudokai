@@ -320,7 +320,8 @@ UTIL_SRCS := \
     util/upatch_pins.c \
     util/upatch_verify.c \
     util/upatch_resolve.c \
-    util/upatch_table.c
+    util/upatch_table.c \
+    util/reproducer_check.c
 
 BUILTIN_GENKEY_SRC := builtin-genkey.c
 
@@ -348,7 +349,8 @@ BPF_LIB_HEADERS    := bpf/lib/misc.h \
                       bpf/lib/serializer.h \
                       bpf/lib/policy.h \
                       bpf/lib/xattr.h \
-                      bpf/lib/decoder.h
+                      bpf/lib/decoder.h \
+                      bpf/lib/shield.h
 
 # bpf/*.bpf.c sources compiled with clang -target bpf and embedded via
 # .incbin into util/loader.o. bpf/lib/ is include-only.
@@ -1346,6 +1348,7 @@ $(FUZZ_OUT)/fuzz-upatch-info: testing/fuzz/fuzz-upatch-info.c $(FUZZ_BASE) \
                               util/keyring.c util/keys.c util/measured.c \
                               util/nv_writer.c \
                               util/options.c util/paths.c util/report.c \
+                              util/reproducer_check.c \
                               util/serializer.c util/similar.c \
                               util/timefmt.c util/tls_openssl.c util/tpm.c \
                               util/tpm_wire.c util/upatch.c \

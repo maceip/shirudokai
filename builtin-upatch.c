@@ -61,6 +61,7 @@
 #include "util/malloc.h"
 #include "util/paths.h"
 #include "util/report.h"
+#include "util/reproducer_check.h"
 #include "util/seal.h"
 #include "util/timefmt.h"
 #include "util/upatch.h"
@@ -5483,6 +5484,192 @@ done:
 	return ret;
 }
 
+enum upatch_check_opt {
+	UPATCH_CHECK_BEFORE,
+	UPATCH_CHECK_AFTER_EXPLOIT,
+	UPATCH_CHECK_AFTER_BENIGN,
+	UPATCH_CHECK_TEST_INPUT,
+	UPATCH_CHECK_BENIGN_INPUT,
+	UPATCH_CHECK_COUNTERS_MAP,
+	UPATCH_CHECK_STACK_MAP,
+	UPATCH_CHECK_JSON,
+};
+
+static const struct opt_spec upatch_check_opts[] = {
+	[UPATCH_CHECK_BEFORE] = { "--before", 0, 0, "<snapshot.json>",
+		"baseline telemetry snapshot before the exploit reproducer" },
+	[UPATCH_CHECK_AFTER_EXPLOIT] = { "--after-exploit", 0, 0,
+		"<snapshot.json>",
+		"telemetry snapshot captured after the exploit reproducer" },
+	[UPATCH_CHECK_AFTER_BENIGN] = { "--after-benign", 0, 0,
+		"<snapshot.json>",
+		"telemetry snapshot captured after the benign workload" },
+	[UPATCH_CHECK_TEST_INPUT] = { "--test-input", 0, 0, "<file>",
+		"run the loaded upatch's test program on <file> as exploit input" },
+	[UPATCH_CHECK_BENIGN_INPUT] = { "--benign-input", 0, 0, "<file>",
+		"with --test-input, also run the test program on <file> as benign input" },
+	[UPATCH_CHECK_COUNTERS_MAP] = { "--counters-map", 0, 0, "<map>",
+		"pinned struct shield_counters map name (default shield_counters)" },
+	[UPATCH_CHECK_STACK_MAP] = { "--stack-map", 0, 0, "<map>",
+		"optional pinned stack-ID hash map name" },
+	[UPATCH_CHECK_JSON] = { "--json", 0, 0, NULL,
+		"print one JSON verdict object" },
+};
+
+static const struct help_section upatch_check_sections[] = {
+	HELP_OPTIONS("options:", upatch_check_opts),
+};
+
+static const struct help upatch_check_help = {
+	.usage      = "shirudo upatch check [<name>] --before <file> --after-exploit <file>\n"
+		      "                            [--after-benign <file>] [--json]\n"
+		      "       shirudo upatch check <name> --test-input <file> [--benign-input <file>]\n"
+		      "                            [--counters-map <map>] [--stack-map <map>] [--json]",
+	.summary    = "Verify a shield in observe or test-run mode before switching\n"
+		      "to enforcement: checks exploit_hits_delta > 0,\n"
+		      "benign_hits_delta == 0 and missed_runs_delta == 0, and\n"
+		      "reports captured call-stack IDs.",
+	.sections   = upatch_check_sections,
+	.n_sections = ARRAY_SIZE(upatch_check_sections),
+	.footer     =
+"Examples:\n"
+"  shirudo upatch check shield --before b.json --after-exploit e.json --after-benign w.json\n"
+"  shirudo upatch check shield --test-input repro.bin --benign-input ok.bin --json",
+};
+
+static int cmd_upatch_check(int argc, const char **argv)
+{
+	const char *before_path = NULL, *exploit_path = NULL, *benign_path = NULL;
+	const char *test_input = NULL, *benign_input = NULL;
+	const char *counters_map = "shield_counters";
+	const char *stack_map = NULL;
+	const char *upatch_name = NULL;
+	struct reproducer_verdict v = {};
+	bool json = false;
+	struct opt_parser p;
+	int opt, err;
+
+	OPT_INIT(&p, "upatch check", upatch_check_opts, &upatch_check_help,
+		 argc, argv, 1);
+	for (opt = opt_next(&p); opt != OPT_END; opt = opt_next(&p)) {
+		switch (opt) {
+		case UPATCH_CHECK_BEFORE:
+			before_path = p.value;
+			break;
+		case UPATCH_CHECK_AFTER_EXPLOIT:
+			exploit_path = p.value;
+			break;
+		case UPATCH_CHECK_AFTER_BENIGN:
+			benign_path = p.value;
+			break;
+		case UPATCH_CHECK_TEST_INPUT:
+			test_input = p.value;
+			break;
+		case UPATCH_CHECK_BENIGN_INPUT:
+			benign_input = p.value;
+			break;
+		case UPATCH_CHECK_COUNTERS_MAP:
+			counters_map = p.value;
+			break;
+		case UPATCH_CHECK_STACK_MAP:
+			stack_map = p.value;
+			break;
+		case UPATCH_CHECK_JSON:
+			json = true;
+			break;
+		case OPT_ARG:
+			if (upatch_name) {
+				opt_usage(&p, "unexpected argument '%s'",
+					  p.value);
+				return EXIT_USAGE;
+			}
+			upatch_name = p.value;
+			break;
+		case OPT_DONE:
+			return 0;
+		default:
+			return EXIT_USAGE;
+		}
+	}
+
+	if (test_input && (before_path || exploit_path || benign_path)) {
+		opt_usage(&p, "--test-input cannot be combined with snapshot files");
+		return EXIT_USAGE;
+	}
+	if (benign_input && !test_input) {
+		opt_usage(&p, "--benign-input requires --test-input");
+		return EXIT_USAGE;
+	}
+
+	if (test_input) {
+		if (!upatch_name || !upatch_name_valid(upatch_name)) {
+			opt_usage(&p, "--test-input requires a valid loaded <upatch-name>");
+			return EXIT_USAGE;
+		}
+		err = reproducer_run_test_prog(upatch_name, counters_map,
+					       stack_map, test_input,
+					       benign_input, &v);
+		if (err) {
+			pr_err("upatch check: %s: %s", upatch_name,
+			       strerror(-err));
+			return 1;
+		}
+	} else {
+		struct reproducer_snapshot before = {}, after_exp = {};
+		struct reproducer_snapshot after_ben = {};
+		const struct reproducer_snapshot *ben_ptr = NULL;
+
+		if (!before_path || !exploit_path) {
+			opt_usage(&p, "takes --before <file> and --after-exploit <file>, or <name> --test-input <file>");
+			return EXIT_USAGE;
+		}
+		err = reproducer_snapshot_read_file(before_path, &before);
+		if (err) {
+			pr_err("upatch check: %s: %s", before_path,
+			       strerror(-err));
+			return 1;
+		}
+		err = reproducer_snapshot_read_file(exploit_path, &after_exp);
+		if (err) {
+			pr_err("upatch check: %s: %s", exploit_path,
+			       strerror(-err));
+			return 1;
+		}
+		if (benign_path) {
+			err = reproducer_snapshot_read_file(benign_path,
+							    &after_ben);
+			if (err) {
+				pr_err("upatch check: %s: %s", benign_path,
+				       strerror(-err));
+				return 1;
+			}
+			ben_ptr = &after_ben;
+		}
+		err = reproducer_evaluate(&before, &after_exp, ben_ptr, &v);
+		if (err) {
+			pr_err("upatch check: %s", strerror(-err));
+			return 1;
+		}
+	}
+
+	if (json) {
+		char *buf = NULL;
+		size_t cap = 0;
+
+		err = reproducer_verdict_json(upatch_name, &v, &buf, &cap);
+		if (err) {
+			pr_err("upatch check: json encode failed: %s",
+			       strerror(-err));
+			return 1;
+		}
+		printf("%s\n", buf);
+		xfree(buf, cap);
+	} else {
+		reproducer_verdict_print(stdout, upatch_name, &v);
+	}
+	return v.ok ? 0 : 1;
+}
+
 static const struct help_item upatch_subcmds[] = {
 	{ "load",   "load a signed .upatch into the target kernel (target-only)" },
 	{ "unload", "apply a signed UNLOAD directive (forward chain extension)" },
@@ -5490,6 +5677,7 @@ static const struct help_item upatch_subcmds[] = {
 	{ "info",   "describe a .upatch file (any host; offline, no kernel state)" },
 	{ "get",    "dump source of a loaded upatch from the target kernel (BTF line_info)" },
 	{ "map",    "read pinned map contents (target-only; BTF type-aware)" },
+	{ "check",  "verify shield observe/test-run telemetry around a reproducer" },
 	{ "reconcile", "attach loaded XDP upatches to devices that appeared later (target-only)" },
 };
 
@@ -5536,6 +5724,8 @@ int cmd_upatch(int argc, const char **argv)
 		return cmd_upatch_get(argc - 1, argv + 1);
 	if (strcmp(canonical, "map") == 0)
 		return cmd_upatch_map(argc - 1, argv + 1);
+	if (strcmp(canonical, "check") == 0)
+		return cmd_upatch_check(argc - 1, argv + 1);
 	if (strcmp(canonical, "reconcile") == 0)
 		return cmd_upatch_reconcile(argc - 1, argv + 1);
 	return 2;	/* unreachable */
