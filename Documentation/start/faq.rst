@@ -8,8 +8,7 @@
 FAQ
 ===
 
-Short answers to the questions newcomers ask most, each with the page
-that explains it.
+Quick answers to common questions, with links to the details.
 
 What is a upatch?
 ------------------
@@ -27,9 +26,9 @@ See :doc:`/reference/versions` and :doc:`/contribute/arch-support`.
 Does shirudo replace kernel updates?
 ------------------------------------
 
-No. A upatch covers the time until the machine runs a kernel with the
-fix. :doc:`/start/what-is-shirudo` describes what shirudo does and does
-not do.
+No. A upatch can block the vulnerable path while you prepare or roll out
+a kernel with the fix. :doc:`/start/what-is-shirudo` explains what
+shirudo does and where it stops.
 
 Can root turn shirudo off?
 --------------------------
