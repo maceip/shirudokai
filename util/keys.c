@@ -674,7 +674,7 @@ static int scan_trusted(const char *keys_dir, const char *revoked_dir,
  * trusted directory's descriptor outlives into admit_vouched: the
  * caller closes it after.
  */
-static int scan_trusted_at(int keys_fd, int revoked_fd, const char *display,
+static int scan_trusted_at(int keys_fd, const char *display,
 			   struct keys_candidate *cand, size_t *n_cand,
 			   int *trusted_fd)
 {
@@ -713,11 +713,6 @@ static int scan_trusted_at(int keys_fd, int revoked_fd, const char *display,
 			xfree(c->der, c->der_sz);
 			c->der = NULL;
 			break;
-		}
-		if (keys_is_revoked_at(revoked_fd, c->fingerprint)) {
-			xfree(c->der, c->der_sz);
-			c->der = NULL;
-			continue;
 		}
 		(*n_cand)++;
 	}
@@ -774,30 +769,29 @@ sort:
 /*
  * A config image's set: the primary and every vouched certificate under
  * keys/trusted, less what keys/revoked names, all read through the
- * image's descriptor. Revocation applies before vouches are evaluated so
- * a revoked signer's historical vouches cannot admit dependent keys.
+ * image's descriptor. Historical vouches count before revocation, so a
+ * revoked certificate's vouch for another still admits it: an operator
+ * who revokes the primary keeps the standby it vouched for.
  */
 static int load_set_at(const char *primary, int keys_fd, const char *display,
 		       bool with_trusted, struct trusted_set *set)
 {
 	struct keys_candidate *cand = NULL;
 	__u8 sha256[32], fingerprint[32];
-	int revoked_fd = -1, trusted_fd = -1;
-	size_t n_cand = 0;
+	int revoked_fd, trusted_fd = -1;
+	size_t n_cand = 0, i, kept = 0;
 	int ret;
 
 	memset(set, 0, sizeof(*set));
 	ret = keys_take_file(primary, sha256, fingerprint);
 	if (ret)
 		return ret;
+	ret = set_add(set, primary, sha256, fingerprint, NULL, NULL, 0);
+	if (ret)
+		return ret;
 	if (keys_fd == -ENOENT)
-		return set_add(set, primary, sha256, fingerprint, NULL, NULL, 0);
+		return 0;
 	revoked_fd = open_beneath(keys_fd, "revoked", O_RDONLY | O_DIRECTORY);
-	if (!keys_is_revoked_at(revoked_fd, fingerprint)) {
-		ret = set_add(set, primary, sha256, fingerprint, NULL, NULL, 0);
-		if (ret)
-			goto out;
-	}
 	set->n_revoked = count_der_at(revoked_fd);
 	if (with_trusted) {
 		cand = xcalloc(KEYS_SCAN_MAX, sizeof(*cand));
@@ -805,14 +799,18 @@ static int load_set_at(const char *primary, int keys_fd, const char *display,
 			ret = -ENOMEM;
 			goto out;
 		}
-		ret = scan_trusted_at(keys_fd, revoked_fd, display, cand,
-				      &n_cand, &trusted_fd);
+		ret = scan_trusted_at(keys_fd, display, cand, &n_cand,
+				      &trusted_fd);
 		if (!ret)
 			ret = admit_vouched(set, cand, n_cand);
 		candidates_free(cand, n_cand);
 		if (ret)
 			goto out;
 	}
+	for (i = 0; i < set->n; i++)
+		if (!keys_is_revoked_at(revoked_fd, set->certs[i].fingerprint))
+			set->certs[kept++] = set->certs[i];
+	set->n = kept;
 	if (set->n > 1)
 		qsort(set->certs, set->n, sizeof(set->certs[0]), cert_cmp);
 out:

@@ -266,7 +266,7 @@ static void vouch_v2_enforces_expiration_and_integrity(void)
 	rm_rf(dir);
 }
 
-static void revoked_voucher_cannot_admit_dependent_key(void)
+static void an_image_keeps_what_a_revoked_voucher_admitted(void)
 {
 	const __s64 nb = 1700000000LL;
 	const __s64 na = 2500000000LL;
@@ -331,7 +331,11 @@ static void revoked_voucher_cannot_admit_dependent_key(void)
 	EXPECT_EQ(set.n_revoked, 0u);
 	EXPECT_EQ(set.n_unvouched, 0u);
 
-	/* Revoke B: both B and B-vouched C are excluded (U13 closed). */
+	/*
+	 * Revoke B. A directory of keys drops what B vouched for; a config
+	 * image keeps it, which is what lets an operator revoke the signer
+	 * that vouched for its successor (U13).
+	 */
 	ASSERT_TRUE(strsprintf(path, sizeof(path), "%s/revoked/%s.der",
 			       dir, fp_b_hex) > 0);
 	ASSERT_EQ(write_raw(path, der_b, len_b), 0);
@@ -345,12 +349,12 @@ static void revoked_voucher_cannot_admit_dependent_key(void)
 	EXPECT_TRUE(!keys_member(&set, fp_c));
 
 	ASSERT_EQ(keys_load_image_at(primary, root_fd, true, &set), 0);
-	EXPECT_EQ(set.n, 1u);
+	EXPECT_EQ(set.n, 2u);
 	EXPECT_EQ(set.n_revoked, 1u);
-	EXPECT_EQ(set.n_unvouched, 1u);
+	EXPECT_EQ(set.n_unvouched, 0u);
 	EXPECT_TRUE(keys_member(&set, fp_a));
 	EXPECT_TRUE(!keys_member(&set, fp_b));
-	EXPECT_TRUE(!keys_member(&set, fp_c));
+	EXPECT_TRUE(keys_member(&set, fp_c));
 
 	close(root_fd);
 	xfree(sig_c, sig_c_sz);
@@ -371,7 +375,7 @@ static const struct unit_case cases[] = {
 	UNIT_CASE(member_past_the_count_is_none),
 	UNIT_CASE(cert_valid_at_enforces_validity_bounds),
 	UNIT_CASE(vouch_v2_enforces_expiration_and_integrity),
-	UNIT_CASE(revoked_voucher_cannot_admit_dependent_key),
+	UNIT_CASE(an_image_keeps_what_a_revoked_voucher_admitted),
 	{}
 };
 
