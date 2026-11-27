@@ -30,7 +30,7 @@ struct shield_counters {
 
 #define SHIELD_COUNTERS_MAP(name)					\
 	struct {							\
-		__uint(type, BPF_MAP_TYPE_ARRAY);			\
+		__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);		\
 		__uint(max_entries, 1);					\
 		__type(key, __u32);					\
 		__type(value, struct shield_counters);			\
@@ -61,7 +61,7 @@ static __always_inline void shield_count_activity(void *counters_map)
 		return;
 	c = bpf_map_lookup_elem(counters_map, &zero);
 	if (c)
-		__sync_fetch_and_add(&c->activity, 1);
+		c->activity++;
 }
 
 static __always_inline void shield_record_stack_id(void *stack_ids_map,
@@ -104,26 +104,6 @@ static __always_inline __s64 shield_capture_stack(void *ctx, void *stack_map,
 	return id;
 }
 
-/*
- * True when the caller's stack ID is present in narrow_stack_ids_map, for
- * narrowing enforcement to caller stacks observed during a reproducer run.
- */
-static __always_inline bool shield_stack_matches(void *ctx, void *stack_map,
-						 __u64 flags,
-						 void *narrow_stack_ids_map)
-{
-	__u32 stack_id;
-	__s64 id;
-
-	if (!ctx || !stack_map || !narrow_stack_ids_map)
-		return false;
-	id = bpf_get_stackid(ctx, stack_map, flags);
-	if (id < 0)
-		return false;
-	stack_id = (__u32)id;
-	return bpf_map_lookup_elem(narrow_stack_ids_map, &stack_id);
-}
-
 static __always_inline int shield_decide_stack(bool observe, void *counters_map,
 					       void *stack_map,
 					       void *stack_ids_map,
@@ -137,11 +117,11 @@ static __always_inline int shield_decide_stack(bool observe, void *counters_map,
 	if (counters_map) {
 		c = bpf_map_lookup_elem(counters_map, &zero);
 		if (c) {
-			__sync_fetch_and_add(&c->hits, 1);
+			c->hits++;
 			if (observe)
-				__sync_fetch_and_add(&c->observed, 1);
+				c->observed++;
 			else
-				__sync_fetch_and_add(&c->enforced, 1);
+				c->enforced++;
 		}
 	}
 	if (stack_map && ctx)

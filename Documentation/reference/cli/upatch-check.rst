@@ -40,7 +40,9 @@ or skipped runs:
 - monotonic counter values without regression
 
 It also reports the sorted, deduplicated caller stack IDs captured during
-the exploit phase so operators can narrow enforcement by call stack.
+the exploit phase for debugging and correlating stacks in ``stack_map``;
+``bpf_get_stackid()`` IDs are per-kernel hashes and are not stable across
+boots or hosts.
 
 With ``--test-input <file>``, ``check`` opens the loaded upatch's pinned
 ``test`` program (``SEC("syscall")`` ``shirudo_test__<id>``), reads its
