@@ -13,6 +13,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include <shirudo/types.h>
+
 struct btf;
 
 struct kernel_options {
@@ -20,7 +22,6 @@ struct kernel_options {
 	bool	module_sig;		/* CONFIG_MODULE_SIG */
 	bool	compat;			/* CONFIG_COMPAT / IA32 / X32 */
 	bool	hibernation;		/* CONFIG_HIBERNATION */
-	bool	bdev_write_guard;	/* block-layer mounted-write guard */
 };
 
 /* The options btf shows, the BTF of vmlinux. */
@@ -42,30 +43,29 @@ bool kernel_hibernation_allowed(const struct kernel_options *opts,
 				const char *cmdline);
 
 /*
- * CONFIG_BLK_DEV_WRITE_MOUNTED in kconfig text: 1 when y, 0 when n or
- * "is not set", -ENOENT when absent, -EINVAL on NUL or another value.
+ * Probe callback: attempts O_WRONLY open of path without writing.
+ * Returns 0 if the open succeeded (and closes the fd), or -errno on
+ * failure.
  */
-int kernel_kconfig_allows_write_mounted(const char *text, size_t len);
+typedef int (*kernel_bdev_probe_open_fn)(const char *path);
 
 /*
- * kernel_kconfig_allows_write_mounted() on path, gunzipped first when gz
- * is set.
+ * Check mounted block-device write protection for device (maj, min) by
+ * probing /dev/block/<maj>:<min> with O_WRONLY. Returns 0 when the open
+ * fails with EBUSY, -EOPNOTSUPP when maj == 0 or the open succeeds, or
+ * -errno otherwise. Uses open(2) when open_fn is NULL.
  */
-int kernel_config_file_allows_write_mounted(const char *path, bool gz);
+int kernel_bdev_check_dev(__u32 maj, __u32 min,
+			  kernel_bdev_probe_open_fn open_fn,
+			  char *detail, size_t detail_sz);
 
 /*
- * bdev_allow_write_mounted= on cmdline before "--": 1 when enabled or
- * malformed, 0 when disabled, -ENOENT when absent.
+ * Resolve state_dir's st_dev and probe whether writes to its mounted
+ * block device are refused (A10). Never passes when the device cannot be
+ * examined.
  */
-int kernel_cmdline_write_mounted(const char *cmdline);
-
-/*
- * Whether writes to mounted block devices are blocked (A10): requires the
- * block-layer guard in BTF, a non-NULL cmdline without an enabling override,
- * and no CONFIG_BLK_DEV_WRITE_MOUNTED=y without bdev_allow_write_mounted=0.
- */
-bool kernel_bdev_write_mounted_protected(const struct kernel_options *opts,
-					 int kconfig_allow,
-					 const char *cmdline);
+int kernel_bdev_probe_write_mounted(const char *state_dir,
+				    kernel_bdev_probe_open_fn open_fn,
+				    char *detail, size_t detail_sz);
 
 #endif /* SHIRUDO_KERNEL_PREREQ_H */

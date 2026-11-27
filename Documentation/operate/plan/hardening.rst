@@ -68,9 +68,12 @@ Kernel configuration
        device under ``/var/lib/shirudo`` changes sealed state without
        any of them. With the option off, the kernel refuses writes to a
        mounted block device.
-     - init fails: pre-flight ``bdev_write_mounted`` checks the BTF
-       guard, ``bdev_allow_write_mounted`` on ``/proc/cmdline``, and
-       ``/proc/config.gz`` or ``/boot/config-<release>`` where present
+     - init fails: pre-flight ``bdev_write_mounted`` resolves the state
+       directory's block device (``/dev/block/<major>:<minor>`` for
+       ``/var/lib/shirudo``, or under ``/sysroot`` in the initrd) and
+       attempts an ``O_WRONLY`` open without writing, requiring ``EBUSY``;
+       it fails if the device cannot be opened or if the state directory
+       has no block device (for example ``tmpfs`` or ``overlayfs``)
    * - No resume device: no ``resume=`` or ``resumewait`` on the command
        line, an empty ``CONFIG_PM_STD_PARTITION`` and none named in the
        initrd, or no hibernation (``CONFIG_HIBERNATION=n``, ``noresume``,

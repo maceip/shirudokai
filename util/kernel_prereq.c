@@ -7,10 +7,14 @@
  */
 
 #include <errno.h>
+#include <fcntl.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
-#include <zlib.h>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
+#include <unistd.h>
 
 #include <linux/btf.h>
 
@@ -19,12 +23,7 @@
 #include <shirudo/misc.h>
 #include <shirudo/string.h>
 
-#include "io.h"
-#include "kconfig.h"
 #include "kernel_prereq.h"
-#include "malloc.h"
-
-#define KCONFIG_MAX	(4U << 20)
 
 static bool has_func(const struct btf *btf, const char *name)
 {
@@ -69,11 +68,6 @@ void kernel_prereq_options(const struct btf *btf, struct kernel_options *out)
 		      has_func(btf, "get_compat_sigset");
 	out->hibernation = has_func(btf, "hibernation_set_ops") ||
 			   has_func(btf, "software_resume");
-	out->bdev_write_guard = has_func(btf, "bdev_writes_blocked") ||
-				has_func(btf, "setup_bdev_allow_write_mounted") ||
-				has_func(btf, "bdev_may_open") ||
-				has_func(btf, "bdev_open_by_dev") ||
-				has_func(btf, "bdev_file_open_by_dev");
 }
 
 static bool cmdline_has_resume(const char *cmdline)
@@ -120,172 +114,84 @@ bool kernel_hibernation_allowed(const struct kernel_options *opts,
 	return opts->hibernation && kernel_cmdline_allows_hibernation(cmdline);
 }
 
-int kernel_kconfig_allows_write_mounted(const char *text, size_t len)
+static __printf(4, 5) int bdev_fail(char *detail, size_t detail_sz, int err,
+				    const char *fmt, ...)
 {
-	char line[KCONFIG_LINE_MAX + 1];
-	int state = -ENOENT, ret;
-	size_t off, n;
+	va_list ap;
 
-	if (!text)
-		return -EINVAL;
-	for (off = 0; off < len; off += n + 1) {
-		const char *nl = memchr(text + off, '\n', len - off);
-		const char *key, *value;
-
-		n = nl ? (size_t)(nl - text) - off : len - off;
-		ret = span_to_str(line, sizeof(line), text + off, n);
-		if (ret == -E2BIG)
-			continue;
-		if (ret)
-			return ret;
-		if (!kconfig_line(line, &key, &value) ||
-		    strcmp(key, "CONFIG_BLK_DEV_WRITE_MOUNTED"))
-			continue;
-		if (!strcmp(value, "y"))
-			state = 1;
-		else if (!strcmp(value, "n"))
-			state = 0;
-		else
-			return -EINVAL;
+	if (detail && detail_sz) {
+		va_start(ap, fmt);
+		if (vstrsprintf(detail, detail_sz, fmt, ap) < 0 &&
+		    strscpy(detail, "?", detail_sz) < 0)
+			detail[0] = '\0';
+		va_end(ap);
 	}
-	return state;
+	return err;
 }
 
-/*
- * Inflate one complete gzip member, as /proc/config.gz serves it, without
- * gzgets(), whose read-ahead fails in zlib 1.3.2 at the member boundary.
- */
-static int gunzip_kconfig(char *in, size_t len, char **out, size_t *out_len,
-			  size_t *cap)
+static int default_bdev_open(const char *path)
 {
-	size_t have = 0, size = 0, want;
-	char *buf = NULL, *grown;
-	int zret, ret = 0;
-	z_stream z = {};
+	int fd;
 
-	if (inflateInit2(&z, 16 + MAX_WBITS) != Z_OK)
-		return -ENOMEM;
-	z.next_in = (Bytef *)in;
-	z.avail_in = (uInt)len;
-	do {
-		if (have == size) {
-			if (size >= KCONFIG_MAX) {
-				ret = -EFBIG;
-				break;
-			}
-			want = min(size ? size * 2 : 65536U, KCONFIG_MAX);
-			grown = xreallocarray(buf, size ? size + 1 : 0,
-					      want + 1, 1);
-			if (!grown) {
-				ret = -ENOMEM;
-				break;
-			}
-			buf = grown;
-			size = want;
-		}
-		z.next_out = (Bytef *)buf + have;
-		z.avail_out = (uInt)(size - have);
-		zret = inflate(&z, Z_NO_FLUSH);
-		have = size - z.avail_out;
-		if (zret == Z_MEM_ERROR)
-			ret = -ENOMEM;
-		else if (zret != Z_OK && zret != Z_STREAM_END)
-			ret = -EINVAL;
-	} while (!ret && zret != Z_STREAM_END);
-	if (!ret && z.avail_in)
-		ret = -EINVAL;
-	inflateEnd(&z);
-	if (ret) {
-		xfree(buf, size ? size + 1 : 0);
-		return ret;
+	fd = open(path, O_WRONLY | O_CLOEXEC);
+	if (fd >= 0) {
+		close(fd);
+		return 0;
 	}
-	buf[have] = '\0';
-	*out = buf;
-	*out_len = have;
-	*cap = size + 1;
-	return 0;
+	return -errno;
 }
 
-int kernel_config_file_allows_write_mounted(const char *path, bool gz)
+int kernel_bdev_check_dev(__u32 maj, __u32 min,
+			  kernel_bdev_probe_open_fn open_fn,
+			  char *detail, size_t detail_sz)
 {
-	size_t len, text_len, cap;
-	char *raw, *text;
+	char dev_path[64];
 	int ret;
 
-	if (!path)
-		return -EINVAL;
-	ret = read_file(path, KCONFIG_MAX, &raw, &len);
-	if (ret)
-		return ret;
-	if (gz) {
-		ret = gunzip_kconfig(raw, len, &text, &text_len, &cap);
-		xfree(raw, len + 1);
-		if (ret)
-			return ret;
-	} else {
-		text = raw;
-		text_len = len;
-		cap = len + 1;
-	}
-	ret = kernel_kconfig_allows_write_mounted(text, text_len);
-	xfree(text, cap);
-	return ret;
-}
-
-static int parse_kstrtobool(const char *val, size_t len)
-{
-	char buf[8];
-
-	if (!len || span_to_str(buf, sizeof(buf), val, len))
-		return -EINVAL;
-	if (!strcmp(buf, "1") || str_equals_nocase(buf, "y") ||
-	    str_equals_nocase(buf, "yes") || str_equals_nocase(buf, "true") ||
-	    str_equals_nocase(buf, "on"))
-		return 1;
-	if (!strcmp(buf, "0") || str_equals_nocase(buf, "n") ||
-	    str_equals_nocase(buf, "no") || str_equals_nocase(buf, "false") ||
-	    str_equals_nocase(buf, "off"))
+	if (detail && detail_sz)
+		detail[0] = '\0';
+	if (maj == 0)
+		return bdev_fail(detail, detail_sz, -EOPNOTSUPP,
+				 "state directory has no block device (dev=0:%u); "
+				 "cannot verify mounted block-device write protection",
+				 min);
+	if (strsprintf(dev_path, sizeof(dev_path), "/dev/block/%u:%u",
+		       maj, min) < 0)
+		return bdev_fail(detail, detail_sz, -ENAMETOOLONG,
+				 "block device path too long");
+	ret = open_fn ? open_fn(dev_path) : default_bdev_open(dev_path);
+	if (ret == -EBUSY)
 		return 0;
-	return -EINVAL;
+	if (ret == 0)
+		return bdev_fail(detail, detail_sz, -EOPNOTSUPP,
+				 "writes to mounted block device %s are allowed "
+				 "(needs CONFIG_BLK_DEV_WRITE_MOUNTED=n and no "
+				 "bdev_allow_write_mounted=1)",
+				 dev_path);
+	return bdev_fail(detail, detail_sz, ret,
+			 "cannot probe block device %s: %s",
+			 dev_path, strerror(-ret));
 }
 
-int kernel_cmdline_write_mounted(const char *cmdline)
+int kernel_bdev_probe_write_mounted(const char *state_dir,
+				    kernel_bdev_probe_open_fn open_fn,
+				    char *detail, size_t detail_sz)
 {
-	const char *tok, *val;
-	int state = -ENOENT;
-	size_t len, vlen;
+	struct stat st;
 
-	if (!cmdline)
-		return -ENOENT;
-	for_each_token(tok, len, cmdline, strlen(cmdline), " \t\r\n") {
-		int parsed;
+	if (detail && detail_sz)
+		detail[0] = '\0';
+	if (!state_dir || !state_dir[0])
+		return bdev_fail(detail, detail_sz, -EINVAL,
+				 "state directory path is missing");
+	if (stat(state_dir, &st) != 0) {
+		int err = -errno;
 
-		if (is_arg_end(tok, len))
-			break;
-		val = span_after_prefix(tok, len, "bdev_allow_write_mounted=",
-					&vlen);
-		if (!val)
-			continue;
-		parsed = parse_kstrtobool(val, vlen);
-		if (parsed < 0)
-			return 1;
-		state = parsed;
+		return bdev_fail(detail, detail_sz, err,
+				 "cannot stat state directory %s: %s",
+				 state_dir, strerror(-err));
 	}
-	return state;
-}
-
-bool kernel_bdev_write_mounted_protected(const struct kernel_options *opts,
-					 int kconfig_allow,
-					 const char *cmdline)
-{
-	int cmd;
-
-	if (!opts || !opts->bdev_write_guard || !cmdline)
-		return false;
-	cmd = kernel_cmdline_write_mounted(cmdline);
-	if (cmd == 1)
-		return false;
-	if (cmd == 0)
-		return true;
-	return kconfig_allow == 0 || kconfig_allow == -ENOENT;
+	return kernel_bdev_check_dev((__u32)major(st.st_dev),
+				     (__u32)minor(st.st_dev),
+				     open_fn, detail, detail_sz);
 }

@@ -258,14 +258,14 @@ without the protection.
        ``bdev_allow_write_mounted=1`` on the command line.
      - The seal guards file operations. A write to the device under
        ``/var/lib/shirudo`` bypasses it.
-     - Partly. The pre-flight check ``bdev_write_mounted`` requires the
-       block-layer mounted-write guard in BTF, refuses
-       ``bdev_allow_write_mounted`` when enabled on ``/proc/cmdline``,
-       and refuses ``CONFIG_BLK_DEV_WRITE_MOUNTED=y`` in
-       ``/proc/config.gz`` or ``/boot/config-<release>`` unless
-       ``bdev_allow_write_mounted=0`` overrides it. Without either
-       config file, BTF alone does not show the compile-time default,
-       and the check passes (U10). See R19.
+     - Yes, on the kernel side. The pre-flight check
+       ``bdev_write_mounted`` resolves the state directory's ``st_dev``
+       (``/var/lib/shirudo``, or under ``/sysroot`` in the initrd) to
+       ``/dev/block/<major>:<minor>`` and opens it ``O_WRONLY`` without
+       writing, requiring ``EBUSY``; it fails if the open succeeds, if
+       the device cannot be examined, or if the state directory has no
+       block device (``major == 0``, such as ``tmpfs`` or
+       ``overlayfs``). See R19.
    * - A11
      - The kernel command line is authenticated as part of the UKI. It
        carries ``lsm=`` with ``bpf``, ``bpf.keyring_unsealed=1`` and
@@ -2355,30 +2355,18 @@ U9 init can rebind the register after hiding this boot's record
       ``--expect-bind-pcr=11`` with the initrd's values, or
       ``--expect-pcr=9`` with the predicted value.
 
-U10 Two kernel prerequisites are checked only in part
-   :Affects: A9 and A10.
-   :Consequence: The pre-flight cannot tell whether a kernel allows
-      writes under mounted file systems when the target has neither
-      ``/proc/config.gz`` nor ``/boot/config-<release>``, which is the
-      usual case in the initrd, where ``init`` runs first, on a kernel
-      built without ``CONFIG_IKCONFIG_PROC``: BTF shows that the guard
-      is built, not its default, and the check then passes on the
-      command line alone. A kernel with ``CONFIG_BLK_DEV_WRITE_MOUNTED=y``
-      and no ``bdev_allow_write_mounted`` parameter then initializes
-      without an error and without the protection A10 gives. The hibernation
-      check takes ``noresume`` for a disabled resume and does not look
-      at an initrd tool that resumes on its own.
-   :Status: Confirmed in code. Distribution kernels have the default
-      on: ``7.0.0-1020-azure`` has no ``/proc/config.gz``, and the
-      ``/boot/config-7.0.0-1020-azure`` of its root file system sets
-      ``CONFIG_BLK_DEV_WRITE_MOUNTED=y``; an initrd that does not carry
-      that file passes the check. Not booted with a shirudo initrd. The
-      32-bit compatibility check (A5) reads BTF, which shows whether
-      compatibility is built.
-   :Meanwhile: Put ``bdev_allow_write_mounted=0`` on the command line of
-      the UKI, which the check reads whatever the kernel's default is,
-      and build the kernel and its command line as
-      :doc:`/operate/plan/hardening` describes.
+U10 The hibernation check relies on command-line heuristics
+   :Affects: A9.
+   :Consequence: The hibernation check takes ``noresume`` for a disabled
+      resume even though writing ``/sys/power/resume`` can still
+      trigger a resume, and does not look at an initrd tool that resumes
+      on its own. The 32-bit compatibility check (A5) reads BTF, which
+      shows whether compatibility is built, and ``bdev_write_mounted``
+      (A10) actively probes the state directory's block device.
+   :Status: Confirmed in code.
+   :Meanwhile: Build the kernel with ``CONFIG_HIBERNATION=n`` or pass
+      ``nohibernate`` / ``lockdown=integrity`` on the UKI command line
+      as :doc:`/operate/plan/hardening` describes.
 
 U11 The boot continues when init fails
    :Affects: ``shirudo-initrd.service`` and the root file system's

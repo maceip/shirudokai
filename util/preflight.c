@@ -13,7 +13,6 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
-#include <sys/utsname.h>
 #include <unistd.h>
 
 #include <linux/keyctl.h>
@@ -277,24 +276,30 @@ static void check_hibernation_disabled(struct preflight_result *r,
 		     "resume= or resumewait)");
 }
 
-static void check_bdev_write_mounted(struct preflight_result *r,
-				     const struct kernel_options *opts,
-				     int kconfig_allow, const char *cmdline)
+static void check_bdev_write_mounted(struct preflight_result *r)
 {
 	struct preflight_check *c =
 		next_slot(r, PRE_BDEV_WRITE_MOUNTED, "bdev_write_mounted");
+	const char *state_dir = VAR_LIB;
+	char path[PATH_MAX];
+	int ret;
 
-	if (!opts)
-		fail(r, c, "cannot read the kernel BTF");
-	else if (!cmdline)
-		fail(r, c, "cannot read /proc/cmdline");
-	else if (kernel_bdev_write_mounted_protected(opts, kconfig_allow,
-						     cmdline))
+	if (in_initrd()) {
+		if (strsprintf(path, sizeof(path), "%s%s", sysroot(),
+			       VAR_LIB) < 0) {
+			fail(r, c, "state directory path too long");
+			return;
+		}
+		state_dir = path;
+	}
+	ret = kernel_bdev_probe_write_mounted(state_dir, NULL,
+					      c->detail, sizeof(c->detail));
+	if (ret == 0) {
 		pass(c);
-	else
-		fail(r, c, "writes to mounted block devices are not blocked "
-		     "(needs CONFIG_BLK_DEV_WRITE_MOUNTED=n and no "
-		     "bdev_allow_write_mounted=1)");
+	} else {
+		c->ok = false;
+		r->n_failed++;
+	}
 }
 
 static bool read_proc_cmdline(char *buf, size_t cap)
@@ -326,21 +331,6 @@ static bool read_proc_cmdline(char *buf, size_t cap)
 	return false;
 }
 
-static int probe_write_mounted_kconfig(void)
-{
-	char path[PATH_MAX];
-	struct utsname u;
-	int ret;
-
-	ret = kernel_config_file_allows_write_mounted("/proc/config.gz", true);
-	if (ret != -ENOENT)
-		return ret;
-	if (uname(&u) == 0 &&
-	    strsprintf(path, sizeof(path), "/boot/config-%s", u.release) > 0)
-		return kernel_config_file_allows_write_mounted(path, false);
-	return -ENOENT;
-}
-
 /* A BTF that cannot be read fails the checks that need it. */
 static void check_kernel_options(struct preflight_result *r)
 {
@@ -348,7 +338,6 @@ static void check_kernel_options(struct preflight_result *r)
 	struct kernel_options opts = {};
 	char cmdline[8192] = {};
 	bool have_cmdline;
-	int kconfig_allow;
 	struct btf *btf;
 
 	btf = btf__load_vmlinux_btf();
@@ -358,12 +347,10 @@ static void check_kernel_options(struct preflight_result *r)
 		btf__free(btf);
 	}
 	have_cmdline = read_proc_cmdline(cmdline, sizeof(cmdline));
-	kconfig_allow = probe_write_mounted_kconfig();
 	check_module_signatures(r, have);
 	check_compat_disabled(r, have);
 	check_hibernation_disabled(r, have, have_cmdline ? cmdline : NULL);
-	check_bdev_write_mounted(r, have, kconfig_allow,
-				 have_cmdline ? cmdline : NULL);
+	check_bdev_write_mounted(r);
 }
 
 static void check_cert(struct preflight_result *r)

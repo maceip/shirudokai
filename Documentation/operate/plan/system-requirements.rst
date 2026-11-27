@@ -213,8 +213,7 @@ assumes: module signatures (``module_signatures``), 32-bit
 compatibility off (``compat_disabled``), hibernation resume off
 (``hibernation_disabled``) and writes to mounted block devices blocked
 (``bdev_write_mounted``). It reads the kernel's BTF and
-``/proc/cmdline``, and ``/proc/config.gz`` or
-``/boot/config-<release>`` where present.
+``/proc/cmdline``, and probes the state directory's block device.
 
 :doc:`/operate/plan/hardening` lists the options the trust model assumes
 beyond the table above, why kernel lockdown is not among them, and why
@@ -404,11 +403,11 @@ Pre-flight checks
        (``CONFIG_HIBERNATION=n``) or ``/proc/cmdline`` carries
        ``noresume``, ``nohibernate`` or ``hibernate=no``.
    * - ``bdev_write_mounted``
-     - The kernel BTF has the block-layer mounted-write guard,
-       ``/proc/cmdline`` does not enable ``bdev_allow_write_mounted``,
-       and neither ``/proc/config.gz`` nor ``/boot/config-<release>``
-       sets ``CONFIG_BLK_DEV_WRITE_MOUNTED=y`` without
-       ``bdev_allow_write_mounted=0``.
+     - Resolves the state directory's ``st_dev`` to
+       ``/dev/block/<major>:<minor>`` and opens it ``O_WRONLY`` without
+       writing, requiring ``EBUSY``. Fails if the open succeeds, if the
+       device cannot be probed, or if the state directory has no block
+       device (``major == 0``, such as ``tmpfs`` or ``overlayfs``).
    * - ``cert_on_disk``
      - The primary certificate exists, is a regular file and is not
        empty.
