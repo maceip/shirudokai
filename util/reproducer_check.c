@@ -6,10 +6,12 @@
  */
 
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <bpf/bpf.h>
@@ -374,15 +376,19 @@ out:
 	return ret;
 }
 
-static int capture_live_snapshot(const char *upatch_name,
-				 const char *counters_map,
-				 const char *stack_map,
-				 struct reproducer_snapshot *out)
+int reproducer_capture_snapshot(const char *upatch_name,
+				const char *counters_map,
+				const char *stack_map,
+				struct reproducer_snapshot *out)
 {
 	__u32 nr_counted = 0;
 	__u64 missed = 0;
 	int ret;
 
+	if (!upatch_name || !upatch_name_valid(upatch_name) ||
+	    !upatch_map_name_valid(counters_map) ||
+	    (stack_map && !upatch_map_name_valid(stack_map)) || !out)
+		return -EINVAL;
 	memset(out, 0, sizeof(*out));
 	ret = read_counters_pin(upatch_name, counters_map, &out->counters);
 	if (ret)
@@ -395,6 +401,102 @@ static int capture_live_snapshot(const char *upatch_name,
 		return ret;
 	out->missed_runs = missed;
 	return 0;
+}
+
+int reproducer_snapshot_json(const struct reproducer_snapshot *snap,
+			     char **out_buf, size_t *out_cap)
+{
+	struct json_emit e = { .max = JSON_MAX_BYTES };
+	__u32 i, n;
+
+	if (!snap || !out_buf || !out_cap)
+		return -EINVAL;
+	*out_buf = NULL;
+	*out_cap = 0;
+
+	json_obj_open(&e);
+	json_kv_u64(&e, "activity", snap->counters.activity);
+	json_kv_u64(&e, "hits", snap->counters.hits);
+	json_kv_u64(&e, "enforced", snap->counters.enforced);
+	json_kv_u64(&e, "observed", snap->counters.observed);
+	json_kv_u64(&e, "missed_runs", snap->missed_runs);
+	json_arr_open(&e, "stack_ids");
+	n = min(snap->nr_stack_ids, REPRODUCER_MAX_STACK_IDS);
+	for (i = 0; i < n; i++)
+		json_u64_value(&e, snap->stack_ids[i]);
+	json_arr_close(&e);
+	json_obj_close(&e);
+
+	if (e.err) {
+		xfree(e.buf, e.cap);
+		return e.err;
+	}
+	*out_buf = e.buf;
+	*out_cap = e.cap;
+	return 0;
+}
+
+int reproducer_snapshot_write_file(const struct reproducer_snapshot *snap,
+				   const char *path)
+{
+	char *buf = NULL;
+	size_t cap = 0;
+	int fd, ret;
+
+	if (!snap || !path || !path[0])
+		return -EINVAL;
+	ret = reproducer_snapshot_json(snap, &buf, &cap);
+	if (ret)
+		return ret;
+	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+	if (fd < 0) {
+		ret = -errno;
+		goto out;
+	}
+	ret = write_complete(fd, buf, strlen(buf));
+	if (!ret)
+		ret = write_complete(fd, "\n", 1);
+	if (close(fd) && !ret)
+		ret = -errno;
+out:
+	xfree(buf, cap);
+	return ret;
+}
+
+int reproducer_snapshot_files_identical(const char *path_a, const char *path_b,
+					bool *identical)
+{
+	struct stat st_a, st_b;
+	char *buf_a = NULL, *buf_b = NULL;
+	size_t len_a = 0, len_b = 0;
+	int ret;
+
+	if (!path_a || !path_b || !identical)
+		return -EINVAL;
+	*identical = false;
+	if (strcmp(path_a, path_b) == 0) {
+		*identical = true;
+		return 0;
+	}
+	if (stat(path_a, &st_a) || stat(path_b, &st_b))
+		return 0;
+	if (st_a.st_dev == st_b.st_dev && st_a.st_ino == st_b.st_ino) {
+		*identical = true;
+		return 0;
+	}
+	if (st_a.st_size != st_b.st_size)
+		return 0;
+	ret = read_file(path_a, SNAPSHOT_FILE_MAX, &buf_a, &len_a);
+	if (ret)
+		return ret;
+	ret = read_file(path_b, SNAPSHOT_FILE_MAX, &buf_b, &len_b);
+	if (!ret)
+		*identical = len_a == len_b &&
+			     (!len_a || memcmp(buf_a, buf_b, len_a) == 0);
+	xfree(buf_a, len_a + 1);
+	if (buf_b)
+		xfree(buf_b, len_b + 1);
+	return ret;
 }
 
 static int run_input_once(int prog_fd, const char *input_path, __u32 *retval)
@@ -448,22 +550,22 @@ int reproducer_run_test_prog(const char *upatch_name,
 		ret = -ESTALE;
 		goto out;
 	}
-	ret = capture_live_snapshot(upatch_name, counters_map, stack_map,
-				    &before);
+	ret = reproducer_capture_snapshot(upatch_name, counters_map, stack_map,
+					  &before);
 	if (ret)
 		goto out;
 	ret = run_input_once(prog_fd, test_input_path, &exp_ret);
 	if (ret)
 		goto out;
-	ret = capture_live_snapshot(upatch_name, counters_map, stack_map,
-				    &after_exp);
+	ret = reproducer_capture_snapshot(upatch_name, counters_map, stack_map,
+					  &after_exp);
 	if (ret)
 		goto out;
 	ret = run_input_once(prog_fd, benign_input_path, &ben_ret);
 	if (ret)
 		goto out;
-	ret = capture_live_snapshot(upatch_name, counters_map, stack_map,
-				    &after_ben);
+	ret = reproducer_capture_snapshot(upatch_name, counters_map, stack_map,
+					  &after_ben);
 	if (ret)
 		goto out;
 	ret = reproducer_evaluate(&before, &after_exp, &after_ben, out);

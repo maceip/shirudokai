@@ -212,10 +212,24 @@ test_expect_success 'shirudo upatch check passes valid reproducer snapshots and 
 	PY
 '
 
-test_expect_success 'shirudo upatch check refuses a verdict without a benign phase' '
+test_expect_success 'shirudo upatch check refuses a verdict without a benign phase or with identical files' '
 	rc=0 &&
 	{ "$S" upatch check cve-shield --before "$WORK/before.json" \
 		--after-exploit "$WORK/after_exp.json" >/dev/null 2>&1 || rc=$?; } &&
+	test "$rc" = 2 &&
+	rc=0 &&
+	{ "$S" upatch check cve-shield --before "$WORK/before.json" \
+		--after-exploit "$WORK/after_exp.json" \
+		--after-benign "$WORK/after_exp.json" >/dev/null 2>&1 || rc=$?; } &&
+	test "$rc" = 2 &&
+	cp "$WORK/after_exp.json" "$WORK/after_exp_copy.json" &&
+	rc=0 &&
+	{ "$S" upatch check cve-shield --before "$WORK/before.json" \
+		--after-exploit "$WORK/after_exp.json" \
+		--after-benign "$WORK/after_exp_copy.json" >/dev/null 2>&1 || rc=$?; } &&
+	test "$rc" = 2 &&
+	rc=0 &&
+	{ "$S" upatch check --snapshot "$WORK/snap.json" >/dev/null 2>&1 || rc=$?; } &&
 	test "$rc" = 2
 '
 

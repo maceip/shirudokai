@@ -5799,6 +5799,7 @@ enum upatch_check_opt {
 	UPATCH_CHECK_AFTER_BENIGN,
 	UPATCH_CHECK_TEST_INPUT,
 	UPATCH_CHECK_BENIGN_INPUT,
+	UPATCH_CHECK_SNAPSHOT,
 	UPATCH_CHECK_COUNTERS_MAP,
 	UPATCH_CHECK_STACK_MAP,
 	UPATCH_CHECK_JSON,
@@ -5817,6 +5818,8 @@ static const struct opt_spec upatch_check_opts[] = {
 		"run the loaded upatch's test program on <file> as exploit input" },
 	[UPATCH_CHECK_BENIGN_INPUT] = { "--benign-input", 0, 0, "<file>",
 		"with --test-input, also run the test program on <file> as benign input" },
+	[UPATCH_CHECK_SNAPSHOT] = { "--snapshot", 0, 0, "<out.json>",
+		"capture a live telemetry snapshot from the loaded upatch" },
 	[UPATCH_CHECK_COUNTERS_MAP] = { "--counters-map", 0, 0, "<map>",
 		"pinned struct shield_counters map name (default shield_counters)" },
 	[UPATCH_CHECK_STACK_MAP] = { "--stack-map", 0, 0, "<map>",
@@ -5832,6 +5835,8 @@ static const struct help_section upatch_check_sections[] = {
 static const struct help upatch_check_help = {
 	.usage      = "shirudo upatch check [<name>] --before <file> --after-exploit <file>\n"
 		      "                            --after-benign <file> [--json]\n"
+		      "       shirudo upatch check <name> --snapshot <out.json>\n"
+		      "                            [--counters-map <map>] [--stack-map <map>]\n"
 		      "       shirudo upatch check <name> --test-input <file> --benign-input <file>\n"
 		      "                            [--counters-map <map>] [--stack-map <map>] [--json]",
 	.summary    = "Verify a shield in observe or test-run mode before switching\n"
@@ -5842,6 +5847,7 @@ static const struct help upatch_check_help = {
 	.n_sections = ARRAY_SIZE(upatch_check_sections),
 	.footer     =
 "Examples:\n"
+"  shirudo upatch check shield --snapshot before.json\n"
 "  shirudo upatch check shield --before b.json --after-exploit e.json --after-benign w.json\n"
 "  shirudo upatch check shield --test-input repro.bin --benign-input ok.bin --json",
 };
@@ -5850,6 +5856,7 @@ static int cmd_upatch_check(int argc, const char **argv)
 {
 	const char *before_path = NULL, *exploit_path = NULL, *benign_path = NULL;
 	const char *test_input = NULL, *benign_input = NULL;
+	const char *snapshot_path = NULL;
 	const char *counters_map = "shield_counters";
 	const char *stack_map = NULL;
 	const char *upatch_name = NULL;
@@ -5877,6 +5884,9 @@ static int cmd_upatch_check(int argc, const char **argv)
 		case UPATCH_CHECK_BENIGN_INPUT:
 			benign_input = p.value;
 			break;
+		case UPATCH_CHECK_SNAPSHOT:
+			snapshot_path = p.value;
+			break;
 		case UPATCH_CHECK_COUNTERS_MAP:
 			counters_map = p.value;
 			break;
@@ -5899,6 +5909,34 @@ static int cmd_upatch_check(int argc, const char **argv)
 		default:
 			return EXIT_USAGE;
 		}
+	}
+
+	if (snapshot_path) {
+		struct reproducer_snapshot snap = {};
+
+		if (before_path || exploit_path || benign_path ||
+		    test_input || benign_input || json) {
+			opt_usage(&p, "--snapshot cannot be combined with evaluation options");
+			return EXIT_USAGE;
+		}
+		if (!upatch_name || !upatch_name_valid(upatch_name)) {
+			opt_usage(&p, "--snapshot requires a valid loaded <upatch-name>");
+			return EXIT_USAGE;
+		}
+		err = reproducer_capture_snapshot(upatch_name, counters_map,
+						  stack_map, &snap);
+		if (err) {
+			pr_err("upatch check: %s: %s", upatch_name,
+			       strerror(-err));
+			return 1;
+		}
+		err = reproducer_snapshot_write_file(&snap, snapshot_path);
+		if (err) {
+			pr_err("upatch check: %s: %s", snapshot_path,
+			       strerror(-err));
+			return 1;
+		}
+		return 0;
 	}
 
 	if (test_input && (before_path || exploit_path || benign_path)) {
@@ -5931,9 +5969,17 @@ static int cmd_upatch_check(int argc, const char **argv)
 	} else {
 		struct reproducer_snapshot before = {}, after_exp = {};
 		struct reproducer_snapshot after_ben = {};
+		bool identical = false;
 
 		if (!before_path || !exploit_path || !benign_path) {
-			opt_usage(&p, "takes --before, --after-exploit and --after-benign <file>, or <name> --test-input <file> --benign-input <file>");
+			opt_usage(&p, "takes --before, --after-exploit and --after-benign <file>, <name> --snapshot <out.json>, or <name> --test-input <file> --benign-input <file>");
+			return EXIT_USAGE;
+		}
+		err = reproducer_snapshot_files_identical(exploit_path,
+							  benign_path,
+							  &identical);
+		if (!err && identical) {
+			opt_usage(&p, "--after-exploit and --after-benign must be distinct snapshots");
 			return EXIT_USAGE;
 		}
 		err = reproducer_snapshot_read_file(before_path, &before);

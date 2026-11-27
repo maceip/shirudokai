@@ -59,6 +59,16 @@ int reproducer_snapshot_parse_json(const char *data, size_t len,
 				   struct reproducer_snapshot *out);
 int reproducer_snapshot_read_file(const char *path,
 				  struct reproducer_snapshot *out);
+int reproducer_capture_snapshot(const char *upatch_name,
+				const char *counters_map,
+				const char *stack_map,
+				struct reproducer_snapshot *out);
+int reproducer_snapshot_json(const struct reproducer_snapshot *snap,
+			     char **out_buf, size_t *out_cap);
+int reproducer_snapshot_write_file(const struct reproducer_snapshot *snap,
+				   const char *path);
+int reproducer_snapshot_files_identical(const char *path_a, const char *path_b,
+					bool *identical);
 
 int reproducer_run_test_prog(const char *upatch_name,
 			     const char *counters_map,

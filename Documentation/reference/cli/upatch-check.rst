@@ -24,6 +24,8 @@ Usage
    shirudo upatch check [<name>] --before <snapshot.json>
                         --after-exploit <snapshot.json>
                         --after-benign <snapshot.json> [--json]
+   shirudo upatch check <name> --snapshot <out.json>
+                        [--counters-map <map>] [--stack-map <map>]
    shirudo upatch check <name> --test-input <file> --benign-input <file>
                         [--counters-map <map>] [--stack-map <map>] [--json]
 
@@ -52,7 +54,13 @@ after ``BPF_PROG_TEST_RUN`` on ``<file>`` and on the
 
 A benign phase is required in both forms: a shield that was never shown
 a benign workload has not been shown to leave one alone, and ``check``
-does not pass it.
+does not pass it. Passing the same file or identical snapshot contents
+to ``--after-exploit`` and ``--after-benign`` is refused.
+
+With ``--snapshot <out.json>``, ``check`` reads the loaded upatch's
+pinned ``struct shield_counters`` map, optional ``--stack-map`` hash
+map, and missed-run counters, and writes a JSON snapshot file suitable
+for ``--before``, ``--after-exploit``, and ``--after-benign``.
 
 ``check`` runs no exploit and no workload itself. The snapshots are
 what the caller recorded around its own runs, and ``--test-input``
@@ -92,6 +100,12 @@ Options
      - none
      - Input passed to ``BPF_PROG_TEST_RUN`` for the benign run.
        Required with ``--test-input``.
+   * - ``--snapshot``
+     - ``<out.json>``
+     - none
+     - Capture a live telemetry snapshot from ``<name>`` and write it
+       as JSON to ``<out.json>``. Cannot be combined with evaluation
+       options.
    * - ``--counters-map``
      - ``<map>``
      - ``shield_counters``

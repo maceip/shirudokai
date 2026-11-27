@@ -210,11 +210,68 @@ static void verdict_json_and_text_are_deterministic(void)
 					     "/nonexistent", &v) < 0);
 }
 
+static void snapshot_json_roundtrips_and_detects_identical_files(void)
+{
+	struct reproducer_snapshot in = {
+		.counters = {
+			.activity = 42,
+			.hits = 3,
+			.enforced = 0,
+			.observed = 3,
+		},
+		.missed_runs = 1,
+		.stack_ids = { 17, 99 },
+		.nr_stack_ids = 2,
+	};
+	struct reproducer_snapshot out;
+	char path_a[] = "/tmp/shirudo-snap-a-XXXXXX";
+	char path_b[] = "/tmp/shirudo-snap-b-XXXXXX";
+	char *buf = NULL;
+	size_t cap = 0;
+	bool same = false;
+	int fd_a, fd_b;
+
+	ASSERT_EQ(reproducer_snapshot_json(&in, &buf, &cap), 0);
+	ASSERT_TRUE(buf);
+	ASSERT_EQ(reproducer_snapshot_parse_json(buf, strlen(buf), &out), 0);
+	EXPECT_UEQ(out.counters.activity, 42);
+	EXPECT_UEQ(out.counters.hits, 3);
+	EXPECT_UEQ(out.counters.observed, 3);
+	EXPECT_UEQ(out.missed_runs, 1);
+	ASSERT_UEQ(out.nr_stack_ids, 2);
+	EXPECT_UEQ(out.stack_ids[0], 17);
+	EXPECT_UEQ(out.stack_ids[1], 99);
+	xfree(buf, cap);
+
+	fd_a = mkstemp(path_a);
+	fd_b = mkstemp(path_b);
+	ASSERT_TRUE(fd_a >= 0 && fd_b >= 0);
+	close(fd_a);
+	close(fd_b);
+	ASSERT_EQ(reproducer_snapshot_write_file(&in, path_a), 0);
+	ASSERT_EQ(reproducer_snapshot_write_file(&in, path_b), 0);
+	ASSERT_EQ(reproducer_snapshot_files_identical(path_a, path_b, &same),
+		  0);
+	EXPECT_TRUE(same);
+
+	in.counters.activity = 43;
+	ASSERT_EQ(reproducer_snapshot_write_file(&in, path_b), 0);
+	ASSERT_EQ(reproducer_snapshot_files_identical(path_a, path_b, &same),
+		  0);
+	EXPECT_FALSE(same);
+	unlink(path_a);
+	unlink(path_b);
+
+	EXPECT_EQ(reproducer_capture_snapshot("../bad", "shield_counters", NULL,
+					      &out), -EINVAL);
+}
+
 static const struct unit_case cases[] = {
 	UNIT_CASE(reproducer_passes_when_exploit_hits_and_benign_is_clean),
 	UNIT_CASE(reproducer_fails_on_zero_exploit_hits_benign_hit_or_miss),
 	UNIT_CASE(snapshot_json_parses_flat_and_nested_and_rejects_bad_input),
 	UNIT_CASE(verdict_json_and_text_are_deterministic),
+	UNIT_CASE(snapshot_json_roundtrips_and_detects_identical_files),
 	{}
 };
 

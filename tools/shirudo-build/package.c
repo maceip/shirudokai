@@ -2255,8 +2255,10 @@ static int sync_observe_rodata(struct bpf_object *obj, bool observe)
 			name = btf__name_by_offset(btf, var->name_off);
 			if (!name || strcmp(name, "shirudo_observe_mode") != 0)
 				continue;
-			if (found)
+			if (found) {
+				pr_err("duplicate shirudo_observe_mode symbol");
 				return -EINVAL;
+			}
 			if (!sec_name || strcmp(sec_name, ".rodata") != 0) {
 				pr_err("shirudo_observe_mode must be in .rodata, not '%s'",
 				       sec_name ? sec_name : "");
