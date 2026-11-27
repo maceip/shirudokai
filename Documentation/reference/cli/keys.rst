@@ -159,7 +159,8 @@ Options
      - Print the key material as one JSON object: ``schema`` (1),
        ``cert`` and ``signing_key`` (objects, or ``null`` when absent),
        ``trusted_set`` (a list of ``fingerprint``, ``sha256``,
-       ``primary`` and ``voucher``) and ``keyrings`` (``.bpf`` and
+       ``primary``, ``voucher``, ``vouch_not_after`` and
+       ``vouch_days_left``) and ``keyrings`` (``.bpf`` and
        ``.dm-verity``, each with ``present``, ``serial``,
        ``frozen_serial`` and ``members``).
    * - ``--vouch``

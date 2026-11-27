@@ -46,6 +46,7 @@
 #include "util/malloc.h"
 #include "util/paths.h"
 #include "util/seal.h"
+#include "util/timefmt.h"
 #include "util/upatch.h"
 
 static X509 *read_cert_der(const char *path)
@@ -1186,6 +1187,7 @@ static int keys_show(int argc, const char **argv)
 		json_arr_open(&je, "trusted_set");
 	if (have_set && (json || set.n > 1 || set.n_revoked ||
 			 set.n_unvouched)) {
+		__s64 now = (__s64)time(NULL);
 		size_t i;
 
 		if (!json)
@@ -1194,28 +1196,54 @@ static int keys_show(int argc, const char **argv)
 			       set.n == 1 ? "" : "s", set.n_revoked,
 			       set.n_unvouched);
 		for (i = 0; i < set.n; i++) {
-			char fp[65], sha[65], voucher[65];
+			const struct trusted_cert *m = &set.certs[i];
+			char fp[65], sha[65], voucher[65], exp_s[32];
+			bool has_exp = m->vouch_not_after > 0;
+			__s64 days_left = 0;
 
-			hex_encode(set.certs[i].fingerprint, 32, fp);
-			hex_encode(set.certs[i].sha256, 32, sha);
-			hex_encode(set.certs[i].voucher, 32, voucher);
+			hex_encode(m->fingerprint, 32, fp);
+			hex_encode(m->sha256, 32, sha);
+			hex_encode(m->voucher, 32, voucher);
+			if (has_exp) {
+				if (iso8601((time_t)m->vouch_not_after, exp_s,
+					    sizeof(exp_s)))
+					strscpy_literal(exp_s, "?");
+				days_left = (m->vouch_not_after - now) / 86400;
+			}
 			if (json) {
 				json_obj_open(&je);
 				json_kv_string(&je, "fingerprint", fp);
 				json_kv_string(&je, "sha256", sha);
-				json_kv_bool(&je, "primary",
-					     set.certs[i].primary);
-				if (set.certs[i].primary)
+				json_kv_bool(&je, "primary", m->primary);
+				if (m->primary)
 					json_kv_null(&je, "voucher");
 				else
 					json_kv_string(&je, "voucher", voucher);
+				if (has_exp) {
+					json_kv_string(&je, "vouch_not_after",
+						       exp_s);
+					json_kv_int(&je, "vouch_days_left",
+						    days_left);
+				} else {
+					json_kv_null(&je, "vouch_not_after");
+					json_kv_null(&je, "vouch_days_left");
+				}
 				json_obj_close(&je);
 				continue;
 			}
 			printf("  %s%s\n    sha256 %s\n", fp,
-			       set.certs[i].primary ? "  (primary)" : "", sha);
-			if (!set.certs[i].primary)
+			       m->primary ? "  (primary)" : "", sha);
+			if (!m->primary)
 				printf("    vouched by %s\n", voucher);
+			if (has_exp) {
+				if (m->vouch_not_after < now)
+					printf("    vouch expires %s (expired)\n",
+					       exp_s);
+				else
+					printf("    vouch expires %s (%lld day%s left)\n",
+					       exp_s, (long long)days_left,
+					       days_left == 1 ? "" : "s");
+			}
 		}
 		if (!json)
 			shown = true;

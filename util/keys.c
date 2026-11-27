@@ -553,7 +553,8 @@ static bool set_holds(const struct trusted_set *set,
 
 static int set_add(struct trusted_set *set, const char *path,
 		   const __u8 sha256[32], const __u8 fingerprint[32],
-		   const __u8 voucher[32], const __u8 *der, size_t der_sz)
+		   const __u8 voucher[32], __s64 vouch_not_after,
+		   const __u8 *der, size_t der_sz)
 {
 	struct trusted_cert *c;
 	int ret;
@@ -575,6 +576,7 @@ static int set_add(struct trusted_set *set, const char *path,
 		memcpy(c->voucher, voucher, 32);
 	else
 		c->primary = true;
+	c->vouch_not_after = vouch_not_after;
 	set->n++;
 	return 0;
 }
@@ -652,6 +654,7 @@ static int admit_vouched(struct trusted_set *set,
 			size_t sig_sz = 0;
 			__u8 *sig = NULL;
 			__u8 voucher[32];
+			__s64 not_after = 0;
 			int ret;
 
 			if (c->done)
@@ -668,11 +671,14 @@ static int admit_vouched(struct trusted_set *set,
 				continue;
 			ret = keys_verify_vouch_sig(set, c->der, c->der_sz,
 						    sig, sig_sz, voucher);
+			if (!ret && keys_vouch_v2_not_after(sig, sig_sz,
+							    &not_after))
+				not_after = 0;
 			xfree(sig, sig_sz);
 			if (ret)
 				continue;
 			ret = set_add(set, c->path, c->sha256, c->fingerprint,
-				      voucher, c->der, c->der_sz);
+				      voucher, not_after, c->der, c->der_sz);
 			if (ret)
 				return ret;
 			c->done = true;
@@ -856,7 +862,8 @@ static int load_set(const char *primary, const char *keys_dir,
 	if (ret)
 		return ret;
 	if (!keys_is_revoked(revoked_dir, fingerprint)) {
-		ret = set_add(set, primary, sha256, fingerprint, NULL, NULL, 0);
+		ret = set_add(set, primary, sha256, fingerprint, NULL, 0,
+			      NULL, 0);
 		if (ret)
 			return ret;
 	}
@@ -899,7 +906,7 @@ static int load_set_at(const char *primary, int keys_fd, const char *display,
 	ret = keys_take_file(primary, sha256, fingerprint);
 	if (ret)
 		return ret;
-	ret = set_add(set, primary, sha256, fingerprint, NULL, NULL, 0);
+	ret = set_add(set, primary, sha256, fingerprint, NULL, 0, NULL, 0);
 	if (ret)
 		return ret;
 	if (keys_fd == -ENOENT)

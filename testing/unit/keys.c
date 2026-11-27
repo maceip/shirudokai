@@ -458,6 +458,8 @@ static void boot_admission_ignores_clock_and_staging_enforces_validity(void)
 	EXPECT_EQ(set.n, 2u);
 	EXPECT_EQ(set.n_unvouched, 0u);
 	EXPECT_TRUE(keys_member(&set, fp_ok));
+	EXPECT_EQ(keys_member(&set, fp_a)->vouch_not_after, 0);
+	EXPECT_EQ(keys_member(&set, fp_ok)->vouch_not_after, now - 10);
 	EXPECT_EQ(keys_validate_image_validity_at(primary, root_fd, now),
 		  -EKEYEXPIRED);
 	EXPECT_EQ(keys_validate_image_validity_at(primary, root_fd, now - 20),

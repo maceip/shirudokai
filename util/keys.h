@@ -33,6 +33,7 @@ struct trusted_cert {
 	__u8		sha256[32];		/* of the DER file */
 	__u8		fingerprint[32];	/* of the public key */
 	__u8		voucher[32];
+	__s64		vouch_not_after;	/* > 0 for bounded v2 vouch */
 	bool		primary;		/* cert.der */
 };
 
