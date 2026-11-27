@@ -91,36 +91,19 @@ static void modules_without_signatures(void)
 	EXPECT_FALSE(opts.module_sig);
 }
 
-static void compat_detected_by_syscall_table_or_exec_symbols(void)
+static void compat_detected_by_compat_funcs(void)
 {
 	static const char *const compat_funcs[] = {
 		"__do_fast_syscall_32",
-		"ia32_sys_call_table",
-		"compat_elf_check_arch",
-		"compat_alloc_user_space",
 		"get_compat_sigset",
 	};
 	struct kernel_options opts;
-	struct btf *btf;
-	int u64_id;
 	size_t i;
 
 	for (i = 0; i < ARRAY_SIZE(compat_funcs); i++) {
 		options_of(&compat_funcs[i], 1, &opts);
 		EXPECT_TRUE(opts.compat);
 	}
-
-	/* ia32_sys_call_table may also appear as a BTF_KIND_VAR symbol. */
-	btf = btf__new_empty();
-	ASSERT_TRUE(!libbpf_get_error(btf));
-	u64_id = btf__add_int(btf, "u64", 8, 0);
-	ASSERT_TRUE(u64_id > 0);
-	ASSERT_TRUE(btf__add_var(btf, "ia32_sys_call_table", BTF_VAR_GLOBAL_ALLOCATED,
-				 u64_id) > 0);
-	memset(&opts, 0, sizeof(opts));
-	kernel_prereq_options(btf, &opts);
-	EXPECT_TRUE(opts.compat);
-	btf__free(btf);
 }
 
 static void hibernation_detected_and_gated_by_cmdline(void)
@@ -235,7 +218,7 @@ static const struct unit_case cases[] = {
 	UNIT_CASE(options_of_a_kernel_with_all),
 	UNIT_CASE(options_of_a_kernel_with_none),
 	UNIT_CASE(modules_without_signatures),
-	UNIT_CASE(compat_detected_by_syscall_table_or_exec_symbols),
+	UNIT_CASE(compat_detected_by_compat_funcs),
 	UNIT_CASE(hibernation_detected_and_gated_by_cmdline),
 	UNIT_CASE(bdev_write_mounted_active_probe),
 	{}

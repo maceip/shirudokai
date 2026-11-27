@@ -30,12 +30,6 @@ static bool has_func(const struct btf *btf, const char *name)
 	return btf && btf__find_by_name_kind(btf, name, BTF_KIND_FUNC) > 0;
 }
 
-static bool has_symbol(const struct btf *btf, const char *name)
-{
-	return btf && (btf__find_by_name_kind(btf, name, BTF_KIND_FUNC) > 0 ||
-		       btf__find_by_name_kind(btf, name, BTF_KIND_VAR) > 0);
-}
-
 static bool is_arg_end(const char *tok, size_t len)
 {
 	return len == 2 && tok[0] == '-' && tok[1] == '-';
@@ -61,10 +55,7 @@ void kernel_prereq_options(const struct btf *btf, struct kernel_options *out)
 {
 	out->modules = has_func(btf, "__module_address");
 	out->module_sig = has_func(btf, "mod_verify_sig");
-	out->compat = has_symbol(btf, "__do_fast_syscall_32") ||
-		      has_symbol(btf, "ia32_sys_call_table") ||
-		      has_symbol(btf, "compat_elf_check_arch") ||
-		      has_func(btf, "compat_alloc_user_space") ||
+	out->compat = has_func(btf, "__do_fast_syscall_32") ||
 		      has_func(btf, "get_compat_sigset");
 	out->hibernation = has_func(btf, "hibernation_set_ops") ||
 			   has_func(btf, "software_resume");
