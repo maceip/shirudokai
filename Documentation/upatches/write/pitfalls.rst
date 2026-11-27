@@ -141,6 +141,33 @@ programs another datapath attached there:
   nonlinear fragments with ``bpf_skb_load_bytes()``.
 - Loopback has no device class and is never selected.
 
+What ptrace and unix socket hooks do not see
+-------------------------------------------
+
+``lsm/ptrace_access_check`` runs when a tracer calls ``PTRACE_ATTACH``
+or ``PTRACE_SEIZE``, or opens ``/proc/<pid>/mem``, ``environ`` or
+``maps``:
+
+- It does **not** see ``PTRACE_TRACEME``. A child that asks its parent to
+  trace it invokes ``lsm/ptrace_traceme``, where ``current`` is the
+  tracee and the argument is the parent tracer.
+- It does not see a tracer that already attached before the policy was
+  loaded or before the task entered confinement.
+
+``lsm/unix_stream_connect`` and ``lsm/unix_may_send`` check the peer
+socket when connecting a stream socket or sending a datagram:
+
+- They do **not** see traffic on an already-connected ``AF_UNIX`` stream
+  socket, a descriptor passed over ``SCM_RIGHTS``, or
+  ``socketpair(AF_UNIX, ...)``, which creates connected sockets without
+  calling either hook.
+- They do **not** see the receive side (``accept()``, ``recvmsg()``),
+  and ``unix_stream_connect`` inspects the listening peer socket rather
+  than the client's own address.
+- An unbound or unnamed ``AF_UNIX`` socket has no ``dentry`` and no
+  ``sun_path``, so path or basename rules match only bound filesystem or
+  abstract sockets.
+
 RCU pointers in sleepable programs
 ----------------------------------
 
