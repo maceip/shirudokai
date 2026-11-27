@@ -220,6 +220,7 @@ struct bpf_map {
 	__u32	value_size;
 	__u32	max_entries;
 	__u32	map_flags;
+	__u32	btf_value_type_id;
 };
 
 /* The programs, two maps of any name and the serializers' output map. */
@@ -288,6 +289,42 @@ __u32 bpf_map__max_entries(const struct bpf_map *map)
 __u32 bpf_map__map_flags(const struct bpf_map *map)
 {
 	return map->map_flags;
+}
+
+__u32 bpf_map__btf_value_type_id(const struct bpf_map *map)
+{
+	return map->btf_value_type_id;
+}
+
+struct btf {
+	int	unused;
+};
+
+static struct btf stub_btf;
+static const struct btf_type stub_struct_ops_types[2] = {
+	{ .name_off = 1, .info = BTF_KIND_STRUCT << 24 },
+	{ .name_off = 2, .info = BTF_KIND_STRUCT << 24 },
+};
+
+struct btf *bpf_object__btf(const struct bpf_object *obj)
+{
+	return &stub_btf;
+}
+
+const struct btf_type *btf__type_by_id(const struct btf *btf, __u32 type_id)
+{
+	if (type_id == 1 || type_id == 2)
+		return &stub_struct_ops_types[type_id - 1];
+	return NULL;
+}
+
+const char *btf__name_by_offset(const struct btf *btf, __u32 offset)
+{
+	if (offset == 1)
+		return "tcp_congestion_ops";
+	if (offset == 2)
+		return "sched_ext_ops";
+	return "";
 }
 
 void pr_err(const char *fmt, ...)
@@ -647,7 +684,9 @@ void harness(void)
 	__u32 nr_maps, len = 0xdeadbeef, classes = 0, nr_uprobes = 0, i;
 	const struct shape *shape = objects[LEN].progs;
 	struct prog_spec *specs;
+	__u32 nr_struct_ops = 0;
 	__u32 verdict = TAKEN;
+	bool bad_struct_ops = false;
 	struct bpf_object obj;
 	void *md = (void *)1;
 	bool has_output;
@@ -664,11 +703,16 @@ void harness(void)
 	for (i = 0; i < ARRAY_SIZE(obj.maps); i++) {
 		obj.maps[i].idx = i;
 		__CPROVER_assume(!obj.maps[i].name[UPATCH_PROG_MAP_MAX]);
-		__CPROVER_assume(obj.maps[i].type != BPF_MAP_TYPE_STRUCT_OPS ||
-				 (obj.maps[i].map_flags & BPF_F_LINK));
-		__CPROVER_assume(!i ||
-				 obj.maps[i].type != BPF_MAP_TYPE_STRUCT_OPS);
+		if (obj.maps[i].type == BPF_MAP_TYPE_STRUCT_OPS) {
+			nr_struct_ops++;
+			if (!(obj.maps[i].map_flags & BPF_F_LINK) ||
+			    nr_struct_ops > 1 ||
+			    obj.maps[i].btf_value_type_id != 1)
+				bad_struct_ops = true;
+		}
 	}
+	if (bad_struct_ops)
+		verdict = REFUSED;
 	text(obj.maps[2].name, SERIAL_MAP_NAME, false);
 	if (!has_output)
 		obj.maps[2].name[0] = '\0';

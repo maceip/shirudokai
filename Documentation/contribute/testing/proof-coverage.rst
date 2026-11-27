@@ -765,8 +765,11 @@ or shorter, and "lengths 0 to 6" every input of each of those lengths.
        by BTF target, cgroup and netfilter, a test run, serializers of
        one and two maps, one with any 3 bytes behind its map's first,
        a map name at its limit, and the sections and programs the writer
-       must refuse; any map count, any two map names and any output map,
-       or none
+       must refuse; any map count, any three map types, flags and BTF
+       value type IDs (covering ``struct_ops`` maps without
+       ``BPF_F_LINK``, more than one ``struct_ops`` map, and
+       unallowlisted ``struct_ops`` types), any two map names and any
+       output map, or none
      - A table of the length the format gives; the reader takes it and
        reads back each role, kind, target, offset and map; a refusal
        leaves nothing written and nothing allocated
