@@ -322,7 +322,7 @@ static __always_inline bool port_allowed(__u64 sandboxes, struct socket *sock,
 	else
 		proto_bit = 0;
 	if (!proto_bit)
-		return false;
+		return !(sandboxes & sandbox_policy.port_enforced);
 
 	for (i = 0; i < SANDBOX_PORT_MAX; i++) {
 		if (i >= nr_ports)

@@ -23,6 +23,8 @@ cloud_imds = [
 
 [sandbox.llm-agent]
 families = ["inet", "inet6", "unix"]
+# By default only cloud metadata endpoints below are denied and all other
+# egress is allowed. Set network = [...] to restrict egress to an allowlist.
 deny_ptrace = true
 
 [sandbox.llm-agent.deny]
@@ -60,5 +62,6 @@ unix = [
 	"docker.sock",
 	"*/docker.sock",
 	"*containerd*",
+	"*containerd/*",
 	"crio.sock",
 ]

@@ -76,14 +76,14 @@ read = ["*.pem", "*credentials*"]
 
 | Key | Without it | With it |
 |---|---|---|
-| `cgroup_ids` | Every task carrying the policy bit is confined. | Only tasks in one of the listed cgroups, or below one, are confined by this sandbox on a shared node. Each entry is the 64-bit ID of a cgroup v2 directory, a Pod's or a container's, which is its inode number (`stat -c %i /sys/fs/cgroup/<path>`). The task's own cgroup and its ancestors down to 12 levels below the root are compared; a task of this policy in no listed cgroup, or under one nested deeper than that, is **not** confined. The IDs are signed into the package and a cgroup gets a new one each time it is created, so a restarted Pod needs a package built with its new ID. |
+| `cgroup_ids` | Every task carrying the policy bit is confined. | Only tasks in one of the listed cgroups, or below one, are confined by this sandbox on a shared node. Each entry is the 64-bit ID of a cgroup v2 directory, a Pod's or a container's, which is its inode number (`stat -c %i /sys/fs/cgroup/<path>`). The task's own cgroup and its ancestors down to 12 levels below the root are compared; a task of this policy in no listed cgroup, or under one nested deeper than that, is **not** confined. `bpf_get_current_ancestor_cgroup_id()` reads the unified cgroup v2 hierarchy: on a cgroup v1 or hybrid host every task sits at level 0, so a `cgroup_ids`-scoped sandbox silently runs unconfined. The IDs are signed into the package and a cgroup gets a new one each time it is created, so a restarted Pod needs a package built with its new ID. |
 | `exec` | The task executes anything. | It executes only files labeled with its own policy or with one of the policy IDs listed, each a `[[upatches.policy]]` table of the Beefile. `exec = []` allows its own files alone. |
 | `families` | Socket families are not filtered (except raw/packet when IP/port rules apply). | `socket()` allows only the listed families (`inet`, `inet6`, `unix`, `netlink`, `vsock`). |
 | `network` | The task connects to any IP address not in `deny.network`. | It connects and sends only to the networks listed, IPv4 or IPv6 in CIDR form, or `@<name>` for a list of `[networks]`. An IPv4 network also covers its IPv4-mapped IPv6 form. It creates no raw and no packet socket. `network = []` allows no IP peer. |
 | `ports` | Any TCP/UDP destination port not in `deny.ports` is allowed. | `connect()` and `sendmsg()` allow only the listed ports or ranges (`443`, `"8000-8080"`, `"tcp/443"`, `"udp/53"`), mapping MPTCP to TCP and UDPLite to UDP and refusing other IP protocols. |
 | `deny_ptrace` | `ptrace` keeps normal kernel checks. | When `true`, `lsm/ptrace_access_check` refuses `ptrace` from the sandbox. |
 | `deny.network` | | Refuses `connect()` and `sendmsg()` to matching IPv4/IPv6 CIDRs (takes precedence over `network`) and blocks raw/packet sockets. |
-| `deny.ports` | | Refuses `connect()` and `sendmsg()` to matching TCP/UDP destination ports or ranges (takes precedence over `ports`), mapping MPTCP to TCP and UDPLite to UDP and refusing other IP protocols. |
+| `deny.ports` | | Refuses `connect()` and `sendmsg()` to matching TCP/UDP destination ports or ranges (takes precedence over `ports`), mapping MPTCP to TCP and UDPLite to UDP; without a `ports` allowlist, other IP protocols such as ICMP and SCTP are allowed. |
 | `deny.unix` | | Refuses `unix_stream_connect` and `unix_may_send` to UNIX sockets matching a basename pattern (no `/`) or full path/abstract `@name` pattern (with `/`). |
 | `deny.create` | | It creates no file, directory, device, symbolic link or hard link with a matching name. |
 | `deny.rename` | | It renames no file from or to a matching name. |
@@ -119,10 +119,16 @@ each.
   denies creating, renaming or writing key and SSH authorization files
   (`*.pem`, `id_rsa*`, `id_ed25519*`, `authorized_keys`);
 - denies connecting to container-runtime UNIX sockets (`docker.sock`,
-  `*/docker.sock`, `*containerd*`, `crio.sock`);
+  `*/docker.sock`, `*containerd*`, `*containerd/*`, `crio.sock`);
+  `*containerd/*` matches full socket paths containing `containerd/`
+  within the first 64 bytes (such as `/run/containerd/s/<hash>` shim
+  sockets);
 - denies `ptrace` (`deny_ptrace = true`).
 
-It has no `exec` rule, so the agent executes any file. A package built
+It has no `exec` rule, so the agent executes any file, and no `network`
+allowlist, so only the metadata endpoints in `deny.network` are blocked
+while all other IP egress is allowed unless you add `network = [...]`.
+A package built
 from this input holds the `llm-agent` sandbox alone: the Apache and
 PHP-FPM sandboxes of `sandbox.toml` are not in it, and a target that
 takes it in place of the default package no longer confines them.
