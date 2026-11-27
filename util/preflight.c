@@ -175,13 +175,20 @@ static void check_bpffs(struct preflight_result *r)
 		     "(needs CONFIG_BPF_FS=y)");
 }
 
-static void check_signed_loader_abi(struct preflight_result *r)
+static void check_signed_loader_abi(struct preflight_result *r,
+				    const struct btf *btf, int btf_err)
 {
 	struct preflight_check *c =
 		next_slot(r, PRE_SIGNED_LOADER_ABI,
 			  "signed_loader_kernel_abi");
 
-	if (kernel_abi_check(c->detail, sizeof(c->detail)) == 0) {
+	if (!btf && btf_err) {
+		fail(r, c,
+		     "cannot read target kernel BTF: %s; boot a shirudo-patched kernel",
+		     strerror(btf_err));
+		return;
+	}
+	if (kernel_abi_validate_btf(btf, c->detail, sizeof(c->detail)) == 0) {
 		pass(c);
 	} else {
 		c->ok = false;
@@ -194,7 +201,8 @@ static void check_signed_loader_abi(struct preflight_result *r)
  * added on a hook only a carried kernel patch provides is checked
  * without a list here to keep in step.
  */
-static void check_lsm_hooks(struct preflight_result *r)
+static void check_lsm_hooks(struct preflight_result *r,
+			    const struct btf *btf, int btf_err)
 {
 	const struct embedded_bpf *objs[] = { bpf2_blob(), seal_blob() };
 	struct preflight_check *c =
@@ -217,8 +225,14 @@ static void check_lsm_hooks(struct preflight_result *r)
 			return;
 		}
 	}
-	if (kernel_abi_check_lsm_hooks(&hooks, c->detail,
-				       sizeof(c->detail)) == 0) {
+	if (!btf && btf_err) {
+		fail(r, c,
+		     "cannot read target kernel BTF: %s; boot a shirudo-patched kernel",
+		     strerror(btf_err));
+		return;
+	}
+	if (kernel_abi_validate_lsm_hooks(btf, &hooks, c->detail,
+					  sizeof(c->detail)) == 0) {
 		pass(c);
 	} else {
 		c->ok = false;
@@ -333,19 +347,17 @@ static bool read_proc_cmdline(char *buf, size_t cap)
 }
 
 /* A BTF that cannot be read fails the checks that need it. */
-static void check_kernel_options(struct preflight_result *r)
+static void check_kernel_options(struct preflight_result *r,
+				 const struct btf *btf)
 {
 	const struct kernel_options *have = NULL;
 	struct kernel_options opts = {};
 	char cmdline[8192] = {};
 	bool have_cmdline;
-	struct btf *btf;
 
-	btf = btf__load_vmlinux_btf();
-	if (!libbpf_get_error(btf)) {
+	if (btf) {
 		kernel_prereq_options(btf, &opts);
 		have = &opts;
-		btf__free(btf);
 	}
 	have_cmdline = read_proc_cmdline(cmdline, sizeof(cmdline));
 	check_module_signatures(r, have);
@@ -551,13 +563,24 @@ static void check_tpm(struct preflight_result *r)
 
 void preflight_run(struct preflight_result *out)
 {
+	struct btf *btf;
+	int btf_err = 0;
+	long err;
+
 	memset(out, 0, sizeof(*out));
+	btf = btf__load_vmlinux_btf();
+	err = libbpf_get_error(btf);
+	if (err) {
+		btf_err = (int)-err;
+		btf = NULL;
+	}
 	check_root(out);
 	check_bpf_lsm(out);
 	check_bpffs(out);
-	check_signed_loader_abi(out);
-	check_lsm_hooks(out);
-	check_kernel_options(out);
+	check_signed_loader_abi(out, btf, btf_err);
+	check_lsm_hooks(out, btf, btf_err);
+	check_kernel_options(out, btf);
+	btf__free(btf);
 	check_cert(out);
 	check_cert_algorithm(out);
 	check_cert_kernel_algo(out);

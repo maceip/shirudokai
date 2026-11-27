@@ -224,7 +224,7 @@ int kernel_abi_validate_btf(const struct btf *btf,
 		return ret;
 	if (!has_func(btf, "bpf_lsm_tpm_command"))
 		return abi_fail(detail, detail_sz,
-				"tpm_command LSM hook is missing; boot a Shirudo-patched kernel");
+				"tpm_command LSM hook is missing; boot a shirudo-patched kernel");
 	if (!has_func(btf, "bpf_lsm_mm_read_access"))
 		return abi_fail(detail, detail_sz,
 				"mm_read_access LSM hook is missing; boot a shirudo-patched kernel");
