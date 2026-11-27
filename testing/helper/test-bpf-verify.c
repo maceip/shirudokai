@@ -27,7 +27,7 @@ static void print_stats_line(const char *name, const char *log)
 	const char *last = NULL;
 
 	while (p && *p) {
-		if (strncmp(p, "processed ", 10) == 0)
+		if (strncmp(p, "processed ", sizeof("processed ") - 1) == 0)
 			last = p;
 		p = strchr(p, '\n');
 		if (p)

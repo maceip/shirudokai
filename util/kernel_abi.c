@@ -339,23 +339,3 @@ int kernel_abi_validate_lsm_hooks(const struct btf *btf,
 			"kernel has no LSM hook%s %s; boot a shirudo-patched kernel",
 			n_missing > 1 ? "s" : "", missing);
 }
-
-int kernel_abi_check_lsm_hooks(const struct lsm_hooks *hooks,
-			       char *detail, size_t detail_sz)
-{
-	struct btf *btf;
-	long err;
-	int ret;
-
-	if (detail && detail_sz)
-		detail[0] = '\0';
-	btf = btf__load_vmlinux_btf();
-	err = libbpf_get_error(btf);
-	if (err)
-		return abi_fail(detail, detail_sz,
-				"cannot read target kernel BTF: %s; boot a shirudo-patched kernel",
-				strerror((int)-err));
-	ret = kernel_abi_validate_lsm_hooks(btf, hooks, detail, detail_sz);
-	btf__free(btf);
-	return ret;
-}

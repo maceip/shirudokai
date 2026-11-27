@@ -56,6 +56,16 @@ answer()
 	fi
 }
 
+otel=0
+case "${0##*/} ${1:-}" in
+*shirudo-otel-check*|*--otel*) otel=1 ;;
+esac
+
 while IFS= read -r row; do
+	if [ "$otel" -eq 1 ]; then
+		case "$row" in
+		*"$tab"*) row=${row#*"$tab"} ;;
+		esac
+	fi
 	answer "$row"
 done

@@ -494,8 +494,7 @@ int reproducer_snapshot_files_identical(const char *path_a, const char *path_b,
 		*identical = len_a == len_b &&
 			     (!len_a || memcmp(buf_a, buf_b, len_a) == 0);
 	xfree(buf_a, len_a + 1);
-	if (buf_b)
-		xfree(buf_b, len_b + 1);
+	xfree(buf_b, len_b + 1);
 	return ret;
 }
 

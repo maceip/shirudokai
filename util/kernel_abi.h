@@ -61,8 +61,4 @@ int kernel_abi_validate_lsm_hooks(const struct btf *btf,
 				  const struct lsm_hooks *hooks,
 				  char *detail, size_t detail_sz);
 
-/* kernel_abi_validate_lsm_hooks() on the running kernel's BTF. */
-int kernel_abi_check_lsm_hooks(const struct lsm_hooks *hooks,
-			       char *detail, size_t detail_sz);
-
 #endif /* SHIRUDO_KERNEL_ABI_H */

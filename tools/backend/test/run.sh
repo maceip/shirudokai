@@ -154,6 +154,8 @@ chmod 0755 "$work/shirudo-quote-check"
 "$runtime" exec "$container" mkdir -p /var/lib/clickhouse/user_scripts
 "$runtime" cp "$work/shirudo-quote-check" \
 	"$container:/var/lib/clickhouse/user_scripts/shirudo-quote-check"
+"$runtime" exec "$container" ln -sf shirudo-quote-check \
+	/var/lib/clickhouse/user_scripts/shirudo-otel-check
 "$runtime" cp "$repo/clickhouse/tpm_quote_check_function.xml" \
 	"$container:/etc/clickhouse-server/tpm_quote_check_function.xml"
 "$runtime" cp "$repo/clickhouse/tpm_otel_check_function.xml" \

@@ -86,7 +86,7 @@ int main(int argc, char **argv)
 {
 	struct quote_result res;
 	char *line = NULL;
-	bool otel = false;
+	bool otel = argc > 0 && argv[0] && strstr(argv[0], "shirudo-otel-check");
 	struct opt_parser p;
 	size_t cap = 0, row_max;
 	int got, ret = 0, opt;

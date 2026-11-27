@@ -12,7 +12,7 @@
     <function>
         <type>executable_pool</type>
         <name>tpm_otel_check</name>
-        <command>shirudo-quote-check --otel</command>
+        <command>shirudo-otel-check</command>
         <format>TabSeparated</format>
         <argument>
             <type>String</type>

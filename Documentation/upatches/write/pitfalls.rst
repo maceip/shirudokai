@@ -142,7 +142,7 @@ programs another datapath attached there:
 - Loopback has no device class and is never selected.
 
 What ptrace and unix socket hooks do not see
--------------------------------------------
+--------------------------------------------
 
 ``lsm/ptrace_access_check`` runs when a tracer calls ``PTRACE_ATTACH``
 or ``PTRACE_SEIZE``, or opens ``/proc/<pid>/mem``, ``environ`` or
