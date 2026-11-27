@@ -882,7 +882,7 @@ testing/helper/test-harden: testing/helper/test-harden.c util/harden.o util/log.
 # The register code pulls in the eventlog, which pulls in the seal
 # label writer, the JSON codec and the measured set it folds.
 REGISTER_OBJS := util/config_attest.o util/config_update.o util/config_measure.o util/config_image.o \
-                 util/chain.o util/tpm.o util/tpm_wire.o util/ek_cloud.o util/eventlog.o \
+                 util/chain.o util/tpm.o util/tpm_wire.o util/eventlog.o \
                  util/measured.o util/paths.o util/timefmt.o util/upatch.o \
                  util/hex.o util/crypto_openssl.o util/json.o util/string.o \
                  util/io.o util/seal.o util/config.o util/image_config.o \
