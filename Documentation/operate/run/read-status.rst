@@ -193,6 +193,12 @@ Header
     operator and target split: remove it and treat the key as exposed,
     see :doc:`/operate/maintain/keys`.
 
+``Enforcement``
+    ``strict`` or ``shared``, the mode the runtime image selected and
+    ``init`` froze, see :doc:`/internals/enforcement`. Absent when
+    ``init`` has not run this boot. A target that should not share BPF
+    with root shows ``strict``.
+
 ``Status``
     The verdict, followed by the reason in parentheses when it is not
     ``ok``. :ref:`status-verdicts` explains each verdict.
