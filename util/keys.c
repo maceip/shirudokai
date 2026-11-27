@@ -519,18 +519,27 @@ static size_t count_der(const char *dir)
 
 static size_t count_der_at(int dirfd)
 {
-	struct dirent **names = NULL;
-	int n, i;
+	struct dirent *e;
+	size_t n = 0;
+	DIR *dir;
+	int fd;
 
 	if (dirfd < 0)
 		return 0;
-	n = scandirat(dirfd, ".", &names, select_der, NULL);
-	if (n < 0)
+	fd = openat(dirfd, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (fd < 0)
 		return 0;
-	for (i = 0; i < n; i++)
-		libc_free(names[i]);
-	libc_free(names);
-	return (size_t)n;
+	dir = fdopendir(fd);
+	if (!dir) {
+		close(fd);
+		return 0;
+	}
+	while ((e = readdir(dir)) != NULL) {
+		if (select_der(e))
+			n++;
+	}
+	closedir(dir);
+	return n;
 }
 
 static int vouch_path_for(const char *der_path, char *out, size_t cap)
@@ -672,6 +681,11 @@ static int scan_trusted(const char *keys_dir, const char *revoked_dir,
 	return ret;
 }
 
+static int name_cmp(const void *a, const void *b)
+{
+	return strcmp(*(const char * const *)a, *(const char * const *)b);
+}
+
 /*
  * The same scan from the descriptor of the keys directory, which the
  * trusted directory's descriptor outlives into admit_vouched: the
@@ -681,17 +695,46 @@ static int scan_trusted_at(int keys_fd, const char *display,
 			   struct keys_candidate *cand, size_t *n_cand,
 			   int *trusted_fd)
 {
-	struct dirent **names = NULL;
-	int n, i, ret = 0;
+	char *names[KEYS_SCAN_MAX] = {};
+	size_t n = 0, i;
+	struct dirent *e;
+	int fd, ret = 0;
+	DIR *dir;
 
 	*trusted_fd = open_beneath(keys_fd, "trusted", O_RDONLY | O_DIRECTORY);
 	if (*trusted_fd == -ENOENT)
 		return 0;
 	if (*trusted_fd < 0)
 		return *trusted_fd;
-	n = scandirat(*trusted_fd, ".", &names, select_der, alphasort);
-	if (n < 0)
+	fd = openat(*trusted_fd, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (fd < 0)
 		return -errno;
+	dir = fdopendir(fd);
+	if (!dir) {
+		ret = -errno;
+		close(fd);
+		return ret;
+	}
+	errno = 0;
+	while ((e = readdir(dir)) != NULL) {
+		if (!select_der(e))
+			continue;
+		if (n >= KEYS_SCAN_MAX) {
+			ret = -E2BIG;
+			break;
+		}
+		names[n] = xstrdup(e->d_name);
+		if (!names[n]) {
+			ret = -ENOMEM;
+			break;
+		}
+		n++;
+	}
+	if (!e && errno && !ret)
+		ret = -errno;
+	closedir(dir);
+	if (!ret && n > 1)
+		qsort(names, n, sizeof(names[0]), name_cmp);
 	for (i = 0; i < n && !ret; i++) {
 		struct keys_candidate *c = &cand[*n_cand];
 
@@ -700,9 +743,9 @@ static int scan_trusted_at(int keys_fd, const char *display,
 			break;
 		}
 		c->dirfd = *trusted_fd;
-		if (strscpy(c->name, names[i]->d_name, sizeof(c->name)) < 0 ||
+		if (strscpy(c->name, names[i], sizeof(c->name)) < 0 ||
 		    strsprintf(c->path, sizeof(c->path), "%s/trusted/%s",
-			       display, names[i]->d_name) < 0) {
+			       display, names[i]) < 0) {
 			ret = -ENAMETOOLONG;
 			break;
 		}
@@ -720,8 +763,7 @@ static int scan_trusted_at(int keys_fd, const char *display,
 		(*n_cand)++;
 	}
 	for (i = 0; i < n; i++)
-		libc_free(names[i]);
-	libc_free(names);
+		xstrfree(names[i]);
 	return ret;
 }
 
