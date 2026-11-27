@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: BSD-2-Clause
 /* Copyright (c) 2026 Authors of shirudo */
 
+#include <errno.h>
+#include <string.h>
+
 #include <shirudo/misc.h>
 #include <shirudo/string.h>
 
@@ -33,31 +36,73 @@ keepalive_quote_format(const struct tpm_attestation *att,
 
 /*
  * The quote is over no PCR, which tells a keepalive or telemetry quote
- * from one of attest. The key is created for this quote and flushed
- * after it.
+ * from one of attest.
  */
+noinline_for_stack int
+tpm_quote_session_open(struct tpm_quote_session *sess)
+{
+	int ret;
+
+	if (!sess)
+		return -EINVAL;
+	memset(sess, 0, sizeof(*sess));
+	ret = tpm_open(&sess->tpm);
+	if (ret)
+		return ret;
+	ret = tpm_ak_create(sess->tpm, &sess->ak);
+	if (ret) {
+		tpm_close(sess->tpm);
+		sess->tpm = NULL;
+		return ret;
+	}
+	sess->active = true;
+	return 0;
+}
+
+noinline_for_stack int
+tpm_quote_session_quote(struct tpm_quote_session *sess,
+			const __u8 digest[CRYPTO_SHA256_LEN],
+			struct tpm_key *ak, struct tpm_attestation *att)
+{
+	int ret;
+
+	if (!sess || !sess->active || !sess->tpm || !ak || !att)
+		return -EINVAL;
+	*ak = (struct tpm_key){};
+	*att = (struct tpm_attestation){};
+	ret = tpm_quote(sess->tpm, &sess->ak, digest, CRYPTO_SHA256_LEN, 0,
+			att);
+	if (!ret) {
+		*ak = sess->ak;
+		ak->handle = 0;
+	}
+	return ret;
+}
+
+void tpm_quote_session_close(struct tpm_quote_session *sess)
+{
+	if (!sess)
+		return;
+	if (sess->tpm) {
+		if (sess->active)
+			tpm_key_flush(sess->tpm, &sess->ak);
+		tpm_close(sess->tpm);
+	}
+	memset(sess, 0, sizeof(*sess));
+}
+
 noinline_for_stack int
 tpm_quote_digest(const __u8 digest[CRYPTO_SHA256_LEN], struct tpm_key *ak,
 		 struct tpm_attestation *att)
 {
-	struct tpm_key key = {};
-	struct tpm *tpm = NULL;
+	struct tpm_quote_session sess = {};
 	int ret;
 
-	ret = tpm_open(&tpm);
+	ret = tpm_quote_session_open(&sess);
 	if (ret)
 		return ret;
-	*ak = (struct tpm_key){};
-	*att = (struct tpm_attestation){};
-	ret = tpm_ak_create(tpm, &key);
-	if (!ret)
-		ret = tpm_quote(tpm, &key, digest, CRYPTO_SHA256_LEN, 0, att);
-	if (!ret) {
-		*ak = key;
-		ak->handle = 0;
-	}
-	tpm_key_flush(tpm, &key);
-	tpm_close(tpm);
+	ret = tpm_quote_session_quote(&sess, digest, ak, att);
+	tpm_quote_session_close(&sess);
 	return ret;
 }
 

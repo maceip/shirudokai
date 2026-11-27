@@ -73,6 +73,14 @@ int tpm_quote_digest(const __u8 digest[CRYPTO_SHA256_LEN], struct tpm_key *ak,
 	return -EOPNOTSUPP;
 }
 
+int tpm_quote_session_quote(struct tpm_quote_session *sess,
+			    const __u8 digest[CRYPTO_SHA256_LEN],
+			    struct tpm_key *ak,
+			    struct tpm_attestation *att)
+{
+	return -EOPNOTSUPP;
+}
+
 int LLVMFuzzerTestOneInput(const __u8 *data, size_t size)
 {
 	struct otel_response r = {};

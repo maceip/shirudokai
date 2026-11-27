@@ -10,6 +10,7 @@
 
 #include <shirudo/misc.h>
 
+#include "keepalive_quote.h"
 #include "tpm.h"
 #include "upatch_maps.h"
 
@@ -39,6 +40,7 @@ struct otel_opts {
 	__u32		retries;
 	__u32		log_record_max_bytes;
 	__u32		otlp_max_bytes;
+	struct tpm_quote_session *tpm_session;
 	__u64		export_seq;
 	otel_quote_fn	quote_fn;
 	void		*quote_ctx;

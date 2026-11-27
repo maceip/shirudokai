@@ -9,6 +9,7 @@
 #ifndef SHIRUDO_KEEPALIVE_QUOTE_H
 #define SHIRUDO_KEEPALIVE_QUOTE_H
 
+#include <stdbool.h>
 #include <stddef.h>
 
 #include <shirudo/misc.h>
@@ -29,6 +30,23 @@
 int keepalive_quote_format(const struct tpm_attestation *att,
 			   const struct tpm_key *ak, char *out,
 			   size_t cap) __must_check;
+
+struct tpm_quote_session {
+	struct tpm	*tpm;
+	struct tpm_key	ak;
+	bool		active;
+};
+
+/*
+ * Open one TPM session and create an attestation key for repeated
+ * quotes in a single invocation, then flush and close on completion.
+ */
+int tpm_quote_session_open(struct tpm_quote_session *sess) __must_check;
+int tpm_quote_session_quote(struct tpm_quote_session *sess,
+			    const __u8 digest[CRYPTO_SHA256_LEN],
+			    struct tpm_key *ak,
+			    struct tpm_attestation *att) __must_check;
+void tpm_quote_session_close(struct tpm_quote_session *sess);
 
 /*
  * Quotes digest with the attestation key of tpm_ak_create() over no PCR,

@@ -1376,6 +1376,9 @@ otel_sign_headers(const struct otel_opts *opts, const char *body,
 	if (!ret)
 		ret = opts->quote_fn ?
 		      opts->quote_fn(origin, &ak, &att, opts->quote_ctx) :
+		      (opts->tpm_session && opts->tpm_session->active) ?
+		      tpm_quote_session_quote(opts->tpm_session, origin, &ak,
+					      &att) :
 		      tpm_quote_digest(origin, &ak, &att);
 	if (ret)
 		return ret;

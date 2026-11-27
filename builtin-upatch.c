@@ -4831,9 +4831,21 @@ static int cmd_upatch_map(int argc, const char **argv)
 	}
 
 	if (all) {
+		struct tpm_quote_session tpm_sess = {};
 		size_t k;
 
 		upatch_maps_list_all(&list, &n);
+		if (n > 0 && otel && otel_opts.tpm_sign) {
+			int err = tpm_quote_session_open(&tpm_sess);
+
+			if (err) {
+				pr_err("upatch map: open TPM quote session: %s",
+				       strerror(-err));
+				map_summary_free(list, n);
+				return 1;
+			}
+			otel_opts.tpm_session = &tpm_sess;
+		}
 		for (k = 0; k < n; k++) {
 			if (export_one_map(list[k].upatch, list[k].name,
 					   json_output, json_path, otel,
@@ -4841,6 +4853,7 @@ static int cmd_upatch_map(int argc, const char **argv)
 					   !json_output && !otel) != 0)
 				ret = 1;
 		}
+		tpm_quote_session_close(&tpm_sess);
 		map_summary_free(list, n);
 		return ret;
 	}
