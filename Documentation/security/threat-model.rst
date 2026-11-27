@@ -1904,6 +1904,11 @@ R8 Registry withholding and replay
    up to 30 seconds, until that transfer's deadline: a minute plus the
    time its largest response, 16 MiB, or its package's size, takes at
    128 KiB a second (``t7010``).
+   The offline ``shirudo bpm feed`` advisory tooling is operator-only
+   and never consulted by a target during ``bpm tree sync``; it enforces
+   enrolled package keys by default, ``generated_at`` future-skew
+   bounds and optional ``expires`` timestamps, but carries no sequence or
+   rollback floor of its own.
    Detection: compare the upatch payloads and tree operations that
    ``attest verify`` certifies with what you published, and the pushed
    index with the versions you released.

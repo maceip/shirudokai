@@ -33,9 +33,10 @@ Usage
    shirudo bpm tree append <package> oci://<registry>/<repository> [<append-options>]
    shirudo bpm tree show oci://<registry>/<repository> (--cert <certificate> | --cert=<certificate>)
                          [--reference <reference> | --reference=<reference>] [--walk]
-   shirudo bpm feed verify --feed <path> --sig <path> --cert <certificate> [--json]
-   shirudo bpm feed (list | match) --feed <path> --sig <path> --cert <certificate>
-                    [--cve <cve-id>] [--json]
+   shirudo bpm feed verify --feed <path> --sig <path> [--keys-dir <dir> | --cert <certificate>] [--json]
+   shirudo bpm feed (list | match) --feed <path> --sig <path> [--keys-dir <dir> | --cert <certificate>]
+                   [--cve <cve-id>] [--json]
+   shirudo bpm feed sign --feed <path> [--out <path>] [--keys-dir <dir> | --key <pem> --cert <certificate>]
    shirudo bpm key (add | fingerprint) <certificate | package | oci-reference>
    shirudo bpm key list [--json]
    shirudo bpm pull oci://<registry>/<repository>:<tag>
@@ -437,29 +438,35 @@ publication.
 feed
 ----
 
-``feed`` verifies and queries a curated CVE shield feed offline against a
-detached ML-DSA-87 CMS signature (``--sig``) and signer certificate
-(``--cert``), as :src:`tools/put-shields` ``--feed`` writes:
+``feed`` signs, verifies and queries a curated CVE shield feed offline
+against a detached ML-DSA-87 CMS signature (``--sig``) using the
+operator-only ``shirudo-build`` helper:
 
-- ``feed verify`` verifies the signature under the ML-DSA-87 certificate
-  and validates the feed schema, printing the feed ID, entry count and
-  ``generated_at`` timestamp, or a JSON verdict with ``--json``.
+- ``feed sign`` signs a valid feed JSON file with an ML-DSA-87 key
+  (from ``--keys-dir`` or ``--key`` and ``--cert``) and writes a
+  detached CMS signature (``--out``, defaulting to ``<feed>.p7s``).
+- ``feed verify`` verifies the signature against the enrolled package
+  signing keys (from ``--keys-dir``, ``SHIRUDO_KEYS_DIR`` or
+  ``/var/lib/shirudo/keys``) or an explicit ``--cert`` override, checks
+  ``generated_at`` against the operator clock (refusing feeds more than
+  300 seconds in the future) and enforces the optional RFC 3339
+  ``expires`` timestamp when present. It prints the feed ID, entry count
+  and ``generated_at`` timestamp, or a JSON verdict with ``--json``
+  (including ``trust``: ``"enrolled_keys"`` or ``"explicit_cert"``).
 - ``feed list`` verifies the feed and lists every entry, or only those
   whose ``cves`` list contains ``--cve``, as a table or as canonical feed
   JSON with ``--json``.
 - ``feed match`` verifies the feed and filters its entries to those whose
-  ``selector`` matches the running host (and ``--cve`` when given).
+  ``selector`` matches the running host (and ``--cve`` when given). When
+  an entry carries optional ``affected`` or ``fixed_in`` kernel release
+  range fields, ``match`` checks the running kernel release against them;
+  entries without ``affected`` or ``fixed_in`` match on ``selector``
+  (kconfig, architecture, labels) only, so they may list a shield for a
+  kernel that already has the fix.
 
-A feed is advisory, and "verifies" means no more than that the
-signature checks under the certificate given with ``--cert``: the
-command trusts whatever certificate the caller names and consults no
-keyring or config. A feed carries no expiry, serial or floor, so an old
-feed verifies like a new one and nothing orders two of them. An entry
-names the CVEs a shield is for and has no affected or fixed version
-range, so ``feed match`` lists a shield for a host whose kernel already
-has the fix. What a target loads is still decided by the signed upatch
-tree, which has a sequence and replay protection of its own
-(:doc:`/security/threat-model`, R8).
+A feed is advisory and lives on the operator side only. What a target
+loads is still decided by the signed upatch tree, which has a sequence
+and replay protection of its own (:doc:`/security/threat-model`, R8).
 
 key
 ---

@@ -2537,10 +2537,13 @@ static const struct help bpm_operator_help = {
 		   "       shirudo bpm tree append <package-file> <repository> "
 		   "[options]\n"
 		   "       shirudo bpm tree show <repository> --cert <cert.der> "
-		   "[options]",
+		   "[options]\n"
+		   "       shirudo bpm feed <sign|verify|list|match> [options]",
 	.summary = "Operator-only BPM commands, implemented in shirudo-build "
 		   "and reached\nthrough `shirudo bpm`. Each takes --help.",
 };
+
+int build_bpm_feed(int argc, const char **argv);
 
 int build_bpm(int argc, const char **argv)
 {
@@ -2571,6 +2574,8 @@ int build_bpm(int argc, const char **argv)
 		return build_bpm_push(argc - 1, argv + 1);
 	if (!strcmp(argv[1], "tree"))
 		return build_bpm_tree(argc - 1, argv + 1);
+	if (!strcmp(argv[1], "feed"))
+		return build_bpm_feed(argc - 1, argv + 1);
 	pr_err("bpm: '%s' is not an operator bpm command", argv[1]);
 	return EXIT_USAGE;
 }

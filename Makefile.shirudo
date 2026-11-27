@@ -277,7 +277,6 @@ UTIL_SRCS := \
     util/hex.c \
     util/string.c \
     util/bpm_tree.c \
-    util/bpm_feed.c \
     util/bpm_tree_overlap.c \
     util/bpm_tree_state.c \
     util/bpm_oci.c \
@@ -377,6 +376,7 @@ BUILD_SRCS := \
     tools/shirudo-build/bpm-build.c \
     tools/shirudo-build/bpm-publish.c \
     tools/shirudo-build/bpm-show.c \
+    tools/shirudo-build/bpm-feed.c \
     tools/shirudo-build/vouch.c \
     tools/shirudo-build/image.c
 
@@ -599,6 +599,8 @@ tools/shirudo-build/shirudo-build: $(BUILD_OBJS) $(SIGN_OBJ) util/config_image.o
                                    util/bpm_oci.o util/curl.o util/bpm_package.o \
                                    util/upatch_rodata.o util/format.o \
                                    util/bpm_tree.o util/bpm_tree_overlap.o \
+                                   util/bpm_tree_state.o util/bpm_feed.o \
+                                   util/kconfig.o util/kernel_build_id.o \
                                    util/chain_history.o util/options.o \
                                    util/help.o util/similar.o \
                                    util/kernel_release.o $(VERSION_OBJ) \
