@@ -329,13 +329,37 @@ static void declared_key_takes_one_value(void)
 	EXPECT_EQ(d.events, 2);
 }
 
+static int count_int_elem(void *ctx)
+{
+	int *count = ctx;
+
+	(*count)++;
+	return 0;
+}
+
 static void malformed_arrays_are_refused(void)
 {
+	__s64 val = 0;
+	int count = 0;
+	struct json_array int_sink = { count_int_elem, &count };
+	struct json_field int_elem[] = {
+		{ "", JSON_T_INT, &val, 0, 0, NULL, 0 },
+	};
+	struct json_field int_arr[] = {
+		{ "nums", JSON_T_ARRAY, &int_sink, 0, 0, int_elem,
+		  ARRAY_SIZE(int_elem) },
+	};
+	static const char nums_null[] = "{\"nums\":[1,null]}";
 	struct doc d;
 
 	EXPECT_EQ(parse("{\"names\":[123]}", &d), -EINVAL);
+	EXPECT_EQ(parse("{\"names\":[null]}", &d), -EINVAL);
+	EXPECT_EQ(parse("{\"names\":[\"a\",null]}", &d), -EINVAL);
 	EXPECT_EQ(parse("{\"names\":[\"a\",\"b\"", &d), -EINVAL);
 	EXPECT_EQ(parse("{\"names\":[{\"\":\"a\"}]}", &d), -EINVAL);
+	EXPECT_EQ(json_parse(nums_null, strlen(nums_null), int_arr,
+			     ARRAY_SIZE(int_arr)), -EINVAL);
+	EXPECT_EQ(count, 1);
 }
 
 /*
