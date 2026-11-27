@@ -309,7 +309,7 @@ static void shield_metrics_export_and_origin_signature(void)
 	ASSERT_EQ(upatch_maps_otel_classify(&v, &signal, reason,
 					    sizeof(reason)), 0);
 	EXPECT_EQ(signal, OTEL_METRIC);
-	EXPECT_STREQ(reason, "trusted shield counter map");
+	EXPECT_STREQ(reason, "shield counter map (by name convention)");
 
 	ASSERT_EQ(upatch_maps_otel_build_shield_metrics(&v, &payload,
 							&payload_len), 0);

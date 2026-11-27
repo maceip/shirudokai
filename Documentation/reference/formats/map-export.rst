@@ -108,13 +108,14 @@ Signal selection
    * - Has a decoder
      - The signal the decoder declares, log or metric.
    * - No decoder, per-CPU shield counter map (``hits``, ``activity`` or
-       ``shield_stats``)
+       ``shield_stats``, selected by map name convention)
      - Classified as a metric and exported natively as cumulative
        monotonic ``Sum`` metrics ``shirudo.shield.hits`` and/or
        ``shirudo.shield.activity`` (unit ``1``, ``startTimeUnixNano``
        from the pin directory creation time, with attributes
        ``shirudo.upatch.name``, ``shirudo.upatch.location``,
        ``shirudo.map.name`` and ``shirudo.upatch.payload_sha256``).
+       A 64-bit sum overflow fails with ``EOVERFLOW``.
    * - No decoder, any other unsigned per-CPU integer value
      - Classified as a metric. Metrics for non-shield maps come only
        from decoders, so the export fails with ``ENODATA``.

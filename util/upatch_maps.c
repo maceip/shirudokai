@@ -2510,9 +2510,10 @@ static bool shield_btf_uint_width(const struct btf *btf, __u32 type_id,
 	return true;
 }
 
-static __u64 shield_sum_percpu_field(const struct map_view *v,
-				     const void *values_per_cpu,
-				     __u32 byte_off, __u32 width)
+static int shield_sum_percpu_field(const struct map_view *v,
+				   const void *values_per_cpu,
+				   __u32 byte_off, __u32 width,
+				   __u64 *sum_out)
 {
 	__u32 stride = upatch_map_value_stride(v), cpu, b;
 	__u64 sum = 0;
@@ -2524,9 +2525,11 @@ static __u64 shield_sum_percpu_field(const struct map_view *v,
 
 		for (b = 0; b < width; b++)
 			one |= (__u64)p[b] << (8 * b);
-		sum += one;
+		if (check_add_overflow(sum, one, &sum))
+			return -EOVERFLOW;
 	}
-	return sum;
+	*sum_out = sum;
+	return 0;
 }
 
 static int shield_summary_from_struct(const struct map_view *v,
@@ -2569,16 +2572,28 @@ static int shield_summary_from_struct(const struct map_view *v,
 	if (!out->has_hits && !out->has_activity)
 		return -EOPNOTSUPP;
 	for (i = 0; i < v->n_entries; i++) {
+		__u64 val;
+		int ret;
+
 		if (!v->entries || !v->entries[i].value)
 			return -EINVAL;
-		if (out->has_hits)
-			out->hits += shield_sum_percpu_field(v,
-							     v->entries[i].value,
-							     hits_off, hits_w);
-		if (out->has_activity)
-			out->activity += shield_sum_percpu_field(v,
-								 v->entries[i].value,
-								 act_off, act_w);
+		if (out->has_hits) {
+			ret = shield_sum_percpu_field(v, v->entries[i].value,
+						      hits_off, hits_w, &val);
+			if (ret)
+				return ret;
+			if (check_add_overflow(out->hits, val, &out->hits))
+				return -EOVERFLOW;
+		}
+		if (out->has_activity) {
+			ret = shield_sum_percpu_field(v, v->entries[i].value,
+						      act_off, act_w, &val);
+			if (ret)
+				return ret;
+			if (check_add_overflow(out->activity, val,
+					       &out->activity))
+				return -EOVERFLOW;
+		}
 	}
 	return 0;
 }
@@ -2627,10 +2642,17 @@ int upatch_shield_hits_summary(const struct map_view *v,
 		__u64 total = 0;
 
 		for (i = 0; i < v->n_entries; i++) {
+			__u64 val;
+			int ret;
+
 			if (!v->entries || !v->entries[i].value)
 				return -EINVAL;
-			total += shield_sum_percpu_field(v, v->entries[i].value,
-							 0, v->value_size);
+			ret = shield_sum_percpu_field(v, v->entries[i].value,
+						      0, v->value_size, &val);
+			if (ret)
+				return ret;
+			if (check_add_overflow(total, val, &total))
+				return -EOVERFLOW;
 		}
 		if (is_hits) {
 			out->has_hits = true;
@@ -2650,19 +2672,25 @@ int upatch_shield_hits_summary(const struct map_view *v,
 	for (i = 0; i < v->n_entries; i++) {
 		__u32 slot = i;
 		__u64 val;
+		int ret;
 
 		if (!v->entries || !v->entries[i].value)
 			return -EINVAL;
 		if (v->entries[i].key && v->key_size == sizeof(__u32))
 			memcpy(&slot, v->entries[i].key, sizeof(slot));
-		val = shield_sum_percpu_field(v, v->entries[i].value, 0,
-					      v->value_size);
+		ret = shield_sum_percpu_field(v, v->entries[i].value, 0,
+					      v->value_size, &val);
+		if (ret)
+			return ret;
 		if (slot == 0) {
 			out->has_hits = true;
-			out->hits += val;
+			if (check_add_overflow(out->hits, val, &out->hits))
+				return -EOVERFLOW;
 		} else if (slot == 1) {
 			out->has_activity = true;
-			out->activity += val;
+			if (check_add_overflow(out->activity, val,
+					       &out->activity))
+				return -EOVERFLOW;
 		} else {
 			return -EOPNOTSUPP;
 		}

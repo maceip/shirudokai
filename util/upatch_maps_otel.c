@@ -177,12 +177,16 @@ int upatch_maps_otel_classify(const struct map_view *v,
 	struct metric_type mt;
 	const char *why;
 
+	int ret;
+
 	if (!v || !signal)
 		return -EINVAL;
 	*signal = OTEL_LOG;
-	if (upatch_shield_hits_summary(v, &shield) == 0) {
+	ret = upatch_shield_hits_summary(v, &shield);
+	if (ret == 0 || ret == -EOVERFLOW) {
 		*signal = OTEL_METRIC;
-		return strscpy(reason, "trusted shield counter map",
+		return strscpy(reason,
+			       "shield counter map (by name convention)",
 			       reason_sz) < 0 ? -E2BIG : 0;
 	}
 	why = otel_log_reason(v, &mt);

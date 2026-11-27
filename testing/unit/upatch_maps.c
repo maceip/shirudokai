@@ -334,6 +334,11 @@ static void shield_hits_summary_percpu_and_struct(void)
 	ASSERT_UEQ(sum.hits, 40u);
 	ASSERT_UEQ(sum.activity, 350u);
 
+	/* 64-bit sum overflow fails with -EOVERFLOW instead of wrapping. */
+	st_cpu[0].hits = UINT64_MAX;
+	st_cpu[1].hits = 1;
+	ASSERT_EQ(upatch_shield_hits_summary(&v, &sum), -EOVERFLOW);
+
 	btf__free(btf);
 }
 
