@@ -55,7 +55,9 @@ Transport
        headers, ``X-Tenant-ID``, and with ``map_export.tpm_sign = true``
        ``X-Shirudo-TPM-AK-Name``, ``X-Shirudo-TPM-Attest``,
        ``X-Shirudo-TPM-Signature``, ``X-Shirudo-Boot-ID`` and
-       ``X-Shirudo-Export-Seq``.
+       ``X-Shirudo-Export-Seq`` (where ``body_sha256`` in the signed
+       origin digest covers the raw HTTP request body on the wire,
+       compressed when ``gzip`` is on).
    * - Compression
      - ``none`` (default) or ``gzip``.
    * - TLS

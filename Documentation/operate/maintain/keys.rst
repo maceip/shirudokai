@@ -477,15 +477,16 @@ Limits
   depends on an expired vouch refuses its config at the next boot:
   renew the vouch, or vouch without an expiry, before that day.
 - Userspace verifiers check X.509 ``notBefore`` and ``notAfter`` windows
-  on vouch, repository and Java upatch certificates and enforce the
-  signed expiration of bounded v2 vouches, whereas the kernel's ``.bpf``
-  keyring check does not expire enrolled certificates on its own.
+  on vouch, vouched, curated feed, repository and Java upatch
+  certificates and enforce the signed expiration of bounded v2 vouches,
+  whereas the kernel's ``.bpf`` keyring check does not expire enrolled
+  certificates on its own.
 - Set ``security.epoch`` monotonically in each new config image so the
   target's sealed floor under ``/var/lib/shirudo/config-update/epoch``
-  refuses rollback to an older signed config; a verifier should also
+  refuses rollback to an older signed config on a running target
+  (offline edits between boots remain R14); a verifier should also
   check the approved config root and boot measurements. See
   :doc:`/security/threat-model`.
-
 
 Next steps
 ----------

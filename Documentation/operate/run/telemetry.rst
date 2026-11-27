@@ -19,7 +19,8 @@ Telemetry is the target's own account of itself, so it tells you where
 to look, not what is true. The keepalive carries a quote by the target's
 TPM attestation key, which shows that its body is unchanged since that
 key signed it, but not that the key lives in a genuine TPM. Map
-snapshots carry no proof of origin at all. Evidence that a target cannot
+snapshots carry no proof of origin unless ``map_export.tpm_sign = true``
+is set in the signed config image. Evidence that a target cannot
 forge comes from the TPM, through :doc:`/operate/run/attest`.
 
 What a target sends
@@ -196,8 +197,9 @@ The config image accepts these keys:
      - Largest request body before compression, 1 to 8388608 bytes.
        Default: 4194304.
 
-The only other key the config image's ``shirudo.conf`` accepts is
-``eventlog.max_bytes``. :doc:`/reference/configuration` lists
+The only other keys the config image's ``shirudo.conf`` accepts are
+``eventlog.max_bytes`` and ``security.epoch``.
+:doc:`/reference/configuration` lists
 every key, including those of the runtime image.
 
 Set credentials and TLS material
@@ -218,7 +220,7 @@ configuration. systemd reads them for both services from
    ``OTEL_EXPORTER_OTLP_HEADERS`` takes comma-separated
    ``<key>=<value>`` pairs with percent-encoded values, so ``%20`` is a
    space. It refuses ``Content-Type``, ``Content-Encoding``,
-   ``Content-Length``, ``Host`` and ``User-Agent``.
+   ``Content-Length``, ``Host``, ``User-Agent`` and ``X-Shirudo-*``.
    ``OTEL_EXPORTER_OTLP_CERTIFICATE`` names the CA bundle that signed
    the collector's certificate. ``<token>`` is your collector's ingest
    token.
@@ -391,7 +393,8 @@ A map whose upatch ships a signed decoder for it exports what the
 decoder returns, a log record or metrics. A map without a decoder
 exports as a log record whose body lists the map's entries.
 
-One kind of map without a decoder fails: a per-CPU map whose value is an
+One kind of map without a decoder fails: a per-CPU map other than
+``hits``, ``activity`` or ``shield_stats`` whose value is an
 unsigned BTF integer. The target classifies it as a metric, finds no
 decoder to build the metric and prints ``upatch map: OTLP export
 <upatch>/<map>: No data available``. Give such a map a decoder.
@@ -458,7 +461,8 @@ eventlog, is read with ``shirudo status --json`` on the target.
 Limits
 ------
 
-- A map snapshot has no proof of origin. Root on a target, or anyone who
+- A map snapshot has no proof of origin unless ``map_export.tpm_sign``
+  is ``true``. Root on a target, or anyone who
   can reach the collector with valid credentials, can send records in a
   target's name. A keepalive's quote ties its body to an attestation
   key, but a key in software can sign a quote too, so a backend that

@@ -70,8 +70,8 @@ Every map
 ``map_export`` settings (:doc:`/reference/configuration`):
 ``map_export.json_path`` turns on JSON output to that file and
 ``map_export.otel_endpoint`` turns on OTLP, together with the tenant,
-TLS, retry, size and S3 settings. Options on the command line take
-precedence.
+TLS, ``tpm_sign``, retry, size and S3 settings. Options on the command
+line take precedence.
 
 With neither a JSON nor an OTLP destination, ``--all`` prints every map in
 full detail on standard output, draining every serializer-backed map

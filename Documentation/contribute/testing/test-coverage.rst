@@ -1214,8 +1214,8 @@ the functional tests run.
    * - ``prog-metadata``
      - A load upatch's program metadata
    * - ``quote-check``
-     - A row of ``shirudo-quote-check``: a keepalive quote and the
-       digest of its body
+     - Keepalive and ``--otel`` rows of ``shirudo-quote-check``: quotes,
+       origin headers and body digests
    * - ``registry-auth``
      - The container auth file
    * - ``rodata``

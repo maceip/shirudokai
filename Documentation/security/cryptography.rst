@@ -54,8 +54,12 @@ Signatures
      - ``shirudo keys vouch`` and ``shirudo keys rotate``
      - ``init`` and ``shirudo image update``, against the certificates
        already in the trusted set
+   * - Curated CVE shield feed
+     - The canonical feed document
+     - :src:`tools/put-shields` (``--feed``) on the operator
+     - ``shirudo bpm feed`` against the supplied ML-DSA-87 certificate
 
-All five use one format, produced by one function on the operator:
+All six use one format, produced by one function on the operator:
 
 - Algorithm: ML-DSA-87 (FIPS 204). The signing code refuses any other
   key, the smaller ML-DSA parameter sets included

@@ -67,8 +67,10 @@ the ``X-Shirudo-TPM-*`` headers and the quote covers
        ``TPM2B`` size, in standard base64 with padding. At most 512
        bytes.
    * - ``body_sha256``
-     - The SHA-256 of the keepalive body the row belongs to, as 64 hex
-       digits of either case.
+     - The SHA-256 of the keepalive body (or, with ``--otel``, of the
+       raw HTTP request body on the wire, compressed when
+       ``Content-Encoding: gzip`` is used), as 64 hex digits of either
+       case.
 
 A base64 field is accepted only when it is the encoding of its bytes:
 no white space, no line break and no missing padding. The last row may

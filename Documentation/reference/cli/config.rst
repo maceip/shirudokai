@@ -140,8 +140,8 @@ The command prints:
    tls.classical_hosts =
 
    # Periodic `shirudo upatch map --all` export. Empty JSON and
-   # OTLP destinations leave the installed timer idle. Every emitted
-   # map must carry a signed Lua decoder declaring log or metric.
+   # OTLP destinations leave the installed timer idle. Maps export
+   # through signed Lua decoders or automatic BTF classification.
    # OTEL headers, TLS material, and AWS credentials belong in
    # /etc/shirudo/map-export.env for the systemd service.
    map_export.json_path =

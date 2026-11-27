@@ -1050,7 +1050,7 @@ testing/helper/test-upatch-prog-metadata: testing/helper/test-upatch-prog-metada
 	$(Q)$(CC) $(CFLAGS) -o $@ $^
 
 testing/helper/test-upatch-serializer-pages: testing/helper/test-upatch-serializer-pages.c \
-                                       util/upatch_maps.o util/upatch_pins.o util/upatch_resolve.o \
+                                       util/upatch_maps.o util/upatch.o util/upatch_pins.o util/upatch_resolve.o \
                                        util/serializer.o util/seal.o \
                                        util/json.o util/string.o \
                                        util/config.o util/image_config.o \
@@ -1310,7 +1310,7 @@ $(FUZZ_OUT)/fuzz-elf: testing/fuzz/fuzz-elf.c $(FUZZ_BASE) \
 $(FUZZ_OUT)/fuzz-elf: FUZZ_CFLAGS += $(LIBELF_CFLAGS)
 $(FUZZ_OUT)/fuzz-elf: FUZZ_LIBS += $(LIBBPF_A) $(LIBELF_LIBS)
 $(FUZZ_OUT)/fuzz-serializer: testing/fuzz/fuzz-serializer.c $(FUZZ_BASE) \
-                              util/upatch_maps.c util/upatch_pins.c \
+                              util/upatch_maps.c util/upatch.c util/upatch_pins.c \
                               util/upatch_resolve.c util/serializer.c $(FUZZ_SEAL) util/io.c util/paths.c \
                               util/timefmt.c $(LIBBPF_A)
 $(FUZZ_OUT)/fuzz-serializer: FUZZ_CFLAGS += $(LIBELF_CFLAGS)

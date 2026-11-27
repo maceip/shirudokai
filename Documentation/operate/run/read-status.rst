@@ -291,8 +291,8 @@ The details other than ``OK`` are below, with what each means.
    * - ``UpatchesMeasured``
      - ``ALERT``
      - ``<n> XDP archives differ from the loaded payload: <names>``
-     - The sealed archive of a loaded XDP upatch changed or is gone, so
-       ``upatch reconcile`` refuses to run and new devices stay
+     - The sealed archive of a loaded XDP or TCX upatch changed or is
+       gone, so ``upatch reconcile`` refuses to run and new devices stay
        uncovered. Handle it as an incident:
        :doc:`/operate/troubleshoot/incident-tampered`.
    * - ``UpatchesMeasured``
@@ -300,9 +300,10 @@ The details other than ``OK`` are below, with what each means.
      - ``<n> upatches are missing a link or their archive: <names>``
      - A loaded upatch has fewer link pins than its signed metadata
        implies, so part of it is detached, or its sealed archive is gone
-       or unusable. For XDP that is an ``xdp_prog_<i>`` pin or the link
-       of another attach program: a device going away is not a missing
-       link, but a loaded upatch whose whole pin directory is gone is.
+       or unusable. For XDP and TCX that is an ``xdp_prog_<i>`` or
+       ``tcx_prog_<i>`` pin or the link of another attach program: a
+       device going away is not a missing link, but a loaded upatch
+       whose whole pin directory is gone is.
        Handle it as an incident.
    * - ``UpatchesMeasured``
      - ``ALERT``

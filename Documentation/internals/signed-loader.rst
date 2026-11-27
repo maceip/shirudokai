@@ -186,13 +186,14 @@ digest, which only a task with runtime authority can set.
 XDP expands each program's signed class mask into links on matching
 interfaces in the initial network namespace, with one endpoint per veth
 pair, using native driver mode only.
-Artifacts containing XDP always use ``link_<n>`` pins, including when only
-one link is created, and pin each XDP program at ``xdp_prog_<n>``, which
-keeps it loaded while no device matches its class mask. A load that finds
-no matching device succeeds and attaches nothing until ``upatch
-reconcile`` finds one. Devices without native XDP, and devices that
-vanish or change during the attach, are skipped; any other attachment
-failure removes all links the load created.
+Artifacts containing XDP or TCX always use ``link_<n>`` pins, including
+when only one link is created, and pin each XDP or TCX program at
+``xdp_prog_<n>`` or ``tcx_prog_<n>``, which keeps it loaded while no
+device matches its class mask and filter. A load that finds no matching
+device succeeds and attaches nothing until ``upatch reconcile`` finds
+one. Devices without native XDP (for XDP), and devices that vanish or
+change during the attach, are skipped; any other attachment failure
+removes all links the load created.
 
 Telling the loader apart from root
 ----------------------------------

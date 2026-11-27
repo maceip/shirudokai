@@ -61,8 +61,8 @@ int kernel_cmdline_write_mounted(const char *cmdline);
 
 /*
  * Whether writes to mounted block devices are blocked (A10): requires the
- * block-layer guard in BTF, no enabling cmdline override, and no
- * CONFIG_BLK_DEV_WRITE_MOUNTED=y without bdev_allow_write_mounted=0.
+ * block-layer guard in BTF, a non-NULL cmdline without an enabling override,
+ * and no CONFIG_BLK_DEV_WRITE_MOUNTED=y without bdev_allow_write_mounted=0.
  */
 bool kernel_bdev_write_mounted_protected(const struct kernel_options *opts,
 					 int kconfig_allow,

@@ -107,10 +107,14 @@ Kernel configuration
        only those keyrings hold cannot sign a config the target
        activates.
      - no; not needed for configs
-   * - The ``tpm_command`` LSM hook carried by the shirudo kernel build
-     - The hook lets shirudo refuse extensions of its register by
-       other processes.
-     - init fails: ``lsm/tpm_command`` cannot attach
+   * - The ``tpm_command`` and ``mm_read_access`` LSM hooks and seal
+       patches carried by the shirudo kernel build
+       (:doc:`/internals/kernel-patches`)
+     - ``tpm_command`` lets shirudo refuse extensions of its register by
+       other processes, and ``mm_read_access`` and patches ``0021`` to
+       ``0023`` close read-only mm inspection and directory-label gaps.
+     - yes, ``signed_loader_kernel_abi`` and ``kernel_lsm_hooks`` before
+       ``init`` loads guards
    * - ``CONFIG_I2C_CHARDEV=n`` and ``CONFIG_SPI_SPIDEV=n``, or neither
        reaching the TPM's bus
      - The ``tpm_command`` hook sees only commands written through the

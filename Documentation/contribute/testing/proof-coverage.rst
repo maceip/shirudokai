@@ -809,9 +809,10 @@ or shorter, and "lengths 0 to 6" every input of each of those lengths.
        build ID and offsets for the program it names, a function's offset
        below 4 GiB; a refusal leaves nothing written and nothing allocated
    * - ``vouch-payload``
-     - ``keys_vouch_payload()``, ``keys_verify_vouch()`` and
-       ``keys_verify_signature()`` of :src:`util/keys.c`, the signature
-       check a stub that takes the signed bytes from their signer alone
+     - ``keys_vouch_payload()``, ``keys_verify_vouch()``,
+       ``keys_verify_vouch_at()`` and ``keys_verify_signature_at()`` of
+       :src:`util/keys.c`, the signature and validity checks stubs that
+       take the signed bytes from their signer alone
      - Certificates of 0 to 2 bytes, a set of two members, every
        allocation allowed to fail
      - What ``shirudo-build keys vouch`` signs is the prefix, its NUL and
@@ -968,8 +969,9 @@ or shorter, and "lengths 0 to 6" every input of each of those lengths.
      - Accepts only the key shapes shirudo uses, P-256 or RSA-2048 with a
        256-byte modulus, each spanning exactly the input
    * - ``tpm-digest``
-     - The policy, name and cpHash digests of :src:`util/tpm_wire.c`,
-       the register's policy, ``tpm_writer_auth_hash()``
+     - The policy, name, cpHash and OTLP origin digests of
+       :src:`util/tpm_wire.c`, ``otel_boot_id_valid()``, the register's
+       policy, ``tpm_writer_auth_hash()``
      - Names of any length, every PCR mask, up to 24 PCR values, SHA-256
        as any result
      - Each reads only whole inputs and writes only its output; an object
@@ -1754,9 +1756,11 @@ proof: ``dns_name_valid()`` of :src:`util/string.c` at its limits of a
 :src:`util/tpm_wire.c`, the second of which the ``tpm-wire`` fuzz target
 round-trips; ``upatch_rodata_symbol_range()`` of
 :src:`util/upatch_rodata.c`, the range of ``.rodata`` the builder
-rewrites; ``cert_valid_at()``, ``keys_vouch_payload_v2()``,
-``keys_vouch_encode_v2()``, ``keys_verify_signature_at()`` and
-``keys_verify_vouch_at()`` of :src:`util/keys.c`; ``chain_init_event()`` of :src:`util/chain.c` on a set that is
+rewrites; ``cert_valid_at()``, ``cert_der_valid_at()``,
+``keys_vouch_payload_v2()``, ``keys_vouch_encode_v2()`` and
+``keys_verify_signature()`` of :src:`util/keys.c`; ``tpm_quote_digest()``
+and ``keepalive_quote()`` of :src:`util/keepalive_quote.c`;
+``chain_init_event()`` of :src:`util/chain.c` on a set that is
 not empty; ``upatch_name_signed()``, ``upatch_member_valid()`` and
 ``prog_specs_xdp_classes()`` of :src:`util/upatch.c`; the reading of
 the eventlog behind boot restore in :src:`util/measured.c`,

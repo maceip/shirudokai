@@ -654,17 +654,17 @@ refuses ``BPF_OBJ_GET``, ``BPF_MAP_GET_FD_BY_ID`` and
 ``lsm/file_open`` in the ``bpf2`` object refuses them the opening of any
 non-directory inode in the private bpffs (``ObjGet``). Directories stay
 listable. ``BPF_PROG_GET_FD_BY_ID`` and ``BPF_BTF_GET_FD_BY_ID`` stay
-open for other program types. ``lsm/bpf_prog`` refuses an XDP descriptor
-to a task without runtime authority (``ObjGet``), including acquisition by
-ID, because netlink accepts it outside the ``bpf()`` attach guard. Other
-shipped types attach nowhere without the commands above or the ioctl
-below (R18).
+open for other program types. ``lsm/bpf_prog`` refuses an XDP or
+``BPF_PROG_TYPE_SCHED_CLS`` (TCX) descriptor to a task without runtime
+authority (``ObjGet``), including acquisition by ID, because netlink
+accepts them outside the ``bpf()`` attach guard. Other shipped types
+attach nowhere without the commands above or the ioctl below (R18).
 
 The one attach that does not pass through ``bpf()`` is
 ``PERF_EVENT_IOC_SET_BPF``, which binds a program reached by id to a
-perf event of the caller's. ``lsm/file_ioctl`` and
-``lsm/file_ioctl_compat`` keep that ioctl number to tasks with runtime
-authority (``PerfAttach``).
+perf event of the caller's. In strict enforcement, ``lsm/file_ioctl``
+and ``lsm/file_ioctl_compat`` keep that ioctl number to tasks with
+runtime authority (``PerfAttach``).
 
 In the private bpffs, unlink, rename, mkdir, symlink, hard link, rmdir
 and xattr changes need runtime authority (``PinUnlink``, ``PinRename``,
@@ -1602,8 +1602,8 @@ therefore neither reads nor drains the maps, and reads the identity
 only through a runtime command such as ``shirudo status``.
 
 The boundary is the command interface: root can run the runtime binary,
-and ``shirudo upatch map`` drains a serializer unless ``--peek`` is
-given (R2).
+``shirudo upatch map`` drains a serializer unless ``--peek`` is given,
+and ``shirudo upatch events`` consumes queued ``ringbuf`` records (R2).
 
 In shared enforcement ``lsm/bpf_map`` refuses the maps shirudo owns
 rather than every map, and ``lsm/bpf_prog`` the programs it owns, so a
@@ -1729,19 +1729,21 @@ program descriptor, ``BPF_OBJ_GET``, the ``*_GET_FD_BY_ID`` commands and
 the calls a syscall program of root's makes from inside the kernel
 alike. In shared enforcement they refuse a task without runtime
 authority the objects shirudo owns (``ObjGet``, ``MapFdWrite``), and
-leave it every other. shirudo owns the objects ``bpf2`` and ``seal``
-create, all named ``shirudo_``, and those its tasks and the signed
-loaders they run create after ``init``, which ``lsm/bpf_map_create``
-and ``lsm/bpf_prog_load`` record by address in ``shirudo_owned`` and
-``lsm/bpf_map_free`` and ``lsm/bpf_prog_free`` remove. A creation that
-cannot be recorded fails. An object of root's whose name begins with
-``shirudo_`` is refused to root as well.
+leave it every other. shirudo owns the explicit maps and programs
+``bpf2`` and ``seal`` create, all named ``shirudo_``, and those its
+tasks and the signed loaders they run create after ``init``, which
+``lsm/bpf_map_create`` and ``lsm/bpf_prog_load`` record by address in
+``shirudo_owned`` and ``lsm/bpf_map_free`` and ``lsm/bpf_prog_free``
+remove. A creation that cannot be recorded fails. An object of root's
+whose name begins with ``shirudo_`` is refused to root as well.
 
 No hook sees a link descriptor handed out, so ``lsm/bpf`` refuses
-``BPF_LINK_GET_FD_BY_ID``, and ``lsm/inode_permission`` refuses the
+``BPF_LINK_GET_FD_BY_ID``, ``lsm/inode_permission`` refuses the
 permission check ``BPF_OBJ_GET`` makes on a pin of the private bpffs
-(``ObjGet``). ``BPF_TOKEN_CREATE`` and every unclassified command
-stay refused (``BpfCommand``).
+(``ObjGet``), and ``lsm/inode_create`` refuses creating a pin in the
+private bpffs while ``BPF_OBJ_PIN`` is open elsewhere (``ObjPin``).
+``BPF_TOKEN_CREATE`` and every unclassified command stay refused
+(``BpfCommand``).
 
 ``lsm/bpf_prog_load`` refuses a task without runtime authority an LSM
 program (``LoadNotLoader``), from userspace or from a syscall program
@@ -1756,11 +1758,12 @@ undo the seal (T3).
    and the programs it loads (A16)
 :Enforced at: ``lsm/bpf``, ``lsm/bpf_map``, ``lsm/bpf_prog``,
    ``lsm/bpf_prog_load``, ``lsm/bpf_map_create``, ``lsm/bpf_map_free``,
-   ``lsm/bpf_prog_free``, ``lsm/inode_permission``
-:Refusal: ``EACCES`` from ``bpf()`` and from opening a pin of the
-   private bpffs; ``ENOMEM`` from a creation by shirudo that cannot be
-   recorded
-:Counters: ``ObjGet``, ``MapFdWrite``, ``LoadNotLoader``, ``BpfCommand``
+   ``lsm/bpf_prog_free``, ``lsm/inode_permission``, ``lsm/inode_create``
+:Refusal: ``EACCES`` from ``bpf()`` and from opening or creating a pin
+   of the private bpffs; ``ENOMEM`` from a creation by shirudo that
+   cannot be recorded
+:Counters: ``ObjGet``, ``ObjPin``, ``MapFdWrite``, ``LoadNotLoader``,
+   ``BpfCommand``
 :Tests: ``t5006``, ``t6160``
 :Residual: R25
 
@@ -1786,7 +1789,8 @@ R1 Unload runs in userspace, and directives are reusable
 R2 The command interface of the runtime binary is the boundary
    Root can run any command of the runtime binary. It can load any
    signed artifact (R16), apply any published directive (R1), drain a
-   serializer with ``shirudo upatch map`` and send the output where it
+   serializer with ``shirudo upatch map`` or consume ``ringbuf`` records
+   with ``shirudo upatch events`` and send the output where it
    chooses, and hold the lock files shirudo serializes on. No hook
    refuses signals, so root can also stop a running command, which
    ``lsm/task_kill`` counts (``SealSignal``) and which keeps open
@@ -1980,10 +1984,12 @@ R13 Revocation reaches a target only through a config
 R14 Configs roll back
    shirudo accepts any validly signed config whose ``security.epoch``
    is not below the floor it keeps in
-   ``/var/lib/shirudo/config-update/epoch`` (``freshness_verify()``,
-   ``freshness_advance()``). The floor stops root on a running target
-   from staging or activating an older epoch: the file carries the seal
-   label, and the seal refuses root's writes to it. It does not stop
+   ``/var/lib/shirudo/config-update/epoch`` (``freshness_verify_at()``,
+   ``freshness_advance_at()``). The floor stops root on a running target
+   from staging or activating an older epoch: the directory is opened
+   beneath the recorded state root without crossing a mount point, the
+   file carries the seal label, and the seal refuses root's writes to
+   it. It does not stop
    the adversary this risk is about. The floor is a plain file in the
    same directory as the selection journal, neither is authenticated,
    and a missing floor reads as 0. Whoever changes that directory
@@ -2004,10 +2010,11 @@ R14 Configs roll back
 R16 Any artifact ever signed loads at any time
    Signed upatch artifacts carry no version floor, no signature expiry
    and no per-target authorization. Userspace verifiers check X.509
-   ``notBefore`` and ``notAfter`` windows on vouch, repository and Java
-   upatch signer certificates (``cert_valid_at()``) and enforce the
-   signed ``not_after`` bound on v2 vouches (``shirudo keys vouch
-   --expires-days``, ``shirudo keys rotate``), whereas the kernel's
+   ``notBefore`` and ``notAfter`` windows on vouch, vouched, curated
+   feed, repository and Java upatch signer certificates
+   (``cert_valid_at()``) and enforce the signed ``not_after`` bound on
+   v2 vouches (``shirudo keys vouch --expires-days``, ``shirudo keys
+   rotate``), whereas the kernel's
    ``.bpf`` loader check accepts any loader signed by an enrolled key.
    Root can roll a upatch back to an older vulnerable version or load a
    signed debug upatch. Detection: the load is measured, and a verifier
@@ -2022,7 +2029,9 @@ R17 Telemetry is the target's own account
    key of ``attest`` over no PCR and attaches ``X-Shirudo-TPM-AK-Name``,
    ``X-Shirudo-TPM-Attest``, ``X-Shirudo-TPM-Signature``,
    ``X-Shirudo-Boot-ID`` and ``X-Shirudo-Export-Seq`` for offline
-   verification by ``shirudo-quote-check --otel``. A keepalive likewise
+   verification by ``shirudo-quote-check --otel``, where
+   ``body_sha256`` covers the raw HTTP request body on the wire
+   (compressed when ``gzip`` is on). A keepalive likewise
    carries a quote of the SHA-256 of its body by the attestation key of
    ``attest``, created for each keepalive, over no PCR, and
    ``shirudo-quote-check`` verifies it without a TPM. A quote that
@@ -2055,12 +2064,12 @@ R18 BPF outside the gates
    loaded through ``kern_sys_bpf()``, such as the ``bpf_preload`` module,
    which a signed module can bring in (A4). Classic BPF, for seccomp
    filters and ``SO_ATTACH_FILTER``, does not use ``bpf()``. Program
-   descriptors other than XDP stay open to root, and the attach paths outside
-   ``bpf()`` that take one, socket options and netlink among them,
-   accept only program types those paths support. The operator's build
-   refuses sections of those types except XDP, whose descriptors
-   ``lsm/bpf_prog`` guards; the kernel does not refuse these types in a
-   signed loader.
+   descriptors other than XDP and ``BPF_PROG_TYPE_SCHED_CLS`` stay open
+   to root, and the attach paths outside ``bpf()`` that take one, socket
+   options and netlink among them, accept only program types those paths
+   support. The operator's build refuses sections of those types except
+   XDP and TCX, whose descriptors ``lsm/bpf_prog`` guards; the kernel
+   does not refuse these types in a signed loader.
 
 R19 Raw device and offline writes bypass the seal
    The seal guards file operations. A write to the block device under

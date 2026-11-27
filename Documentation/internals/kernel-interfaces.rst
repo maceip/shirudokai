@@ -79,7 +79,7 @@ comes from the ``IFLA_XDP`` attributes of the same dump:
 generic netlink family and refuses a device that reports
 ``NETDEV_XDP_ACT_BASIC`` without ``NETDEV_XDP_ACT_RX_SG``, as the kernel
 never compares a program's multi-buffer flag with the device's. The
-``lsm/bpf_prog`` guard refuses XDP
+``lsm/bpf_prog`` guard refuses XDP and ``BPF_PROG_TYPE_SCHED_CLS``
 descriptors to unauthorized callers, including ``BPF_PROG_GET_FD_BY_ID``,
 because netlink accepts these descriptors outside ``bpf()``.
 
@@ -208,8 +208,9 @@ where the caller is the loader.
    * - ``BPF_OBJ_PIN``
      - Links at ``upatches/<name>/link`` or ``link_<n>``, serializer
        programs at ``serializers/<map>``, the test-run program at
-       ``test``, each XDP program at ``xdp_prog_<n>``, maps at
-       ``maps/<map>``, under ``/run/shirudo/bpffs``.
+       ``test``, each XDP or TCX program at ``xdp_prog_<n>`` or
+       ``tcx_prog_<n>``, maps at ``maps/<map>``, under
+       ``/run/shirudo/bpffs``.
 
 The attach kinds are those of :doc:`/upatches/write/attach-kinds`,
 numbered as in the signed attach metadata. Every call is
@@ -278,6 +279,16 @@ numbered as in the signed attach metadata. Every call is
      - ``target_fd`` a perf event of the uprobe PMU, below.
      - Perf event type, the file offset as signed and
        ``ref_ctr_offset`` 0.
+   * - 14, 15: TCX ingress, TCX egress
+     - ``BPF_TCX_INGRESS``, ``BPF_TCX_EGRESS``
+     - ``target_ifindex`` a selected device.
+     - ``BPF_LINK_TYPE_TCX``, ``tcx.ifindex`` of the selected device and
+       ``tcx.attach_type``. The device class, name, driver and peer scope
+       are checked again after the attach.
+   * - ``struct_ops`` map role
+     - ``BPF_STRUCT_OPS``
+     - ``target_fd`` the ``.struct_ops.link`` map descriptor.
+     - ``BPF_LINK_TYPE_STRUCT_OPS``.
 
 A kprobe link's perf event comes from ``perf_event_open(2)`` with
 ``type`` read from ``/sys/bus/event_source/devices/kprobe/type``,

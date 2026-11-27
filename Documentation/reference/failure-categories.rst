@@ -122,10 +122,11 @@ Categories
          load is undone.
        - This boot's eventlog records do not fold to the register:
          ``EBADMSG``. Nothing changed.
-       - From ``upatch reconcile``, the archive of a loaded XDP upatch
-         differs from what the records say was loaded: no errno.
-       - From ``upatch reconcile``, the XDP program pin is missing
-         (``ENOENT``) or holds no XDP program (``ESTALE``).
+       - From ``upatch reconcile``, the archive of a loaded XDP or TCX
+         upatch differs from what the records say was loaded: no errno.
+       - From ``upatch reconcile``, the XDP or TCX program pin is
+         missing (``ENOENT``) or holds the wrong program type
+         (``ESTALE``).
      - Do not retry. Keep the eventlog and the journal and handle the
        target as an incident: :doc:`/operate/troubleshoot/incident-tampered`.
    * - ``not_initialized``
@@ -212,7 +213,7 @@ Categories
      - ``EACCES`` or ``EPERM``. The kernel refused an operation with
        ``EACCES`` or ``EPERM``, normally an LSM, shirudo's own or another
        one. In ``pre_flight`` it refused to open the ``lsm_link`` pin or,
-       from ``upatch reconcile``, an XDP program pin.
+       from ``upatch reconcile``, an XDP or TCX program pin.
      - Check the tamper counters in ``shirudo status`` and the other
        LSMs' audit records.
    * - ``verifier_rejected``

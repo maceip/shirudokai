@@ -157,7 +157,9 @@ Descriptors and pins
     task the opening of anything but a directory in the private bpffs,
     since a pin opened as a file reads a map's contents; directories stay
     listable. ``BPF_PROG_GET_FD_BY_ID`` stays allowed for types other than
-    XDP. ``lsm/bpf_prog`` keeps XDP descriptors to runtime authority,
+    XDP and ``BPF_PROG_TYPE_SCHED_CLS`` (TCX). ``lsm/bpf_prog`` keeps
+    XDP and ``BPF_PROG_TYPE_SCHED_CLS`` descriptors to runtime
+    authority,
     since netlink can attach them without passing through ``bpf()``.
     ``BPF_BTF_GET_FD_BY_ID`` stays allowed. Root without authority cannot read
     shirudo's maps or hold one of its links open by pin or by id.
@@ -259,14 +261,17 @@ shirudo's objects
 The private bpffs
     No hook sees a link descriptor handed out, so ``lsm/inode_permission``
     refuses a task without authority the permission check on a pin of
-    the private bpffs, which ``BPF_OBJ_GET`` and every open make.
+    the private bpffs, which ``BPF_OBJ_GET`` and every open make, and
+    ``lsm/inode_create`` refuses creating a pin in the private bpffs
+    while ``BPF_OBJ_PIN`` stays open elsewhere (``ObjPin``).
     Directories stay listable, as in ``strict``.
 
-The ``shared`` hooks, ``inode_permission``, ``bpf_map_free``,
-``bpf_prog_free`` and ``bpf_map_create``, attach only in that mode, and
-``status`` checks their pins only then. Every other guard of this page
-applies in both modes. :doc:`/operate/plan/interoperability` lists what
-other software can do in each.
+The ``shared`` hooks, ``inode_permission``, ``inode_create``,
+``bpf_map_free``, ``bpf_prog_free`` and ``bpf_map_create``, attach only
+in that mode, and ``status`` checks their pins only then. Every other
+guard of this page applies in both modes.
+:doc:`/operate/plan/interoperability` lists what other software can do
+in each.
 
 Attach order
 ------------
@@ -291,10 +296,11 @@ order:
 #. Attach the mount guards ``sb_umount``, ``move_mount``, ``sb_mount``,
    ``sb_remount`` and the ``file_open`` recorder, open the bpffs root so
    the recorder notes the mount, and freeze that record.
-#. In shared mode, attach ``inode_permission``, ``bpf_map_free``,
-   ``bpf_prog_free`` and ``bpf_map_create``, so that the private bpffs
-   is closed before ``lsm/bpf`` opens ``BPF_OBJ_GET`` to root, and
-   ``seal``'s objects are recorded once they exist.
+#. In shared mode, attach ``inode_permission``, ``inode_create``,
+   ``bpf_map_free``, ``bpf_prog_free`` and ``bpf_map_create``, so that
+   the private bpffs is closed before ``lsm/bpf`` opens
+   ``BPF_OBJ_GET`` and ``BPF_OBJ_PIN`` to root, and ``seal``'s objects
+   are recorded once they exist.
 #. Load ``seal`` on the shared maps, freeze its scratch map, and attach
    its twenty-nine hooks, then ``mmap_file`` and ``file_mprotect``.
 #. Attach ``lsm/bpf_map``, then ``lsm/bpf_prog``, then
@@ -333,7 +339,7 @@ non-zero return ends the list. Where ``bpf2`` and ``seal`` share a hook
 (``bprm_check_security``, ``file_open``, ``inode_unlink``,
 ``inode_rmdir``, ``inode_rename``, ``inode_setxattr``,
 ``inode_removexattr``, ``inode_mkdir``, ``inode_symlink``,
-``inode_link``), the ``seal``
+``inode_link``, and in shared mode ``inode_create``), the ``seal``
 program runs first, and when it refuses, its errno and counter are the
 ones the caller sees. A traced exec of a runtime file, for example, fails with
 ``EACCES`` from ``seal`` rather than ``EPERM`` from ``bpf2``.
@@ -406,9 +412,10 @@ Hooks in bpf2
        (read-only)
      - Closed.
    * - ``lsm/bpf_prog``
-     - An XDP program descriptor to a task without authority, including
-       acquisition by program ID. Other program types stay allowed. In
-       shared mode, a descriptor of a program shirudo owns, of any type.
+     - An XDP or ``BPF_PROG_TYPE_SCHED_CLS`` program descriptor to a
+       task without authority, including acquisition by program ID.
+       Other program types stay allowed. In shared mode, a descriptor of
+       a program shirudo owns, of any type.
      - ``EACCES``: ``ObjGet``
      - Closed.
    * - ``lsm/bpf_map_create``, ``lsm/bpf_map_free``,
@@ -422,6 +429,11 @@ Hooks in bpf2
        the private bpffs, to a task without authority.
      - ``EACCES``: ``ObjGet``
      - Open before ``init`` records the bpffs.
+   * - ``lsm/inode_create``
+     - Shared mode only. Creating a pin in the private bpffs, to a task
+       without authority.
+     - ``EACCES``: ``ObjPin``
+     - Open before ``init`` records the bpffs.
    * - ``lsm/file_open``
      - Opening a non-directory inode of the private bpffs, through any
        mount of it, to a task without authority. Records the bpffs mount
@@ -431,7 +443,8 @@ Hooks in bpf2
        ``HibernateLocation``
      - Closed.
    * - ``lsm/file_ioctl``, ``lsm/file_ioctl_compat``
-     - ``PERF_EVENT_IOC_SET_BPF`` on any file,
+     - ``PERF_EVENT_IOC_SET_BPF`` on any file (allowed to non-shirudo
+       tasks in shared mode),
        ``XFS_IOC_ATTRMULTI_BY_HANDLE`` on an XFS file system, which
        changes attributes past every xattr hook, and every device-mapper
        control command except ``DM_VERSION``, ``DM_LIST_DEVICES``,
@@ -718,8 +731,9 @@ The hooks decide only what reaches them. These paths do not:
 - The ``kernel`` argument is true for every ``bpf()`` call through a
   kernel pointer, including BPF that kernel code loads with
   ``kern_sys_bpf()``, such as a light skeleton in a module.
-- ``BPF_PROG_GET_FD_BY_ID`` stays open except for XDP descriptors,
-  which ``lsm/bpf_prog`` guards. ``lsm/bpf`` and
+- ``BPF_PROG_GET_FD_BY_ID`` stays open except for XDP and
+  ``BPF_PROG_TYPE_SCHED_CLS`` descriptors, which ``lsm/bpf_prog``
+  guards. ``lsm/bpf`` and
   ``lsm/file_ioctl`` refuse the ``bpf()`` attach commands and the perf
   ioctl to tasks without authority; other kernel interfaces that take a
   program descriptor are not hooked here.

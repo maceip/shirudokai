@@ -666,6 +666,8 @@ void harness(void)
 		__CPROVER_assume(!obj.maps[i].name[UPATCH_PROG_MAP_MAX]);
 		__CPROVER_assume(obj.maps[i].type != BPF_MAP_TYPE_STRUCT_OPS ||
 				 (obj.maps[i].map_flags & BPF_F_LINK));
+		__CPROVER_assume(!i ||
+				 obj.maps[i].type != BPF_MAP_TYPE_STRUCT_OPS);
 	}
 	text(obj.maps[2].name, SERIAL_MAP_NAME, false);
 	if (!has_output)

@@ -941,7 +941,8 @@ absent. A new section therefore needs readers that know its tag before
 writers emit it. Reserved fields are 0 in every file a writer emits. The
 reader checks ``reserved1`` to ``reserved3``, the directory entries'
 ``reserved`` and the ``UPUT`` ``reserved`` field. It checks ``flags``
-bit 1 against ``MODE`` and does not check ``flags`` bits 2 to 31 or the
+bit 1 against ``MODE`` and refuses it with ``DIRECTIVE_UNLOAD`` or
+``UPATCH_TYPE_JAVA``, and does not check ``flags`` bits 2 to 31 or the
 ``DCDB`` ``reserved`` field.
 
 Limits

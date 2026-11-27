@@ -35,9 +35,12 @@ counter.
      - Hooks and condition
      - Errno
    * - ``LoadNotLoader``
-     - program load that is not a signed loader
+     - program load that is not a signed loader, or an LSM load in shared
+       mode
      - ``lsm/bpf``: ``BPF_PROG_LOAD`` of a type other than
-       ``BPF_PROG_TYPE_SYSCALL``, every userspace caller
+       ``BPF_PROG_TYPE_SYSCALL``, every userspace caller in ``strict``
+       and shirudo's own tasks in ``shared``; ``lsm/bpf_prog_load``:
+       ``BPF_PROG_TYPE_LSM`` from a task without authority in ``shared``
      - ``EACCES``
    * - ``LoadUnsigned``
      - loader-type program load without a signature
@@ -82,7 +85,8 @@ counter.
      - ``EACCES``
    * - ``ObjPin``
      - pin of a BPF object by another executable
-     - ``lsm/bpf``: ``BPF_OBJ_PIN``
+     - ``lsm/bpf``: ``BPF_OBJ_PIN`` in ``strict``; ``lsm/inode_create``:
+       creating a pin in the private bpffs in ``shared``
      - ``EACCES``
    * - ``BpfCommand``
      - detach, update, delete or unclassified bpf() command
@@ -194,7 +198,7 @@ counter.
    * - ``PerfAttach``
      - program attached to a perf event by another executable
      - ``lsm/file_ioctl``, ``lsm/file_ioctl_compat``: the ioctl number
-       of ``PERF_EVENT_IOC_SET_BPF`` on any file
+       of ``PERF_EVENT_IOC_SET_BPF`` on any file in ``strict``
      - ``EACCES``
    * - ``PinEntry``
      - directory or link made in the private bpffs by another executable
@@ -223,12 +227,13 @@ counter.
        command, or an unknown or malformed command
      - ``EACCES``
    * - ``ObjGet``
-     - pin, map, link or XDP program opened by another executable
+     - pin, map, link, XDP or TCX program opened by another executable
      - ``lsm/bpf``: ``BPF_OBJ_GET``, ``BPF_MAP_GET_FD_BY_ID``,
        ``BPF_LINK_GET_FD_BY_ID``; ``lsm/bpf_map``: a read-only
-       descriptor; ``lsm/bpf_prog``: an XDP program descriptor;
-       ``lsm/file_open`` in the ``bpf2`` object: a
-       non-directory inode in the private bpffs
+       descriptor; ``lsm/bpf_prog``: an XDP or ``SCHED_CLS`` program
+       descriptor, or in ``shared`` any program shirudo owns;
+       ``lsm/file_open`` and, in ``shared``, ``lsm/inode_permission`` in
+       the ``bpf2`` object: a non-directory inode in the private bpffs
      - ``EACCES``
    * - ``SealSignal``
      - signal to a shirudo task (let through)

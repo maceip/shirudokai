@@ -141,8 +141,8 @@ root file system through a drop-in that starts the binary from the
 runtime image. Timers start ``shirudo bpm repo update`` and ``shirudo bpm
 upgrade``, ``shirudo bpm tree sync``, the status keepalive and the map
 export. A udev rule for every new network device, and a timer after
-boot, start ``shirudo upatch reconcile``, which attaches XDP upatches to
-the devices that match.
+boot, start ``shirudo upatch reconcile``, which attaches XDP and TCX
+upatches to the devices that match.
 
 The TPM holds the measurement register, an NV extend index anchored in
 PCR 9, the config PCR the bootstrap settings select, and the attestation

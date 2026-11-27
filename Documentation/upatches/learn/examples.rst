@@ -10,8 +10,8 @@ Example packages
 
 The tree ships packages under :src:`upatches/`: ``kernel-obs``, a
 complete observability package with arena tables, serializers, decoders
-and generated ``.rodata``, in ``kernel-cve`` three small CVE
-detectors exported from a mitigation campaign and one CVE mitigation,
+and generated ``.rodata``, in ``kernel-cve`` four small CVE
+detectors exported from a mitigation campaign and two CVE mitigations,
 each a package of its own, and ``app-sandbox``, which enforces with
 policy labels and generated ``.rodata``.
 
@@ -109,8 +109,8 @@ the shields :src:`tools/put-shields` publishes, as
      - ``n + 1`` exceeds 127, the bound the fix introduces
 
 Each detector counts every call in a per-CPU ``activity`` counter and the
-calls that match its predicate in ``hits`` with atomic increments safe
-under preemptible RCU. None of them refuses anything. The ``kprobe``
+calls that match its predicate in ``hits``. None of them refuses
+anything. The ``kprobe``
 detectors need a target with ``CONFIG_KPROBES`` and
 ``CONFIG_KPROBE_EVENTS``. ``manifest.json`` marks the campaign
 predicates as ``source_derived_unvalidated``: derived from the fix, not
@@ -186,7 +186,9 @@ bit and the rules of ``sandbox_policy``, and refuse with ``EACCES``:
      - ``ptrace`` when ``deny_ptrace = true``
    * - ``lsm/inode_create``, ``lsm/inode_mkdir``, ``lsm/inode_mknod``,
        ``lsm/inode_symlink``, ``lsm/inode_link``
-     - a new name that matches a ``deny.create`` pattern
+     - a new name that matches a ``deny.create`` pattern, or for
+       ``lsm/inode_link`` a source name that matches ``deny.write`` or
+       ``deny.read``
    * - ``lsm/inode_rename``
      - a rename from or to a name that matches a ``deny.rename`` pattern
    * - ``lsm/file_open``, ``lsm/inode_setattr``

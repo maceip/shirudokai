@@ -181,7 +181,7 @@ Config contents
 A config image holds:
 
 - ``etc/shirudo/shirudo.conf``, which must exist and may set only
-  ``eventlog.max_bytes`` and ``map_export.*`` keys;
+  ``eventlog.max_bytes``, ``security.epoch`` and ``map_export.*`` keys;
 - ``etc/shirudo/bpm/registries.d/`` and ``etc/shirudo/bpm/keys/``, the
   repositories and their certificates;
 - ``etc/shirudo/bpm/upatch-tree.conf``, the tree subscription;
@@ -282,7 +282,8 @@ record; ``image stage --cancel`` removes it. Neither operation reboots.
 
 The journal lives in ``/var/lib/shirudo/config-update``: ``state`` holds
 the current selection and whether it is pending, ``events`` the config
-log, and ``lock`` the lock every target command holds while it runs,
+log, ``epoch`` the monotonic ``security.epoch`` floor, and ``lock`` the
+lock every target command holds while it runs,
 waiting up to 30 seconds for another command to finish. The files must
 belong to the user running shirudo, have mode ``0600`` and one link.
 :doc:`measurement-register` gives the event digest and what attestation

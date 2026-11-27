@@ -64,8 +64,9 @@ Operator host
    * - ``$(bindir)/shirudo-quote-check``
      - operator package, ``make install-operator``
      - ``0755``
-     - Checks keepalive quotes for a telemetry backend. A static PIE.
-       It reads standard input alone and writes no file. See
+     - Checks keepalive quotes and origin-signed OTLP exports
+       (``--otel``) for a telemetry backend. A static PIE. It reads
+       standard input alone and writes no file. See
        :doc:`/reference/cli/quote-check`.
    * - ``/tmp/shirudo-build-XXXXXX.bpf.o``
      - ``build``
@@ -188,10 +189,11 @@ the label as foreign. In the initrd, ``init`` binds
      - ``0600``
      - ``skipped: module not loaded`` for an ``add`` operation whose
        target is absent.
-   * - ``config-update/lock``, ``state``, ``events``
-     - ``init``, ``image update``
+   * - ``config-update/lock``, ``state``, ``events``, ``epoch``
+     - ``init``, ``image update``, ``image stage``
      - ``0600``
-     - Config activation record and its event history.
+     - Config activation record, its event history and the monotonic
+       ``security.epoch`` floor.
    * - ``config-update/next-boot``
      - ``image stage``, ``init``
      - ``0600``
@@ -368,8 +370,9 @@ by ``BPF_OBJ_GET`` (``ObjGet``). Directories stay listable.
    * - ``file_ioctl_link``, ``file_ioctl_compat_link``,
        ``bdev_integrity_link``, ``bdev_free_link``
      - Links of the ioctl guard and the dm-verity device recorders.
-   * - ``bpf2_inode_permission_link``, ``bpf2_bpf_map_free_link``,
-       ``bpf2_bpf_prog_free_link``, ``bpf2_bpf_map_create_link``
+   * - ``bpf2_inode_permission_link``, ``bpf2_inode_create_link``,
+       ``bpf2_bpf_map_free_link``, ``bpf2_bpf_prog_free_link``,
+       ``bpf2_bpf_map_create_link``
      - Links of the guards of shared enforcement, present only when the
        identity record says ``shared``.
    * - ``seal_*_link``
@@ -411,14 +414,16 @@ written as ``~d``.
    * - Pin
      - Content
    * - ``link``
-     - The link of the only attached program, when the artifact has no XDP.
+     - The link of the only attached program or ``struct_ops`` map, when
+       the artifact has neither XDP nor TCX.
    * - ``link_<n>``
-     - Attachment ``<n>`` when there are several programs or the artifact
-       contains XDP. XDP can produce multiple links per program, ordered
-       by program and then ifindex; skipped devices consume no pin number.
-   * - ``xdp_prog_<i>``
-     - XDP program ``<i>`` of the artifact's signed metadata. It holds the
-       program loaded whatever devices it is attached to.
+     - Attachment ``<n>`` when there are several attachments or the
+       artifact contains XDP or TCX. XDP and TCX can produce multiple
+       links per program, ordered by program and then ifindex; skipped
+       devices consume no pin number.
+   * - ``xdp_prog_<i>``, ``tcx_prog_<i>``
+     - XDP or TCX program ``<i>`` of the artifact's signed metadata. It
+       holds the program loaded whatever devices it is attached to.
    * - ``test``
      - A program with the test-run role.
    * - ``serializers/<map>``
