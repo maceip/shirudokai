@@ -6,8 +6,9 @@
 # A root process that is not shirudo creates, writes, loads and pins BPF
 # objects of its own, but no LSM program, whose kfuncs write the seal's
 # labels. It opens none of shirudo's maps, programs, links or pins:
-# bpf2's and seal's, which carry the shirudo_ prefix, and a upatch's,
-# which shirudo recorded when it loaded them.
+# bpf2's and seal's, which init recorded by id, and a upatch's, which
+# shirudo recorded when it loaded them. A name plays no part: root's own
+# objects are named shirudo_probe.
 
 cd "$(dirname "$0")/../.."
 . ./integration-lib.sh
@@ -19,20 +20,13 @@ C=helper/test-bpf-cmd
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-counter() {
-	"$SHIRUDO_BIN" status --json | python3 -c '
-import json, sys
-print(json.load(sys.stdin)["tamper_attempts"]["counters"][sys.argv[1]])
-' "$1"
-}
-
 test_expect_success 'status reports shared enforcement' '
 	"$SHIRUDO_BIN" status --json | report_field enforcement >"$WORK/mode" &&
 	grep -qx shared "$WORK/mode" &&
 	"$SHIRUDO_BIN" status | grep -Eq "^Enforcement: +shared$"
 '
 
-test_expect_success 'root creates, loads and pins BPF objects of its own' '
+test_expect_success 'root creates, loads and pins objects of its own, named shirudo_' '
 	[ "$(./$H own /sys/fs/bpf/t6160-map)" = ok ]
 '
 
@@ -51,17 +45,10 @@ test_expect_success 'the private bpffs lists, but its pins do not open' '
 	grep -q "Permission denied" "$WORK/err"
 '
 
-test_expect_success 'root cannot pin into the private bpffs' '
-	before=$(counter ObjPin) &&
-	[ "$(./$H pin /run/shirudo/bpffs/t6160-pin)" = "obj_pin errno=13" ] &&
-	! [ -e /run/shirudo/bpffs/t6160-pin ] &&
-	[ "$(counter ObjPin)" -eq "$((before + 1))" ]
-'
-
-test_expect_success 'no map or program named shirudo_ opens' '
+test_expect_success 'no map or program of bpf2 or seal opens' '
 	./$H objects >"$WORK/objects" &&
 	grep -q "errno=13" "$WORK/objects" &&
-	! grep -E "^(map|prog) [0-9]+ shirudo_" "$WORK/objects"
+	! grep -E "^(map|prog) [0-9]+ (shirudo_|seal_)" "$WORK/objects"
 '
 
 test_expect_success 'the programs of a upatch shirudo loads do not open' '

@@ -85,8 +85,7 @@ counter.
      - ``EACCES``
    * - ``ObjPin``
      - pin of a BPF object by another executable
-     - ``lsm/bpf``: ``BPF_OBJ_PIN`` in ``strict``; ``lsm/inode_create``:
-       creating a pin in the private bpffs in ``shared``
+     - ``lsm/bpf``: ``BPF_OBJ_PIN``
      - ``EACCES``
    * - ``BpfCommand``
      - detach, update, delete or unclassified bpf() command
@@ -198,7 +197,7 @@ counter.
    * - ``PerfAttach``
      - program attached to a perf event by another executable
      - ``lsm/file_ioctl``, ``lsm/file_ioctl_compat``: the ioctl number
-       of ``PERF_EVENT_IOC_SET_BPF`` on any file in ``strict``
+       of ``PERF_EVENT_IOC_SET_BPF`` on any file
      - ``EACCES``
    * - ``PinEntry``
      - directory or link made in the private bpffs by another executable

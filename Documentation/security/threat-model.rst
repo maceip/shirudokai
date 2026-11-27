@@ -1609,6 +1609,10 @@ In shared enforcement ``lsm/bpf_map`` refuses the maps shirudo owns
 rather than every map, and ``lsm/bpf_prog`` the programs it owns, so a
 serializer cannot be test-run either (T16).
 
+In shared enforcement ``lsm/bpf_map`` refuses the maps shirudo owns
+rather than every map, and ``lsm/bpf_prog`` the programs it owns, so a
+serializer cannot be test-run either (T16).
+
 .. rst-class:: facts
 
 :Adversary: ADV-B, root on the target without the signing key
@@ -1729,21 +1733,19 @@ program descriptor, ``BPF_OBJ_GET``, the ``*_GET_FD_BY_ID`` commands and
 the calls a syscall program of root's makes from inside the kernel
 alike. In shared enforcement they refuse a task without runtime
 authority the objects shirudo owns (``ObjGet``, ``MapFdWrite``), and
-leave it every other. shirudo owns the explicit maps and programs
-``bpf2`` and ``seal`` create, all named ``shirudo_``, and those its
-tasks and the signed loaders they run create after ``init``, which
-``lsm/bpf_map_create`` and ``lsm/bpf_prog_load`` record by address in
-``shirudo_owned`` and ``lsm/bpf_map_free`` and ``lsm/bpf_prog_free``
-remove. A creation that cannot be recorded fails. An object of root's
-whose name begins with ``shirudo_`` is refused to root as well.
+leave it every other. shirudo owns the objects ``bpf2`` and ``seal``
+create, whose ids ``init`` records in ``shirudo_boot_objects`` and
+freezes before ``lsm/bpf`` attaches, and those its tasks and the signed
+loaders they run create after ``init``, which ``lsm/bpf_map_create``
+and ``lsm/bpf_prog_load`` record by address in ``shirudo_owned`` and
+``lsm/bpf_map_free`` and ``lsm/bpf_prog_free`` remove. A creation that
+cannot be recorded fails.
 
 No hook sees a link descriptor handed out, so ``lsm/bpf`` refuses
-``BPF_LINK_GET_FD_BY_ID``, ``lsm/inode_permission`` refuses the
+``BPF_LINK_GET_FD_BY_ID``, and ``lsm/inode_permission`` refuses the
 permission check ``BPF_OBJ_GET`` makes on a pin of the private bpffs
-(``ObjGet``), and ``lsm/inode_create`` refuses creating a pin in the
-private bpffs while ``BPF_OBJ_PIN`` is open elsewhere (``ObjPin``).
-``BPF_TOKEN_CREATE`` and every unclassified command stay refused
-(``BpfCommand``).
+(``ObjGet``). ``BPF_TOKEN_CREATE`` and every unclassified command
+stay refused (``BpfCommand``).
 
 ``lsm/bpf_prog_load`` refuses a task without runtime authority an LSM
 program (``LoadNotLoader``), from userspace or from a syscall program
@@ -1758,12 +1760,11 @@ undo the seal (T3).
    and the programs it loads (A16)
 :Enforced at: ``lsm/bpf``, ``lsm/bpf_map``, ``lsm/bpf_prog``,
    ``lsm/bpf_prog_load``, ``lsm/bpf_map_create``, ``lsm/bpf_map_free``,
-   ``lsm/bpf_prog_free``, ``lsm/inode_permission``, ``lsm/inode_create``
-:Refusal: ``EACCES`` from ``bpf()`` and from opening or creating a pin
-   of the private bpffs; ``ENOMEM`` from a creation by shirudo that
-   cannot be recorded
-:Counters: ``ObjGet``, ``ObjPin``, ``MapFdWrite``, ``LoadNotLoader``,
-   ``BpfCommand``
+   ``lsm/bpf_prog_free``, ``lsm/inode_permission``
+:Refusal: ``EACCES`` from ``bpf()`` and from opening a pin of the
+   private bpffs; ``ENOMEM`` from a creation by shirudo that cannot be
+   recorded
+:Counters: ``ObjGet``, ``MapFdWrite``, ``LoadNotLoader``, ``BpfCommand``
 :Tests: ``t5006``, ``t6160``
 :Residual: R25
 

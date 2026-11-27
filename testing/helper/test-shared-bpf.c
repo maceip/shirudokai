@@ -4,11 +4,11 @@
  *
  * What a root task without runtime authority can do with bpf() in shared
  * enforcement, through the raw syscall. "own <pin>" creates, writes and
- * pins a map of its own, loads a socket filter and opens the pin again;
- * "pin <pin>" creates and pins a map at <pin>; "lsm" loads an LSM
- * program; "objects" opens every map and program by id and prints
- * "map|prog <id> <name>" for those it opens and "map|prog <id> errno=<n>"
- * for the others. No libbpf.
+ * pins a map of its own, loads a socket filter, both named shirudo_probe,
+ * and opens the pin again;
+ * "lsm" loads an LSM program; "objects" opens every map and program by
+ * id and prints "map|prog <id> <name>" for those it opens and
+ * "map|prog <id> errno=<n>" for the others. No libbpf.
  */
 
 #include <errno.h>
@@ -21,6 +21,10 @@
 #include <linux/bpf.h>
 
 #include <shirudo/misc.h>
+#include <shirudo/string.h>
+
+/* shirudo's own objects are told apart by record, never by name. */
+#define OWN_NAME "shirudo_probe"
 
 static int sys_bpf(int cmd, union bpf_attr *attr)
 {
@@ -48,6 +52,7 @@ static int load(__u32 type, __u32 attach_type, __u32 btf_id)
 	attr.insns = ptr_to_u64(return_zero);
 	attr.insn_cnt = ARRAY_SIZE(return_zero);
 	attr.license = ptr_to_u64("GPL");
+	strscpy_literal(attr.prog_name, OWN_NAME);
 	return sys_bpf(BPF_PROG_LOAD, &attr);
 }
 
@@ -62,6 +67,7 @@ static int own(const char *pin)
 	attr.key_size = sizeof(key);
 	attr.value_size = sizeof(value);
 	attr.max_entries = 1;
+	strscpy_literal(attr.map_name, OWN_NAME);
 	map = sys_bpf(BPF_MAP_CREATE, &attr);
 	if (map < 0)
 		return fail("map_create");
@@ -88,33 +94,6 @@ static int own(const char *pin)
 	unlink(pin);
 	if (got < 0)
 		return fail("obj_get");
-	printf("ok\n");
-	return 0;
-}
-
-static int pin_map(const char *pin)
-{
-	union bpf_attr attr = {};
-	int map, err;
-
-	attr.map_type = BPF_MAP_TYPE_ARRAY;
-	attr.key_size = sizeof(__u32);
-	attr.value_size = sizeof(__u64);
-	attr.max_entries = 1;
-	map = sys_bpf(BPF_MAP_CREATE, &attr);
-	if (map < 0)
-		return fail("map_create");
-
-	memset(&attr, 0, sizeof(attr));
-	attr.pathname = ptr_to_u64(pin);
-	attr.bpf_fd = map;
-	if (sys_bpf(BPF_OBJ_PIN, &attr)) {
-		err = errno;
-		close(map);
-		errno = err;
-		return fail("obj_pin");
-	}
-	close(map);
 	printf("ok\n");
 	return 0;
 }
@@ -180,8 +159,6 @@ int main(int argc, char **argv)
 {
 	if (argc == 3 && !strcmp(argv[1], "own"))
 		return own(argv[2]);
-	if (argc == 3 && !strcmp(argv[1], "pin"))
-		return pin_map(argv[2]);
 	if (argc == 2 && !strcmp(argv[1], "lsm"))
 		return lsm();
 	if (argc == 2 && !strcmp(argv[1], "objects")) {
@@ -189,7 +166,6 @@ int main(int argc, char **argv)
 		walk(false);
 		return 0;
 	}
-	fprintf(stderr, "usage: %s own <pin> | pin <pin> | lsm | objects\n",
-		argv[0]);
+	fprintf(stderr, "usage: %s own <pin> | lsm | objects\n", argv[0]);
 	return 2;
 }

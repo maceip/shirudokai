@@ -144,16 +144,13 @@ Other BPF users in shared enforcement
    :doc:`/internals/enforcement`. Use it only where root is trusted with
    BPF (A16 in :doc:`/security/threat-model`).
 :Still refused: an LSM program (``LoadNotLoader``),
-   ``BPF_LINK_GET_FD_BY_ID`` and opening or pinning in
-   ``/run/shirudo/bpffs`` (``ObjGet``, ``ObjPin``), a descriptor of a map
-   or program shirudo owns (``ObjGet``, ``MapFdWrite``),
-   ``BPF_TOKEN_CREATE`` and every command shirudo has not classified
-   (``BpfCommand``). The kexec, lockdown,
+   ``BPF_LINK_GET_FD_BY_ID`` and opening a pin in ``/run/shirudo/bpffs``
+   (``ObjGet``), a descriptor of a map or program shirudo owns
+   (``ObjGet``, ``MapFdWrite``), ``BPF_TOKEN_CREATE`` and every command
+   shirudo has not classified (``BpfCommand``). The kexec, lockdown,
    keyring, TPM, image and seal guards are those of ``strict``, so
    ``bpf_probe_write_user()`` stays unavailable.
-:What to do: Load datapaths and tracing tools as on any host. Name no
-   map or program of your own with the ``shirudo_`` prefix, which
-   shirudo treats as its own.
+:What to do: Load datapaths and tracing tools as on any host.
 
 What common software sees in shared enforcement:
 

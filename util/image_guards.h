@@ -13,7 +13,7 @@
 #define MOUNT_HOOK_COUNT 6
 #define OBSERVER_HOOK_COUNT 10
 #define IMAGE_OBSERVER_HOOK_COUNT 4
-#define SHARED_HOOK_COUNT 5
+#define SHARED_HOOK_COUNT 4
 
 struct image_guard {
 	const char *prog;

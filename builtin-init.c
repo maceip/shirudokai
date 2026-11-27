@@ -514,7 +514,7 @@ static int attach_seal(struct bpf_object *policy, struct bpf_object **obj_out,
 	if (!err) {
 		struct bpf_map *scratch;
 
-		scratch = bpf_object__find_map_by_name(obj, "shirudo_seal_scratch");
+		scratch = bpf_object__find_map_by_name(obj, "seal_scratch_map");
 		err = scratch ? bpf_map_freeze(bpf_map__fd(scratch)) : -ENOENT;
 	}
 	if (err) {
@@ -809,6 +809,62 @@ static const enum gate_guard bpf_gates[] = {
 	GUARD_BPF,
 };
 
+static int boot_object_add(int set, __u32 kind, int fd)
+{
+	struct boot_object key = { .kind = kind };
+	struct bpf_prog_info prog = {};
+	struct bpf_map_info map = {};
+	__u32 len;
+	__u8 one = 1;
+	int ret;
+
+	if (kind == BOOT_OBJECT_MAP) {
+		len = sizeof(map);
+		ret = bpf_map_get_info_by_fd(fd, &map, &len);
+		key.id = map.id;
+	} else {
+		len = sizeof(prog);
+		ret = bpf_prog_get_info_by_fd(fd, &prog, &len);
+		key.id = prog.id;
+	}
+	if (ret)
+		return ret;
+	return bpf_map_update_elem(set, &key, &one, BPF_ANY);
+}
+
+/*
+ * bpf2's and seal's objects exist before the hooks that record what
+ * shirudo creates, so init names each one by id and freezes the set.
+ */
+static int record_boot_objects(struct bpf_object *policy,
+			       struct bpf_object *seal)
+{
+	struct bpf_object *objects[] = { policy, seal };
+	struct bpf_program *prog;
+	struct bpf_map *map;
+	int set, ret;
+	size_t i;
+
+	set = bpf_object__find_map_fd_by_name(policy, "shirudo_boot_objects");
+	if (set < 0)
+		return set;
+	for (i = 0; i < ARRAY_SIZE(objects); i++) {
+		bpf_object__for_each_map(map, objects[i]) {
+			ret = boot_object_add(set, BOOT_OBJECT_MAP,
+					      bpf_map__fd(map));
+			if (ret)
+				return ret;
+		}
+		bpf_object__for_each_program(prog, objects[i]) {
+			ret = boot_object_add(set, BOOT_OBJECT_PROG,
+					      bpf_program__fd(prog));
+			if (ret)
+				return ret;
+		}
+	}
+	return bpf_map_freeze(set);
+}
+
 static int attach_guards(struct bpf_object *obj, struct lsm_links *links,
 			 __u32 enforcement)
 {
@@ -835,9 +891,8 @@ static int attach_guards(struct bpf_object *obj, struct lsm_links *links,
 	 * hooks as bpffs guards, seal's filesystem and exec-identity hooks,
 	 * then the bpf() gates (map fd access, bpf_prog_load admission, then
 	 * lsm/bpf) LAST.
-	 * Pinning a link creates a bpffs inode, which bootstrap authority
-	 * passes under shared mode's inode_create guard and lsm/bpf; seal's
-	 * unsigned load and the identity-map freeze precede the gates.
+	 * Pinning a link creates a bpffs inode, gated by neither guard set;
+	 * seal's unsigned load and the identity-map freeze precede the gates.
 	 */
 	err = attach_gates(gates, early_gates, ARRAY_SIZE(early_gates),
 			   links->gates);
@@ -850,10 +905,7 @@ static int attach_guards(struct bpf_object *obj, struct lsm_links *links,
 	err = attach_mount_guards(obj, links->mounts);
 	if (err)
 		return err;
-	/*
-	 * Before lsm/bpf opens BPF_OBJ_GET and BPF_OBJ_PIN, the private bpffs
-	 * is closed.
-	 */
+	/* Before lsm/bpf opens BPF_OBJ_GET, the private bpffs is closed. */
 	if (enforcement == ENFORCEMENT_SHARED) {
 		err = attach_guard_group(obj, shirudo_shared_guards,
 					 SHARED_HOOK_COUNT, links->shared);
@@ -863,6 +915,10 @@ static int attach_guards(struct bpf_object *obj, struct lsm_links *links,
 
 	err = attach_seal(obj, &links->seal_obj, links->seal,
 			  links->image_seal);
+	if (err)
+		return err;
+	/* Before lsm/bpf opens shared mode to root. */
+	err = record_boot_objects(obj, links->seal_obj);
 	if (err)
 		return err;
 

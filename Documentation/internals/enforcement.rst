@@ -98,7 +98,7 @@ The objects share eight maps, which ``init`` hands from ``bpf2`` to
 ``shirudo_roots``, which an authorized task writes before each config
 mapping. ``bpf2`` also keeps ``shirudo_mnt_rec`` for the bpffs
 mount it records, and ``seal`` keeps its scratch buffer and
-``shirudo_dir_marks``, the inode storage of its marks on files and
+``seal_dir_marks``, the inode storage of its marks on files and
 directories.
 
 A map no BPF program ever writes, such as ``shirudo_bpffs_sb``, is
@@ -247,31 +247,34 @@ The BPF system call
 
 shirudo's objects
     ``lsm/bpf_map`` and ``lsm/bpf_prog`` refuse a descriptor of an
-    object shirudo owns and allow every other. shirudo owns every map and
-    program whose name begins with ``shirudo_``, which covers ``bpf2``
-    and ``seal``, and every one its tasks create after ``init``,
-    including those the signed loaders they run create in kernel
-    context. ``lsm/bpf_map_create`` and ``lsm/bpf_prog_load`` record
-    those by the address of the map or of the program's ``aux``, which
-    the verifier keeps when it reallocates a program, in the hash map
+    object shirudo owns and allow every other. shirudo owns the maps
+    and programs of ``bpf2`` and ``seal``, which exist before any hook
+    could record them: ``init`` writes the id of each, from the
+    descriptors it loaded them through, into ``shirudo_boot_objects``
+    and freezes it before ``lsm/bpf`` attaches. It also owns every map
+    and program its tasks create after ``init``, including those the
+    signed loaders they run create in kernel context.
+    ``lsm/bpf_map_create`` and ``lsm/bpf_prog_load`` record those by the
+    address of the map or of the program's ``aux``, which the verifier
+    keeps when it reallocates a program, in the hash map
     ``shirudo_owned``; ``lsm/bpf_map_free`` and ``lsm/bpf_prog_free``
-    remove them. A creation that cannot be recorded fails, and a removal
-    that fails can only refuse root an object that reuses the address.
+    remove them. A creation that cannot be recorded fails. An id names
+    one object until the kernel's id counter wraps, and a removal that
+    fails leaves an address another object may reuse; either can only
+    refuse root an object of its own, never hand it one of shirudo's.
+    Names play no part.
 
 The private bpffs
     No hook sees a link descriptor handed out, so ``lsm/inode_permission``
     refuses a task without authority the permission check on a pin of
-    the private bpffs, which ``BPF_OBJ_GET`` and every open make, and
-    ``lsm/inode_create`` refuses creating a pin in the private bpffs
-    while ``BPF_OBJ_PIN`` stays open elsewhere (``ObjPin``).
+    the private bpffs, which ``BPF_OBJ_GET`` and every open make.
     Directories stay listable, as in ``strict``.
 
-The ``shared`` hooks, ``inode_permission``, ``inode_create``,
-``bpf_map_free``, ``bpf_prog_free`` and ``bpf_map_create``, attach only
-in that mode, and ``status`` checks their pins only then. Every other
-guard of this page applies in both modes.
-:doc:`/operate/plan/interoperability` lists what other software can do
-in each.
+The ``shared`` hooks, ``inode_permission``, ``bpf_map_free``,
+``bpf_prog_free`` and ``bpf_map_create``, attach only in that mode, and
+``status`` checks their pins only then. Every other guard of this page
+applies in both modes. :doc:`/operate/plan/interoperability` lists what
+other software can do in each.
 
 Attach order
 ------------
@@ -296,13 +299,13 @@ order:
 #. Attach the mount guards ``sb_umount``, ``move_mount``, ``sb_mount``,
    ``sb_remount`` and the ``file_open`` recorder, open the bpffs root so
    the recorder notes the mount, and freeze that record.
-#. In shared mode, attach ``inode_permission``, ``inode_create``,
-   ``bpf_map_free``, ``bpf_prog_free`` and ``bpf_map_create``, so that
-   the private bpffs is closed before ``lsm/bpf`` opens
-   ``BPF_OBJ_GET`` and ``BPF_OBJ_PIN`` to root, and ``seal``'s objects
-   are recorded once they exist.
+#. In shared mode, attach ``inode_permission``, ``bpf_map_free``,
+   ``bpf_prog_free`` and ``bpf_map_create``, so that the private bpffs
+   is closed before ``lsm/bpf`` opens ``BPF_OBJ_GET`` to root.
 #. Load ``seal`` on the shared maps, freeze its scratch map, and attach
    its twenty-nine hooks, then ``mmap_file`` and ``file_mprotect``.
+#. Write the id of every map and program of ``bpf2`` and ``seal`` into
+   ``shirudo_boot_objects`` and freeze it.
 #. Attach ``lsm/bpf_map``, then ``lsm/bpf_prog``, then
    ``lsm/bpf_prog_load``, then ``lsm/bpf``.
 
@@ -339,7 +342,7 @@ non-zero return ends the list. Where ``bpf2`` and ``seal`` share a hook
 (``bprm_check_security``, ``file_open``, ``inode_unlink``,
 ``inode_rmdir``, ``inode_rename``, ``inode_setxattr``,
 ``inode_removexattr``, ``inode_mkdir``, ``inode_symlink``,
-``inode_link``, and in shared mode ``inode_create``), the ``seal``
+``inode_link``), the ``seal``
 program runs first, and when it refuses, its errno and counter are the
 ones the caller sees. A traced exec of a runtime file, for example, fails with
 ``EACCES`` from ``seal`` rather than ``EPERM`` from ``bpf2``.
@@ -429,11 +432,6 @@ Hooks in bpf2
        the private bpffs, to a task without authority.
      - ``EACCES``: ``ObjGet``
      - Open before ``init`` records the bpffs.
-   * - ``lsm/inode_create``
-     - Shared mode only. Creating a pin in the private bpffs, to a task
-       without authority.
-     - ``EACCES``: ``ObjPin``
-     - Open before ``init`` records the bpffs.
    * - ``lsm/file_open``
      - Opening a non-directory inode of the private bpffs, through any
        mount of it, to a task without authority. Records the bpffs mount
@@ -443,8 +441,7 @@ Hooks in bpf2
        ``HibernateLocation``
      - Closed.
    * - ``lsm/file_ioctl``, ``lsm/file_ioctl_compat``
-     - ``PERF_EVENT_IOC_SET_BPF`` on any file (allowed to non-shirudo
-       tasks in shared mode),
+     - ``PERF_EVENT_IOC_SET_BPF`` on any file,
        ``XFS_IOC_ATTRMULTI_BY_HANDLE`` on an XFS file system, which
        changes attributes past every xattr hook, and every device-mapper
        control command except ``DM_VERSION``, ``DM_LIST_DEVICES``,

@@ -4,6 +4,10 @@
 #ifndef SHIRUDO_ENFORCEMENT_H
 #define SHIRUDO_ENFORCEMENT_H
 
+#ifndef __bpf__
+#include <shirudo/types.h>
+#endif
+
 #define PR_GET_ENFORCEMENT 0x53520001
 #define PR_ENFORCING_ERR 1002
 
@@ -18,6 +22,18 @@
  */
 #define ENFORCEMENT_STRICT	0u
 #define ENFORCEMENT_SHARED	1u
+
+/*
+ * A map or program bpf2 or seal created, which init records by id in
+ * shirudo_boot_objects before the bpf() gates attach.
+ */
+#define BOOT_OBJECT_MAP		1u
+#define BOOT_OBJECT_PROG	2u
+
+struct boot_object {
+	__u32	kind;	/* BOOT_OBJECT_MAP or _PROG */
+	__u32	id;
+};
 
 /*
  * vmlinux.h carries no UAPI macros, so BPF code takes the ioctl number

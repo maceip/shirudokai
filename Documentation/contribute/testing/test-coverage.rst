@@ -777,6 +777,20 @@ signed config image.
        own but no LSM program, and opens none of shirudo's maps,
        programs, links or pins, a upatch's included
 
+``shared`` (6)
+~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 36 64
+
+   * - Test
+     - Covers
+   * - ``t6160-shared-enforcement``
+     - In shared enforcement root creates, loads and pins objects of its
+       own but no LSM program, and opens none of shirudo's maps,
+       programs, links or pins, a upatch's included
+
 ``bpm`` (7)
 ~~~~~~~~~~~
 
