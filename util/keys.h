@@ -132,7 +132,10 @@ int keys_verify_signature_at(const struct trusted_set *set,
 /*
  * Whether a member of the set signed the vouch for this certificate:
  * 0 with the member's fingerprint in voucher, -EKEYREJECTED when none did,
- * -EKEYEXPIRED when a bounded v2 vouch has passed its not_after timestamp.
+ * -EKEYEXPIRED when a bounded v2 vouch or its signer has passed its
+ * validity window at unix_sec. v1 vouches are not time-checked.
+ * keys_verify_vouch_sig() checks only the cryptographic vouch signature
+ * (v1 or v2) without consulting any clock.
  */
 int keys_verify_vouch(const struct trusted_set *set,
 		      const __u8 *der, size_t der_sz,
@@ -142,6 +145,16 @@ int keys_verify_vouch_at(const struct trusted_set *set,
 			 const __u8 *der, size_t der_sz,
 			 const __u8 *sig, size_t sig_sz,
 			 __s64 unix_sec, __u8 voucher[32]);
+int keys_verify_vouch_sig(const struct trusted_set *set,
+			  const __u8 *der, size_t der_sz,
+			  const __u8 *sig, size_t sig_sz,
+			  __u8 voucher[32]);
+int keys_vouch_v2_not_after(const __u8 *sig, size_t sig_sz,
+			    __s64 *not_after);
+int keys_validate_image_validity_at(const char *primary, int keys_fd,
+				    __s64 unix_sec);
+int keys_validate_image_validity(const char *primary, int root_fd,
+				 __s64 unix_sec);
 
 /*
  * Write the certificate and its vouch under <keys_dir>/trusted, named

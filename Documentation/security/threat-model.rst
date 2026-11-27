@@ -2011,16 +2011,21 @@ R14 Configs roll back
 R16 Any artifact ever signed loads at any time
    Signed upatch artifacts carry no version floor, no signature expiry
    and no per-target authorization. Userspace verifiers check X.509
-   ``notBefore`` and ``notAfter`` windows on vouch, vouched, curated
-   feed, repository and Java upatch signer certificates
-   (``cert_valid_at()``) and enforce the signed ``not_after`` bound on
-   v2 vouches (``shirudo keys vouch --expires-days``, ``shirudo keys
-   rotate``), whereas the kernel's
-   ``.bpf`` loader check accepts any loader signed by an enrolled key.
-   Root can roll a upatch back to an older vulnerable version or load a
-   signed debug upatch. Detection: the load is measured, and a verifier
-   with an expected state sees it. Retiring one BPF loader artifact
-   requires revoking the key that signed it.
+   ``notBefore`` and ``notAfter`` windows on curated feed, repository
+   and Java upatch signer certificates (``cert_valid_at()``), and
+   enforce certificate validity windows and the signed ``not_after``
+   bound on v2 vouches (``shirudo keys vouch --expires-days``,
+   ``shirudo keys rotate``) when staging or updating a config
+   (``image stage``, ``image update``, ``config update``) and in
+   ``keys add``. Boot-time admission in ``init`` verifies only
+   cryptographic vouch signatures and does not consult the target's
+   wall clock, so an unauthenticated or reset RTC cannot fail ``init``
+   into an unprotected boot (U11). The kernel's ``.bpf`` loader check
+   likewise accepts any loader signed by an enrolled key. Root can roll
+   a upatch back to an older vulnerable version or load a signed debug
+   upatch. Detection: the load is measured, and a verifier with an
+   expected state sees it. Retiring one BPF loader artifact requires
+   revoking the key that signed it.
 
 R17 Telemetry is the target's own account
    Map snapshots are unsigned unless ``map_export.tpm_sign = true`` is
@@ -2389,10 +2394,12 @@ U13 A revoked signer's historical vouches remain valid
       when a config lists that key. This supports planned rotation, in
       which the primary vouches for a standby and is revoked later, but
       does not distinguish a legitimate earlier vouch from one made with
-      a compromised signing key. A vouch made with ``--expires-days``
-      stops admitting its key at the date signed into it, by the
-      target's clock, which bounds how long such a vouch lasts and not
-      whether it was legitimate.
+      a compromised signing key. A v2 vouch made with ``--expires-days``
+      is rejected at ``image stage``, ``image update``, ``config
+      update`` and ``keys add`` once the target's clock passes its
+      signed ``not_after`` date, and ``shirudo keys`` reports its
+      remaining days; ``init`` does not check the wall clock at boot so
+      a wrong or reset RTC cannot cause an unprotected boot (U11).
    :Status: Confirmed in code. Rotation preserves this existing rule.
    :Meanwhile: When a signer is compromised, also remove or revoke every
       dependent key whose authority should no longer be trusted. A

@@ -371,7 +371,7 @@ static void an_image_keeps_what_a_revoked_voucher_admitted(void)
 	rm_rf(dir);
 }
 
-static void vouch_v1_and_admit_vouched_enforce_cert_validity(void)
+static void boot_admission_ignores_clock_and_staging_enforces_validity(void)
 {
 	char tmpl_exp[] = "/tmp/shirudo-unit-keys-exp-XXXXXX";
 	char tmpl_adm[] = "/tmp/shirudo-unit-keys-adm-XXXXXX";
@@ -381,8 +381,8 @@ static void vouch_v1_and_admit_vouched_enforce_cert_validity(void)
 	size_t len_ok = 0, len_past = 0, len_fut = 0;
 	EVP_PKEY *pk_exp_signer = NULL, *pk_a = NULL;
 	EVP_PKEY *pk_ok = NULL, *pk_past = NULL, *pk_fut = NULL;
-	__u8 *pay = NULL, *sig = NULL;
-	size_t pay_sz = 0, sig_sz = 0;
+	__u8 *pay = NULL, *sig = NULL, *cms = NULL, *v2 = NULL;
+	size_t pay_sz = 0, sig_sz = 0, cms_sz = 0, v2_sz = 0;
 	__u8 sha[32], fp_a[32], fp_ok[32], fp_past[32], fp_fut[32], voucher[32];
 	char fp_ok_hex[65], fp_past_hex[65], fp_fut_hex[65];
 	char path[512], primary[512];
@@ -405,7 +405,7 @@ static void vouch_v1_and_admit_vouched_enforce_cert_validity(void)
 	ASSERT_EQ(make_cert_der(now + 3600, now + 7200, &pk_fut, &der_fut,
 				&len_fut), 0);
 
-	/* An expired v1 voucher is refused with -EKEYEXPIRED. */
+	/* Upstream v1 behaviour: v1 vouches do not check the voucher's clock. */
 	ASSERT_TRUE(strsprintf(primary, sizeof(primary), "%s/cert.der",
 			       dir_exp) > 0);
 	ASSERT_EQ(write_raw(primary, der_exp_signer, len_exp_signer), 0);
@@ -415,11 +415,11 @@ static void vouch_v1_and_admit_vouched_enforce_cert_validity(void)
 				    len_exp_signer, pay, pay_sz, &sig,
 				    &sig_sz), 0);
 	EXPECT_EQ(keys_verify_vouch(&set, der_ok, len_ok, sig, sig_sz,
-				    voucher), -EKEYEXPIRED);
+				    voucher), 0);
 	xfree(sig, sig_sz);
 	xfree(pay, pay_sz);
 
-	/* Expired or not-yet-valid vouched candidates are skipped on load. */
+	/* Boot-time admission admits valid signatures regardless of clock. */
 	ASSERT_EQ(keys_digest_der(der_a, len_a, sha, fp_a), 0);
 	ASSERT_EQ(keys_digest_der(der_ok, len_ok, sha, fp_ok), 0);
 	ASSERT_EQ(keys_digest_der(der_past, len_past, sha, fp_past), 0);
@@ -434,18 +434,36 @@ static void vouch_v1_and_admit_vouched_enforce_cert_validity(void)
 			       dir_adm) > 0);
 	ASSERT_EQ(write_raw(primary, der_a, len_a), 0);
 
-	ASSERT_EQ(keys_vouch_payload(der_ok, len_ok, &pay, &pay_sz), 0);
-	ASSERT_EQ(sign_detached_cms(pk_a, der_a, len_a, pay, pay_sz, &sig,
-				    &sig_sz), 0);
+	/* der_ok has an expired v2 vouch (not_after = now - 10). */
+	ASSERT_EQ(keys_vouch_payload_v2(der_ok, len_ok, now - 10, &pay,
+					&pay_sz), 0);
+	ASSERT_EQ(sign_detached_cms(pk_a, der_a, len_a, pay, pay_sz, &cms,
+				    &cms_sz), 0);
+	ASSERT_EQ(keys_vouch_encode_v2(now - 10, cms, cms_sz, &v2, &v2_sz), 0);
 	ASSERT_TRUE(strsprintf(path, sizeof(path), "%s/trusted/%s.der",
 			       dir_adm, fp_ok_hex) > 0);
 	ASSERT_EQ(write_raw(path, der_ok, len_ok), 0);
 	ASSERT_TRUE(strsprintf(path, sizeof(path), "%s/trusted/%s.vouch",
 			       dir_adm, fp_ok_hex) > 0);
-	ASSERT_EQ(write_raw(path, sig, sig_sz), 0);
-	xfree(sig, sig_sz);
+	ASSERT_EQ(write_raw(path, v2, v2_sz), 0);
+	xfree(v2, v2_sz);
+	xfree(cms, cms_sz);
 	xfree(pay, pay_sz);
 
+	root_fd = open(dir_adm, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	ASSERT_TRUE(root_fd >= 0);
+
+	/* Boot admits der_ok despite expired v2 vouch; stage/update refuses it. */
+	ASSERT_EQ(keys_load_image_at(primary, root_fd, true, &set), 0);
+	EXPECT_EQ(set.n, 2u);
+	EXPECT_EQ(set.n_unvouched, 0u);
+	EXPECT_TRUE(keys_member(&set, fp_ok));
+	EXPECT_EQ(keys_validate_image_validity_at(primary, root_fd, now),
+		  -EKEYEXPIRED);
+	EXPECT_EQ(keys_validate_image_validity_at(primary, root_fd, now - 20),
+		  0);
+
+	/* Add expired and not-yet-valid certs with v1 vouches. */
 	ASSERT_EQ(keys_vouch_payload(der_past, len_past, &pay, &pay_sz), 0);
 	ASSERT_EQ(sign_detached_cms(pk_a, der_a, len_a, pay, pay_sz, &sig,
 				    &sig_sz), 0);
@@ -470,23 +488,17 @@ static void vouch_v1_and_admit_vouched_enforce_cert_validity(void)
 	xfree(sig, sig_sz);
 	xfree(pay, pay_sz);
 
+	/* Boot-time admission succeeds for all four regardless of clock. */
 	ASSERT_EQ(keys_load(dir_adm, NULL, true, &set), 0);
-	EXPECT_EQ(set.n, 2u);
-	EXPECT_EQ(set.n_unvouched, 2u);
-	EXPECT_TRUE(keys_member(&set, fp_a));
-	EXPECT_TRUE(keys_member(&set, fp_ok));
-	EXPECT_TRUE(!keys_member(&set, fp_past));
-	EXPECT_TRUE(!keys_member(&set, fp_fut));
-
-	root_fd = open(dir_adm, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-	ASSERT_TRUE(root_fd >= 0);
+	EXPECT_EQ(set.n, 4u);
+	EXPECT_EQ(set.n_unvouched, 0u);
 	ASSERT_EQ(keys_load_image_at(primary, root_fd, true, &set), 0);
-	EXPECT_EQ(set.n, 2u);
-	EXPECT_EQ(set.n_unvouched, 2u);
-	EXPECT_TRUE(keys_member(&set, fp_a));
-	EXPECT_TRUE(keys_member(&set, fp_ok));
-	EXPECT_TRUE(!keys_member(&set, fp_past));
-	EXPECT_TRUE(!keys_member(&set, fp_fut));
+	EXPECT_EQ(set.n, 4u);
+	EXPECT_EQ(set.n_unvouched, 0u);
+
+	/* Stage/update validity check refuses expired/future certs at now. */
+	EXPECT_EQ(keys_validate_image_validity_at(primary, root_fd, now),
+		  -EKEYEXPIRED);
 	close(root_fd);
 
 	EVP_PKEY_free(pk_fut);
@@ -509,7 +521,7 @@ static const struct unit_case cases[] = {
 	UNIT_CASE(cert_valid_at_enforces_validity_bounds),
 	UNIT_CASE(vouch_v2_enforces_expiration_and_integrity),
 	UNIT_CASE(an_image_keeps_what_a_revoked_voucher_admitted),
-	UNIT_CASE(vouch_v1_and_admit_vouched_enforce_cert_validity),
+	UNIT_CASE(boot_admission_ignores_clock_and_staging_enforces_validity),
 	{}
 };
 

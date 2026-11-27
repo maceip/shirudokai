@@ -445,45 +445,83 @@ static bool vouch_is_v2_prefix(const __u8 *sig, size_t sig_sz)
 		       sizeof(KEYS_VOUCH_V2_PREFIX));
 }
 
+int keys_vouch_v2_not_after(const __u8 *sig, size_t sig_sz, __s64 *not_after)
+{
+	__u64 raw_exp;
+
+	if (!vouch_is_v2_prefix(sig, sig_sz))
+		return -ENOENT;
+	if (sig_sz <= KEYS_VOUCH_V2_HDR_LEN)
+		return -EKEYREJECTED;
+	raw_exp = get_be64(sig + sizeof(KEYS_VOUCH_V2_PREFIX));
+	if (!raw_exp || raw_exp > (__u64)INT64_MAX)
+		return -EKEYREJECTED;
+	if (not_after)
+		*not_after = (__s64)raw_exp;
+	return 0;
+}
+
+static int verify_vouch_common(const struct trusted_set *set,
+			       const __u8 *der, size_t der_sz,
+			       const __u8 *sig, size_t sig_sz,
+			       bool check_time, __s64 unix_sec,
+			       __u8 voucher[32])
+{
+	size_t payload_sz = 0;
+	__u8 *payload = NULL;
+	__s64 not_after = 0;
+	int ret;
+
+	ret = keys_vouch_v2_not_after(sig, sig_sz, &not_after);
+	if (ret != -ENOENT) {
+		if (ret)
+			return ret;
+		ret = keys_vouch_payload_v2(der, der_sz, not_after, &payload,
+					    &payload_sz);
+		if (ret)
+			return ret;
+		if (check_time)
+			ret = keys_verify_signature_at(set, payload, payload_sz,
+						       sig + KEYS_VOUCH_V2_HDR_LEN,
+						       sig_sz - KEYS_VOUCH_V2_HDR_LEN,
+						       unix_sec, voucher);
+		else
+			ret = keys_verify_signature(set, payload, payload_sz,
+						    sig + KEYS_VOUCH_V2_HDR_LEN,
+						    sig_sz - KEYS_VOUCH_V2_HDR_LEN,
+						    voucher);
+		xfree(payload, payload_sz);
+		if (ret)
+			return ret;
+		if (check_time && unix_sec > not_after)
+			return -EKEYEXPIRED;
+		return 0;
+	}
+	ret = keys_vouch_payload(der, der_sz, &payload, &payload_sz);
+	if (ret)
+		return ret;
+	ret = keys_verify_signature(set, payload, payload_sz, sig, sig_sz,
+				    voucher);
+	xfree(payload, payload_sz);
+	return ret;
+}
+
 int keys_verify_vouch_at(const struct trusted_set *set,
 			 const __u8 *der, size_t der_sz,
 			 const __u8 *sig, size_t sig_sz,
 			 __s64 unix_sec, __u8 voucher[32])
 {
-	size_t payload_sz = 0;
-	__u8 *payload = NULL;
-	int ret;
+	return verify_vouch_common(set, der, der_sz, sig, sig_sz, true,
+				   unix_sec, voucher);
+}
 
-	if (vouch_is_v2_prefix(sig, sig_sz)) {
-		__u64 raw_exp;
-		__s64 not_after;
-
-		if (sig_sz <= KEYS_VOUCH_V2_HDR_LEN)
-			return -EKEYREJECTED;
-		raw_exp = get_be64(sig + sizeof(KEYS_VOUCH_V2_PREFIX));
-		if (!raw_exp || raw_exp > (__u64)INT64_MAX)
-			return -EKEYREJECTED;
-		not_after = (__s64)raw_exp;
-		ret = keys_vouch_payload_v2(der, der_sz, not_after, &payload,
-					    &payload_sz);
-		if (ret)
-			return ret;
-		ret = keys_verify_signature_at(set, payload, payload_sz,
-					       sig + KEYS_VOUCH_V2_HDR_LEN,
-					       sig_sz - KEYS_VOUCH_V2_HDR_LEN,
-					       unix_sec, voucher);
-		xfree(payload, payload_sz);
-		if (ret)
-			return ret;
-		return unix_sec <= not_after ? 0 : -EKEYEXPIRED;
-	}
-	ret = keys_vouch_payload(der, der_sz, &payload, &payload_sz);
-	if (ret)
-		return ret;
-	ret = keys_verify_signature_at(set, payload, payload_sz, sig, sig_sz,
-				       unix_sec, voucher);
-	xfree(payload, payload_sz);
-	return ret;
+int keys_verify_vouch_sig(const struct trusted_set *set,
+			  const __u8 *der, size_t der_sz,
+			  const __u8 *sig, size_t sig_sz,
+			  __u8 voucher[32])
+{
+	return verify_vouch_common(set, der, der_sz, sig, sig_sz, false, 0,
+				   voucher);
 }
 
 int keys_verify_vouch(const struct trusted_set *set,
@@ -594,26 +632,15 @@ static int vouch_path_for(const char *der_path, char *out, size_t cap)
 	return 0;
 }
 
-static bool cert_der_valid_at(const __u8 *der, size_t der_sz, __s64 unix_sec)
-{
-	struct cert cert = {};
-	int ret;
-
-	if (cert_read_der(der, der_sz, &cert))
-		return false;
-	ret = cert_valid_at(&cert, unix_sec);
-	cert_free(&cert);
-	return ret == 0;
-}
-
 /*
  * Admit the candidates whose vouch verifies under a member, in rounds,
  * so a certificate vouched for by one admitted later still joins.
+ * Admission checks cryptographic signatures only; wall-clock validity
+ * windows are enforced at stage/update time, never at boot.
  */
 static int admit_vouched(struct trusted_set *set,
 			 struct keys_candidate *cand, size_t n_cand)
 {
-	__s64 now = (__s64)time(NULL);
 	bool progress = true;
 	size_t i;
 
@@ -633,16 +660,14 @@ static int admit_vouched(struct trusted_set *set,
 				c->done = true;
 				continue;
 			}
-			if (!cert_der_valid_at(c->der, c->der_sz, now))
-				continue;
 			if (vouch_path_for(c->dirfd >= 0 ? c->name : c->path,
 					   vouch, sizeof(vouch)) ||
 			    (c->dirfd >= 0 ?
 			     keys_read_der_at(c->dirfd, vouch, &sig, &sig_sz) :
 			     keys_read_der(vouch, &sig, &sig_sz)))
 				continue;
-			ret = keys_verify_vouch_at(set, c->der, c->der_sz,
-						   sig, sig_sz, now, voucher);
+			ret = keys_verify_vouch_sig(set, c->der, c->der_sz,
+						    sig, sig_sz, voucher);
 			xfree(sig, sig_sz);
 			if (ret)
 				continue;
@@ -1023,5 +1048,107 @@ int keys_install(const char *keys_dir, const __u8 *der,
 	ret = keys_write_file(out, der, der_sz);
 	if (ret)
 		unlink(vouch);
+	return ret;
+}
+
+static int check_vouch_expiry_at(int trusted_fd, const char *der_name,
+				 __s64 unix_sec)
+{
+	size_t len = strlen(der_name), sig_sz = 0;
+	char vouch_name[NAME_MAX + 3];
+	__s64 not_after = 0;
+	__u8 *sig = NULL;
+	int fd, ret;
+
+	if (len <= 4 || strcmp(der_name + len - 4, ".der"))
+		return 0;
+	if (strsprintf(vouch_name, sizeof(vouch_name), "%.*s.vouch",
+		       (int)(len - 4), der_name) < 0)
+		return -ENAMETOOLONG;
+	fd = openat(trusted_fd, vouch_name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	if (fd < 0)
+		return errno == ENOENT ? 0 : -errno;
+	ret = keys_read_der_fd(fd, &sig, &sig_sz);
+	close(fd);
+	if (ret)
+		return ret;
+	ret = keys_vouch_v2_not_after(sig, sig_sz, &not_after);
+	xfree(sig, sig_sz);
+	if (ret == -ENOENT)
+		return 0;
+	if (ret)
+		return ret;
+	if (unix_sec > not_after) {
+		pr_err("image trust set: %s vouch expired", der_name);
+		return -EKEYEXPIRED;
+	}
+	return 0;
+}
+
+int keys_validate_image_validity_at(const char *primary, int keys_fd,
+				    __s64 unix_sec)
+{
+	struct trusted_set set = {};
+	struct dirent *entry;
+	int dir_fd, ret;
+	size_t i;
+	DIR *dir;
+
+	ret = keys_load_image_at(primary, keys_fd, true, &set);
+	if (ret)
+		return ret;
+	for (i = 0; i < set.n; i++) {
+		struct cert cert = {};
+
+		ret = keys_cert_read(&set.certs[i], &cert);
+		if (ret)
+			return ret;
+		ret = cert_valid_at(&cert, unix_sec);
+		cert_free(&cert);
+		if (ret) {
+			pr_err("image trust set: %s is outside its validity period",
+			       set.certs[i].path);
+			return ret;
+		}
+	}
+	if (keys_fd == -ENOENT)
+		return 0;
+	dir_fd = openat(keys_fd, "trusted",
+			O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+	if (dir_fd < 0)
+		return errno == ENOENT ? 0 : -errno;
+	dir = fdopendir(dir_fd);
+	if (!dir) {
+		ret = -errno;
+		close(dir_fd);
+		return ret;
+	}
+	errno = 0;
+	ret = 0;
+	while ((entry = readdir(dir)) != NULL) {
+		if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
+			continue;
+		ret = check_vouch_expiry_at(dir_fd, entry->d_name, unix_sec);
+		if (ret)
+			break;
+		errno = 0;
+	}
+	if (!entry && errno && !ret)
+		ret = -errno;
+	closedir(dir);
+	return ret;
+}
+
+int keys_validate_image_validity(const char *primary, int root_fd,
+				 __s64 unix_sec)
+{
+	int keys_fd, ret;
+
+	keys_fd = open_beneath(root_fd, "keys", O_RDONLY | O_DIRECTORY);
+	if (keys_fd < 0 && keys_fd != -ENOENT)
+		return keys_fd;
+	ret = keys_validate_image_validity_at(primary, keys_fd, unix_sec);
+	if (keys_fd >= 0)
+		close(keys_fd);
 	return ret;
 }

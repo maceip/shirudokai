@@ -11,8 +11,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
+#include "crypto.h"
 #include "hex.h"
 #include "image_keys.h"
 #include "image_config.h"
@@ -189,6 +191,9 @@ int keys_apply_image(int root_fd, bool boot)
 	int ret;
 
 	ret = keys_validate_image(root_fd);
+	if (!ret && !boot)
+		ret = keys_validate_image_validity(RUNTIME_CERT_PATH, root_fd,
+						   (__s64)time(NULL));
 	if (!ret && !boot)
 		ret = keys_check_image_purge(root_fd);
 	return ret ? ret : revocations(root_fd, true, boot, &records);

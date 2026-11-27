@@ -623,6 +623,9 @@ static noinline_for_stack int candidate_keys(int fd,
 	int ret;
 
 	ret = keys_validate_image_set(RUNTIME_CERT_PATH, fd, &set);
+	if (!ret)
+		ret = keys_validate_image_validity(RUNTIME_CERT_PATH, fd,
+						   (__s64)time(NULL));
 	if (!ret && purpose != CONFIG_PREPARE_STAGE)
 		ret = keys_check_image_set(&set);
 	/*
