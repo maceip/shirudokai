@@ -42,10 +42,11 @@ and drains up to ``--max-records`` samples in one pass:
   records read; records beyond ``--max-records`` remain queued in the
   kernel ring buffer for a later invocation, and the output notes
   ``truncated``.
-- A record is delivered once, to whichever invocation reads it. A ring
-  buffer has one consumer position and ``events`` takes no lock, so two
-  invocations on one upatch at the same time race on it and can each
-  lose or repeat records. Run one reader per upatch.
+- A record is delivered once, to whichever invocation reads it.
+  ``events`` takes an exclusive ``flock`` on the upatch's ``maps`` pin
+  directory for the duration of the read, so two invocations on one
+  upatch at the same time serialize rather than racing on the consumer
+  position.
 - When the map's BTF resolves a value type (either ``btf_value_type_id``
   on the map or ``__type(value, ...)`` on its ``SEC(".maps")`` variable),
   each sample at least as large as that type is decoded field by field.

@@ -30,6 +30,7 @@
 
 #include "json.h"
 #include "hex.h"
+#include "io.h"
 #include "malloc.h"
 #include "paths.h"
 #include "serializer.h"
@@ -2358,14 +2359,32 @@ static void ringbuf_rebind_specs(struct ringbuf_slot *slots, size_t n,
 	}
 }
 
+int upatch_ringbuf_lock_dir(const char *dir)
+{
+	int fd, ret;
+
+	if (!dir || !dir[0])
+		return -EINVAL;
+	fd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (fd < 0)
+		return -errno;
+	ret = lock_exclusive(fd);
+	if (ret) {
+		close(fd);
+		return ret;
+	}
+	return fd;
+}
+
 int upatch_ringbuf_read(const char *upatch, const char *map,
 			__u32 max_records, __u32 timeout_ms, bool json,
 			struct ringbuf_batch *out)
 {
 	struct ringbuf_slot *slots = NULL;
 	struct ring_buffer *rb = NULL;
+	char lock_dir[PATH_MAX];
 	size_t n_slots = 0, cap_slots = 0, i;
-	int ret = 0, consumed, epfd;
+	int ret = 0, consumed, epfd, lock_fd = -1;
 
 	if (!out)
 		return -EINVAL;
@@ -2377,6 +2396,11 @@ int upatch_ringbuf_read(const char *upatch, const char *map,
 		return -EINVAL;
 	if (map && !upatch_map_name_valid(map))
 		return -EINVAL;
+	if (upatch_pin_path(lock_dir, sizeof(lock_dir), upatch, "maps", NULL))
+		return -ENAMETOOLONG;
+	lock_fd = upatch_ringbuf_lock_dir(lock_dir);
+	if (lock_fd < 0)
+		return lock_fd;
 	out->max_records = max_records;
 	out->json = json;
 
@@ -2386,10 +2410,11 @@ int upatch_ringbuf_read(const char *upatch, const char *map,
 
 		ret = open_map_pin(upatch, map, &fd, &info);
 		if (ret)
-			return ret;
+			goto out;
 		if (info.type != BPF_MAP_TYPE_RINGBUF) {
 			close(fd);
-			return -EINVAL;
+			ret = -EINVAL;
+			goto out;
 		}
 		ret = ringbuf_slot_add(&slots, &n_slots, &cap_slots, upatch,
 				       map, fd, &info, out);
@@ -2399,14 +2424,13 @@ int upatch_ringbuf_read(const char *upatch, const char *map,
 		}
 	} else {
 		struct dirent **ents = NULL;
-		char dir[PATH_MAX];
 		int nd, k;
 
-		if (upatch_pin_path(dir, sizeof(dir), upatch, "maps", NULL))
-			return -ENAMETOOLONG;
-		nd = scandir(dir, &ents, ringbuf_not_dot, alphasort);
-		if (nd < 0)
-			return -errno;
+		nd = scandir(lock_dir, &ents, ringbuf_not_dot, alphasort);
+		if (nd < 0) {
+			ret = -errno;
+			goto out;
+		}
 		for (k = 0; k < nd; k++) {
 			struct bpf_map_info info = {};
 			int fd = -1;
@@ -2429,8 +2453,10 @@ int upatch_ringbuf_read(const char *upatch, const char *map,
 		libc_free(ents);
 		if (ret)
 			goto out;
-		if (n_slots == 0)
-			return -ENODATA;
+		if (n_slots == 0) {
+			ret = -ENODATA;
+			goto out;
+		}
 	}
 
 	ringbuf_rebind_specs(slots, n_slots, upatch, out);
@@ -2452,7 +2478,12 @@ int upatch_ringbuf_read(const char *upatch, const char *map,
 		goto out;
 	}
 	epfd = ring_buffer__epoll_fd(rb);
-	if (consumed == 0 && timeout_ms > 0 && epfd >= 0) {
+	if (epfd < 0 && ((consumed == 0 && timeout_ms > 0) ||
+			 out->n_records == max_records)) {
+		ret = epfd;
+		goto out;
+	}
+	if (consumed == 0 && timeout_ms > 0) {
 		struct pollfd pfd = {
 			.fd	= epfd,
 			.events	= POLLIN,
@@ -2471,7 +2502,7 @@ int upatch_ringbuf_read(const char *upatch, const char *map,
 			}
 		}
 	}
-	if (out->n_records == max_records && epfd >= 0) {
+	if (out->n_records == max_records) {
 		struct pollfd pfd = {
 			.fd	= epfd,
 			.events	= POLLIN,
@@ -2484,6 +2515,8 @@ int upatch_ringbuf_read(const char *upatch, const char *map,
 out:
 	ring_buffer__free(rb);
 	ringbuf_slots_free(slots, n_slots, cap_slots);
+	if (lock_fd >= 0)
+		close(lock_fd);
 	if (ret)
 		ringbuf_batch_free(out);
 	return ret;

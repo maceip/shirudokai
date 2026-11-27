@@ -7,9 +7,13 @@
  */
 
 #include <errno.h>
+#include <fcntl.h>
 #include <linux/bpf.h>
 #include <linux/btf.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
+#include <unistd.h>
 
 #include <bpf/btf.h>
 
@@ -391,10 +395,33 @@ static void map_name_and_btf_formatting_guards(void)
 	btf__free(btf);
 }
 
+static void ringbuf_lock_serializes_readers(void)
+{
+	char tmpl[] = "/tmp/shirudo-rb-lock-XXXXXX";
+	char *dir;
+	int lock_fd, probe_fd;
+
+	dir = mkdtemp(tmpl);
+	ASSERT_TRUE(dir);
+	lock_fd = upatch_ringbuf_lock_dir(dir);
+	ASSERT_TRUE(lock_fd >= 0);
+
+	probe_fd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	ASSERT_TRUE(probe_fd >= 0);
+	EXPECT_EQ(flock(probe_fd, LOCK_EX | LOCK_NB), -1);
+	EXPECT_EQ(errno, EWOULDBLOCK);
+
+	close(lock_fd);
+	EXPECT_EQ(flock(probe_fd, LOCK_EX | LOCK_NB), 0);
+	close(probe_fd);
+	rmdir(dir);
+}
+
 static const struct unit_case cases[] = {
 	UNIT_CASE(ringbuf_btf_resolve_and_format),
 	UNIT_CASE(ringbuf_untyped_and_short_records),
 	UNIT_CASE(ringbuf_batch_bounding_and_validation),
+	UNIT_CASE(ringbuf_lock_serializes_readers),
 	UNIT_CASE(shield_hits_summary_percpu_and_struct),
 	UNIT_CASE(map_name_and_btf_formatting_guards),
 	{}

@@ -175,6 +175,7 @@ int  ringbuf_format_record(const struct ringbuf_record_spec *spec,
 int  ringbuf_consume_record(const struct ringbuf_record_spec *spec,
 			    const void *data, __u32 size,
 			    struct ringbuf_batch *batch);
+int  upatch_ringbuf_lock_dir(const char *dir);
 int  upatch_ringbuf_read(const char *upatch, const char *map,
 			 __u32 max_records, __u32 timeout_ms, bool json,
 			 struct ringbuf_batch *out);
