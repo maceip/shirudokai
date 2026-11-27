@@ -1637,7 +1637,7 @@ a proof covers.
      - Mostly calls into the kernel, which CBMC has no body for: files,
        extended attributes, mounts, the device mapper, keyrings,
        ``bpf()``, netlink, ``/proc`` and the process's own limits
-   * - :src:`util/bpm_feed.c`, :src:`util/crypto_openssl.c`,
+   * - :src:`util/crypto_openssl.c`,
        :src:`util/curl.c`, :src:`util/ek_cloud.c`,
        :src:`util/elf_target.c`, :src:`util/kernel_abi.c`,
        :src:`util/nv_writer.c`, :src:`util/sign.c`,
@@ -1646,6 +1646,10 @@ a proof covers.
      - Mostly calls into a library a harness would have to model whole:
        OpenSSL, libcurl, libelf, the BTF reader of libbpf, tpm2-tss and
        LuaJIT
+   * - :src:`util/bpm_feed.c`
+     - Pure JSON feed parser and canonical emitter without a CBMC harness
+       yet; verified by :src:`testing/unit/bpm_feed.c` and
+       :src:`testing/fuzz/fuzz-bpm-feed.c` (plus OpenSSL CMS verification)
    * - :src:`util/format.c`, :src:`util/help.c`, :src:`util/report.c`,
        :src:`util/timefmt.c`, :src:`util/upatch_table.c`
      - Output for people: sizes, durations, help, the load report and
