@@ -8,10 +8,15 @@ of runtime exploitation, and ships a helper for a third:
 - **Remote JNDI lookups**: installs `InitialContextFactoryBuilder` and
   `ObjectFactoryBuilder` hooks through `javax.naming.spi.NamingManager`
   to refuse remote `ldap://`, `ldaps://`, `rmi://`, `dns://`, `iiop://`,
-  `iiopname://`, `corba://` and `corbaname://` schemes and remote
-  `Reference` factory codebases while preserving local `java:` (`java:comp/env`)
-  contexts.
-- **Deserialization gadgets**: installs a JVM-wide `ObjectInputFilter`
+  `iiopname://`, `corba://` and `corbaname://` schemes (including
+  `CompositeName` quoted or escaped forms and `PROVIDER_URL` tokens),
+  remote `INITIAL_CONTEXT_FACTORY` classes, and external `Reference` /
+  `Referenceable` factory codebases while delegating allowed URL schemes
+  through `NamingManager.getURLContext()` and instantiating local
+  `ObjectFactory` classes.
+- **Deserialization gadgets**: installs both a JVM-wide `ObjectInputFilter`
+  and a JEP 415 `serialFilterFactory` (so per-stream
+  `ObjectInputStream.setObjectInputFilter()` calls keep the guard active)
   blocking known gadget classes (`TemplatesImpl`,
   `AnnotationInvocationHandler`, `InvokerTransformer`,
   `ChainedTransformer`, `InstantiateTransformer`, `JdbcRowSetImpl`,
@@ -33,10 +38,11 @@ lookup goes on to the network as it would without the guard.
 ## Limits
 
 - The JVM accepts one `InitialContextFactoryBuilder`, one
-  `ObjectFactoryBuilder` and one JVM-wide serial filter. Where the
-  application or its container set one first, that part of the guard is
-  not installed. The agent says so on standard error
-  (`PARTLY installed (jndi=off ...)`) and the JVM runs without it.
+  `ObjectFactoryBuilder`, one JVM-wide serial filter and one JEP 415
+  serial filter factory. Where the application or its container set one
+  first, that part of the guard is not installed. The agent says so on
+  standard error (`PARTLY installed (jndi=off ...)`) and the JVM runs
+  without it.
 - The mode is read from the system property at each check, so code in
   the JVM that calls `System.setProperty("shirudo.guard.mode",
   "observe")` turns blocking off. The guard mitigates a bug in an

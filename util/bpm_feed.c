@@ -11,6 +11,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <shirudo/misc.h>
 #include <shirudo/string.h>
@@ -20,6 +21,7 @@
 #include "hex.h"
 #include "io.h"
 #include "json.h"
+#include "keys.h"
 #include "malloc.h"
 #include "upatch.h"
 
@@ -29,7 +31,7 @@
 static bool feed_text_ok(const char *s)
 {
 	for (; *s; s++)
-		if ((__u8)*s < 0x20)
+		if ((__u8)*s < 0x20 || (__u8)*s == 0x7f)
 			return false;
 	return true;
 }
@@ -37,7 +39,7 @@ static bool feed_text_ok(const char *s)
 static bool feed_texts_ok(const char (*v)[TREE_STRING_MAX], int n)
 {
 	for (int i = 0; i < n; i++)
-		if (!feed_text_ok(v[i]))
+		if (!v[i][0] || !feed_text_ok(v[i]))
 			return false;
 	return true;
 }
@@ -45,7 +47,8 @@ static bool feed_texts_ok(const char (*v)[TREE_STRING_MAX], int n)
 static bool feed_kv_texts_ok(const struct tree_selector_kv *kv, int n)
 {
 	for (int i = 0; i < n; i++)
-		if (!feed_text_ok(kv[i].key) ||
+		if (!kv[i].key[0] || !feed_text_ok(kv[i].key) ||
+		    kv[i].n_values <= 0 ||
 		    !feed_texts_ok(kv[i].values, kv[i].n_values))
 			return false;
 	return true;
@@ -373,6 +376,8 @@ static int feed_take_entry(void *ctx)
 	r->feed->entries[r->feed->n_entries++] = *e;
 	memzero_explicit(e, sizeof(*e));
 	memzero_explicit(r->role_str, sizeof(r->role_str));
+	memzero_explicit(r->value, sizeof(r->value));
+	memzero_explicit(r->cve, sizeof(r->cve));
 	return 0;
 }
 
@@ -664,6 +669,8 @@ int bpm_feed_verify_memory(const __u8 *feed_bytes, size_t feed_len,
 		return -EINVAL;
 	if (cert_key_algorithm(cert, alg, sizeof(alg)) ||
 	    strcmp(alg, "ML-DSA-87"))
+		return -EKEYREJECTED;
+	if (cert_valid_at(cert, (__s64)time(NULL)))
 		return -EKEYREJECTED;
 	if (cms_check_signers(sig_bytes, sig_len))
 		return -EKEYREJECTED;

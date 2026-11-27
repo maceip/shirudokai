@@ -698,6 +698,10 @@ static int parse_array_into(struct pctx *c, struct json_field *f)
 			return -EINVAL;
 		if (f->n_sub == 1 && (!f->sub[0].key || !f->sub[0].key[0])) {
 			ret = parse_value(c, &f->sub[0]);
+			if (ret)
+				return ret;
+			if (!f->sub[0].seen)
+				return -EINVAL;
 		} else if (*c->p == '{') {
 			struct json_field *save_f = c->fields;
 			size_t save_n = c->n_fields;

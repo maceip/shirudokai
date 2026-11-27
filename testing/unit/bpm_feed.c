@@ -164,10 +164,81 @@ static void test_reject_invalid(void)
 		   "\"manifest_digest\":\"" DIGEST_UPPER "\","
 		   "\"role\":\"mitigation\","
 		   "\"selector\":{\"architecture\":[]}}]}");
+
+	/* [null] in scalar arrays (first or second entry) is refused. */
+	expect_bad("{\"schema\":1,\"feed_id\":\"ok\","
+		   "\"generated_at\":\"2026-11-26T00:00:00Z\",\"entries\":[{"
+		   "\"id\":\"s1\",\"cves\":[null],\"package\":\"pkg\","
+		   "\"version\":\"1.0.0\",\"reference\":\"oci://r.io/a/b:1.0.0\","
+		   "\"manifest_digest\":\"" DIGEST_A "\","
+		   "\"role\":\"mitigation\"}]}");
+	expect_bad("{\"schema\":1,\"feed_id\":\"ok\","
+		   "\"generated_at\":\"2026-11-26T00:00:00Z\",\"entries\":[{"
+		   "\"id\":\"s1\",\"cves\":[\"CVE-2026-1111\"],\"package\":\"pkg\","
+		   "\"version\":\"1.0.0\",\"reference\":\"oci://r.io/a/b:1.0.0\","
+		   "\"manifest_digest\":\"" DIGEST_A "\","
+		   "\"role\":\"mitigation\",\"selector\":{\"architecture\":[\"x86_64\"]}},"
+		   "{\"id\":\"s2\",\"cves\":[null],\"package\":\"pkg\","
+		   "\"version\":\"1.0.0\",\"reference\":\"oci://r.io/a/b:1.0.0\","
+		   "\"manifest_digest\":\"" DIGEST_A "\","
+		   "\"role\":\"mitigation\"}]}");
+	expect_bad("{\"schema\":1,\"feed_id\":\"ok\","
+		   "\"generated_at\":\"2026-11-26T00:00:00Z\",\"entries\":[{"
+		   "\"id\":\"s1\",\"cves\":[\"CVE-2026-1111\"],\"package\":\"pkg\","
+		   "\"version\":\"1.0.0\",\"reference\":\"oci://r.io/a/b:1.0.0\","
+		   "\"manifest_digest\":\"" DIGEST_A "\","
+		   "\"role\":\"mitigation\","
+		   "\"selector\":{\"architecture\":[\"x86_64\",null]}}]}");
+
+	/* [""] in selector arrays/maps and "" selector map keys are refused. */
+	expect_bad("{\"schema\":1,\"feed_id\":\"ok\","
+		   "\"generated_at\":\"2026-11-26T00:00:00Z\",\"entries\":[{"
+		   "\"id\":\"s1\",\"cves\":[\"\"],\"package\":\"pkg\","
+		   "\"version\":\"1.0.0\",\"reference\":\"oci://r.io/a/b:1.0.0\","
+		   "\"manifest_digest\":\"" DIGEST_A "\","
+		   "\"role\":\"mitigation\"}]}");
+	expect_bad("{\"schema\":1,\"feed_id\":\"ok\","
+		   "\"generated_at\":\"2026-11-26T00:00:00Z\",\"entries\":[{"
+		   "\"id\":\"s1\",\"cves\":[\"CVE-2026-1111\"],\"package\":\"pkg\","
+		   "\"version\":\"1.0.0\",\"reference\":\"oci://r.io/a/b:1.0.0\","
+		   "\"manifest_digest\":\"" DIGEST_A "\","
+		   "\"role\":\"mitigation\","
+		   "\"selector\":{\"architecture\":[\"\"]}}]}");
+	expect_bad("{\"schema\":1,\"feed_id\":\"ok\","
+		   "\"generated_at\":\"2026-11-26T00:00:00Z\",\"entries\":[{"
+		   "\"id\":\"s1\",\"cves\":[\"CVE-2026-1111\"],\"package\":\"pkg\","
+		   "\"version\":\"1.0.0\",\"reference\":\"oci://r.io/a/b:1.0.0\","
+		   "\"manifest_digest\":\"" DIGEST_A "\","
+		   "\"role\":\"mitigation\","
+		   "\"selector\":{\"kconfig\":{\"\":[\"y\"]}}}]}");
+	expect_bad("{\"schema\":1,\"feed_id\":\"ok\","
+		   "\"generated_at\":\"2026-11-26T00:00:00Z\",\"entries\":[{"
+		   "\"id\":\"s1\",\"cves\":[\"CVE-2026-1111\"],\"package\":\"pkg\","
+		   "\"version\":\"1.0.0\",\"reference\":\"oci://r.io/a/b:1.0.0\","
+		   "\"manifest_digest\":\"" DIGEST_A "\","
+		   "\"role\":\"mitigation\","
+		   "\"selector\":{\"labels\":{\"env\":[\"\"]}}}]}");
+
+	/* 0x7f (DEL) is refused in text fields and selectors. */
+	expect_bad("{\"schema\":1,\"feed_id\":\"ok\","
+		   "\"generated_at\":\"2026-11-26T00:00:00Z\",\"entries\":[{"
+		   "\"id\":\"s1\",\"cves\":[\"CVE-2026-1111\"],\"package\":\"pkg\","
+		   "\"version\":\"1.0.0\",\"reference\":\"oci://r.io/a/b:1.0.0\","
+		   "\"manifest_digest\":\"" DIGEST_A "\","
+		   "\"role\":\"mitigation\",\"description\":\"bad\\u007fchar\"}]}");
+	expect_bad("{\"schema\":1,\"feed_id\":\"ok\","
+		   "\"generated_at\":\"2026-11-26T00:00:00Z\",\"entries\":[{"
+		   "\"id\":\"s1\",\"cves\":[\"CVE-2026-1111\"],\"package\":\"pkg\","
+		   "\"version\":\"1.0.0\",\"reference\":\"oci://r.io/a/b:1.0.0\","
+		   "\"manifest_digest\":\"" DIGEST_A "\","
+		   "\"role\":\"mitigation\","
+		   "\"selector\":{\"labels\":{\"env\":[\"prod\x7f\"]}}}]}");
 }
 
-static int make_self_signed(const char *alg, EVP_PKEY **out_key, X509 **out_x509,
-			    __u8 **out_der, size_t *out_der_len)
+static int make_self_signed_window(const char *alg, __s32 not_before_adj,
+				   __s32 not_after_adj, EVP_PKEY **out_key,
+				   X509 **out_x509, __u8 **out_der,
+				   size_t *out_der_len)
 {
 	X509V3_CTX v3ctx;
 	X509_EXTENSION *ext;
@@ -194,8 +265,8 @@ static int make_self_signed(const char *alg, EVP_PKEY **out_key, X509 **out_x509
 	ASSERT_TRUE(x509);
 	X509_set_version(x509, 2);
 	ASN1_INTEGER_set(X509_get_serialNumber(x509), 1);
-	X509_gmtime_adj(X509_getm_notBefore(x509), 0);
-	X509_gmtime_adj(X509_getm_notAfter(x509), 86400);
+	X509_gmtime_adj(X509_getm_notBefore(x509), not_before_adj);
+	X509_gmtime_adj(X509_getm_notAfter(x509), not_after_adj);
 	X509_set_pubkey(x509, pkey);
 	name = X509_get_subject_name(x509);
 	X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
@@ -230,6 +301,13 @@ static int make_self_signed(const char *alg, EVP_PKEY **out_key, X509 **out_x509
 	*out_key = pkey;
 	*out_x509 = x509;
 	return 0;
+}
+
+static int make_self_signed(const char *alg, EVP_PKEY **out_key, X509 **out_x509,
+			    __u8 **out_der, size_t *out_der_len)
+{
+	return make_self_signed_window(alg, 0, 86400, out_key, out_x509,
+				       out_der, out_der_len);
 }
 
 static void sign_cms(EVP_PKEY *pkey, X509 *x509, const EVP_MD *md,
@@ -333,6 +411,31 @@ static void test_verify_cms_and_files(void)
 	EXPECT_EQ(bpm_feed_verify_memory((const __u8 *)doc, sizeof(doc) - 1,
 					 rsa_sig, rsa_sig_len, &rsa_cert,
 					 &feed), -EKEYREJECTED);
+
+	/* Expired ML-DSA-87 certificate is refused even with a valid CMS sig. */
+	{
+		size_t exp_der_len = 0, exp_sig_len = 0;
+		__u8 *exp_der = NULL, *exp_sig = NULL;
+		EVP_PKEY *exp_key = NULL;
+		struct cert exp_cert = {};
+		X509 *exp_x509 = NULL;
+
+		ASSERT_EQ(make_self_signed_window("ML-DSA-87", -172800, -86400,
+						  &exp_key, &exp_x509, &exp_der,
+						  &exp_der_len), 0);
+		sign_cms(exp_key, exp_x509, EVP_sha512(), (const __u8 *)doc,
+			 sizeof(doc) - 1, &exp_sig, &exp_sig_len);
+		ASSERT_EQ(cert_read_der(exp_der, exp_der_len, &exp_cert), 0);
+		EXPECT_EQ(bpm_feed_verify_memory((const __u8 *)doc,
+						 sizeof(doc) - 1, exp_sig,
+						 exp_sig_len, &exp_cert, &feed),
+			  -EKEYREJECTED);
+		cert_free(&exp_cert);
+		xfree(exp_sig, exp_sig_len);
+		xfree(exp_der, exp_der_len);
+		X509_free(exp_x509);
+		EVP_PKEY_free(exp_key);
+	}
 
 	/* File-based verification round-trip. */
 	ASSERT_TRUE(mkdtemp(dir));

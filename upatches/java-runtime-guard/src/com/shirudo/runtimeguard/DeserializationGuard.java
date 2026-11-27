@@ -5,10 +5,12 @@ package com.shirudo.runtimeguard;
 
 import java.io.ObjectInputFilter;
 import java.util.Set;
+import java.util.function.BinaryOperator;
 
 /**
- * Installs a JVM-wide ObjectInputFilter blocking known deserialization gadget
- * classes while allowing normal JDK and application serializable types.
+ * Installs a JVM-wide JEP 415 ObjectInputFilter and serial filter factory
+ * blocking known deserialization gadget classes even when individual streams
+ * install custom per-stream filters via ObjectInputStream.setObjectInputFilter.
  */
 public final class DeserializationGuard {
 
@@ -42,24 +44,66 @@ public final class DeserializationGuard {
 
     private DeserializationGuard() {}
 
-    /** Returns whether the JVM-wide filter holds the guard. */
+    /**
+     * Installs both the JVM-wide serial filter and the JEP 415 serial filter
+     * factory so per-stream filters cannot drop the guard.
+     */
     public static synchronized boolean install() {
         if (installed) {
             return true;
         }
         ObjectInputFilter existing = ObjectInputFilter.Config.getSerialFilter();
-        ObjectInputFilter guardFilter = DeserializationGuard::check;
-        ObjectInputFilter combined = (existing != null)
-                ? ObjectInputFilter.merge(guardFilter, existing)
-                : guardFilter;
+        ObjectInputFilter combined = withGuard(existing);
+        boolean filterSet = false;
         try {
             ObjectInputFilter.Config.setSerialFilter(combined);
-            installed = true;
+            filterSet = true;
         } catch (IllegalStateException e) {
             System.err.println("[SHIRUDO GUARD] deser: the JVM-wide serial filter is"
-                    + " already set; gadget classes are NOT rejected");
+                    + " already set; gadget classes may NOT be rejected on existing streams");
         }
+
+        BinaryOperator<ObjectInputFilter> prevFactory =
+                ObjectInputFilter.Config.getSerialFilterFactory();
+        BinaryOperator<ObjectInputFilter> guardFactory = (current, next) -> {
+            ObjectInputFilter delegated = (prevFactory != null)
+                    ? prevFactory.apply(current, next)
+                    : next;
+            return withGuard(delegated);
+        };
+        boolean factorySet = false;
+        try {
+            ObjectInputFilter.Config.setSerialFilterFactory(guardFactory);
+            factorySet = true;
+        } catch (IllegalStateException e) {
+            System.err.println("[SHIRUDO GUARD] deser: the JVM-wide serial filter factory"
+                    + " is already set; per-stream filters can override the guard");
+        }
+        installed = filterSet && factorySet;
         return installed;
+    }
+
+    private static ObjectInputFilter withGuard(ObjectInputFilter filter) {
+        if (filter instanceof GuardedFilter) {
+            return filter;
+        }
+        return new GuardedFilter(filter);
+    }
+
+    private static final class GuardedFilter implements ObjectInputFilter {
+        private final ObjectInputFilter merged;
+
+        GuardedFilter(ObjectInputFilter downstream) {
+            ObjectInputFilter guardFilter = DeserializationGuard::check;
+            this.merged = (downstream != null)
+                    ? ObjectInputFilter.merge(guardFilter, downstream)
+                    : guardFilter;
+        }
+
+        @Override
+        public Status checkInput(FilterInfo filterInfo) {
+            return merged.checkInput(filterInfo);
+        }
     }
 
     public static boolean isBlockedClassName(String name) {

@@ -54,6 +54,8 @@ char _license[] SEC("license") = "Dual BSD/GPL";
 #define SOCK_TYPE_MASK		0xf
 #define IPPROTO_TCP		6
 #define IPPROTO_UDP		17
+#define IPPROTO_UDPLITE		136
+#define IPPROTO_MPTCP		262
 #define FMODE_READ		0x1
 #define FMODE_WRITE		0x2
 #define ATTR_SIZE		0x8
@@ -181,9 +183,10 @@ static __always_inline __u64 cgroup_matches(__u64 cg)
 }
 
 /*
- * A task of a Pod runs in a container's cgroup below the Pod's, so the
- * Pod's ID is one of its ancestors' and never its own. Level 0 is the
- * root, and the helper returns 0 past the task's own level.
+ * bpf_get_current_ancestor_cgroup_id(level) reads cgrp->ancestors[level]:
+ * level 0 is the root cgroup, levels 1..cgrp->level walk down through the
+ * Pod's cgroup to the task's own cgroup, and levels past cgrp->level
+ * return 0.
  */
 static __always_inline __u64 current_cgroup_sandboxes(void)
 {
@@ -312,12 +315,14 @@ static __always_inline bool port_allowed(__u64 sandboxes, struct socket *sock,
 	__u8 proto_bit;
 	__u32 i;
 
-	if (sk_proto == IPPROTO_TCP)
+	if (sk_proto == IPPROTO_TCP || sk_proto == IPPROTO_MPTCP)
 		proto_bit = SANDBOX_PROTO_TCP;
-	else if (sk_proto == IPPROTO_UDP)
+	else if (sk_proto == IPPROTO_UDP || sk_proto == IPPROTO_UDPLITE)
 		proto_bit = SANDBOX_PROTO_UDP;
 	else
 		proto_bit = 0;
+	if (!proto_bit)
+		return false;
 
 	for (i = 0; i < SANDBOX_PORT_MAX; i++) {
 		if (i >= nr_ports)
@@ -766,7 +771,20 @@ SEC("lsm/inode_link")
 int BPF_PROG(sandbox_link, struct mnt_idmap *idmap, struct dentry *old_dentry,
 	     struct inode *dir, struct dentry *new_dentry, int ret)
 {
-	return ret ? ret : name_verdict(SANDBOX_FIM_CREATE, new_dentry);
+	__u64 sandboxes, read_sb;
+
+	if (ret)
+		return ret;
+	sandboxes = current_sandboxes();
+	if (!sandboxes)
+		return 0;
+	if (name_denied(sandboxes, SANDBOX_FIM_CREATE, new_dentry) ||
+	    name_denied(sandboxes, SANDBOX_FIM_WRITE, old_dentry))
+		return -EACCES;
+	read_sb = sandboxes & sandbox_policy.read_enforced;
+	if (read_sb && name_denied(read_sb, SANDBOX_FIM_READ, old_dentry))
+		return -EACCES;
+	return 0;
 }
 
 SEC("lsm/inode_rename")

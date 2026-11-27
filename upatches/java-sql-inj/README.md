@@ -1,15 +1,19 @@
 # java-sql-inj
 
 The `java-sql-inj` package installs the `java-sql-inj` Java upatch: a
-Byte Buddy agent that instruments every JDBC `Statement` and inspects
-`execute`, `executeQuery` and `executeUpdate` queries with `SqlLexer`, a
+Byte Buddy agent that instruments JDBC `Statement` (`execute*`,
+`addBatch`) and `Connection` (`prepareStatement`, `prepareCall`)
+implementations and inspects SQL strings with `SqlLexer`, a
 deterministic single-pass state-machine SQL lexer with no regular
 expressions or backtracking. It detects structural SQL injection across
-single-quoted (`'...'`), double-quoted (`"..."`) and backtick (`` `...` ``)
-tokens, escaped quotes (`''`, `\'`), `--`, `#` and `/*...*/` comments,
-MySQL `/*! ... */` conditional comments, stacked statements (`;`),
-`UNION [ALL] SELECT` queries, and boolean or numeric tautologies (`OR
-1=1`, `'a'='a'`).
+single-quoted (`'...'`), double-quoted (`"..."`), backtick (`` `...` ``)
+and PostgreSQL/H2 dollar-quoted (`$$...$$`, `$tag$...$tag$`) tokens,
+escaped quotes (`''`, `\'`, including two-parameter `\'` split
+smuggling), `--`, `#` and `/*...*/` comments, MySQL `/*! ... */` and
+MariaDB `/*M! ... */` conditional comments, stacked statements (`;`),
+`UNION` (`SELECT`, `VALUES`, `TABLE`) queries, and boolean, signed
+numeric, `IS [NOT] NULL` or `LIKE '%'` tautologies (`OR 1=1`,
+`OR -1=-1`, `'a'!='b'`, `OR NULL IS NULL`, `OR 'a' LIKE '%'`).
 
 The agent does not know which database reads a statement. MySQL and
 MariaDB take `\'` in a string as an escaped quote; PostgreSQL with
@@ -18,8 +22,7 @@ string there. A statement with a backslash is read both ways and refused
 when either reading is an injection.
 
 It does not detect blind or time-based injection (`SLEEP()`,
-`pg_sleep()`), which changes no structure, MariaDB `/*M! ... */`
-comments, or PostgreSQL dollar-quoted strings (`$$...$$`).
+`pg_sleep()`) that changes no SQL token structure.
 
 Set `-Dshirudo.sql.mode=observe` to log and count structural SQL
 injection matches without throwing `SecurityException`; the default mode
