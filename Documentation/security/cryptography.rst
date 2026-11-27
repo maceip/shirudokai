@@ -133,8 +133,8 @@ expiration timestamp into the signed ``shirudo-key-vouch-v2`` payload.
 Retire an active BPF signing key by revoking it (residual risks R13 and
 R16).
 
-FIPS 140-3 profile
-------------------
+FIPS provider mode (operator build only, not validated as built)
+-----------------------------------------------------------------
 
 Building the operator profile with ``make FIPS=1`` defines
 ``SHIRUDO_FIPS=1``. At process startup, ``shirudo`` and
@@ -154,8 +154,7 @@ This is a switch, not a validated configuration:
 - The operator build uses whatever FIPS provider the host's OpenSSL
   installs. shirudo pins no validated provider version and does not run
   ``openssl fipsinstall``; both are the host's to provide.
-- Nothing in the test suite runs with the provider loaded. The unit
-  case passes whether it loads or not.
+- Nothing in the test suite runs with the FIPS provider loaded.
 
 Digests
 -------

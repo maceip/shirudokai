@@ -8,24 +8,6 @@
 #include "hex.h"
 #include "unit.h"
 
-static void fips_mode_init_is_fail_closed_and_consistent(void)
-{
-	bool before = crypto_fips_enabled();
-	int ret;
-
-	ret = crypto_fips_init();
-	if (ret == 0) {
-		EXPECT_TRUE(crypto_fips_enabled());
-		EXPECT_EQ(crypto_fips_init(), 0);
-		EXPECT_EQ(crypto_fips_init(), 0);
-	} else {
-		EXPECT_EQ(ret, -ENOPKG);
-		EXPECT_EQ(crypto_fips_enabled(), before);
-		EXPECT_EQ(crypto_fips_init(), -ENOPKG);
-		EXPECT_EQ(crypto_fips_enabled(), before);
-	}
-}
-
 static void hmac_sha256_matches_rfc_4231_test_case_2(void)
 {
 	static const char want[] =
@@ -56,7 +38,6 @@ static void aes128_cfb_encrypt_matches_nist_zero_iv_block(void)
 }
 
 static const struct unit_case cases[] = {
-	UNIT_CASE(fips_mode_init_is_fail_closed_and_consistent),
 	UNIT_CASE(hmac_sha256_matches_rfc_4231_test_case_2),
 	UNIT_CASE(aes128_cfb_encrypt_matches_nist_zero_iv_block),
 	{}

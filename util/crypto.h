@@ -155,8 +155,9 @@ int cert_verify_chain(const struct cert *cert,
 	__must_check;
 
 /*
- * Load OpenSSL's FIPS 140-3 provider and enable the default fips=yes
- * property query; fails closed with -ENOPKG when unavailable.
+ * Load OpenSSL's FIPS provider (operator build only, not validated as
+ * built) and enable the default fips=yes property query; fails closed
+ * with -ENOPKG when unavailable.
  */
 __must_check int crypto_fips_init(void);
 bool crypto_fips_enabled(void);
