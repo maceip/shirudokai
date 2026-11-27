@@ -762,8 +762,15 @@ out:
 static int activate_config(struct image_context *current, bool boot)
 {
 	struct stat st;
+	__u64 epoch = 0;
 	int fd, ret;
 
+	ret = image_config_read_epoch(current->candidate_fd, &epoch);
+	if (ret)
+		return ret;
+	ret = freshness_verify_at(current->update.dir_fd, epoch);
+	if (ret)
+		return ret;
 	ret = keys_apply_image(current->candidate_fd, boot);
 	if (ret)
 		return ret;
@@ -792,9 +799,13 @@ static int activate_config(struct image_context *current, bool boot)
 	if (!ret) {
 		struct config active_cfg __cleanup(config_clear) = {};
 
-		if (image_config_get(&active_cfg))
+		if (image_config_get(&active_cfg)) {
 			ret = freshness_advance_at(current->update.dir_fd,
 						   active_cfg.security_epoch);
+			if (ret)
+				pr_err("image: config activated but failed to advance epoch floor: %s",
+				       strerror(-ret));
+		}
 	}
 	return ret;
 }

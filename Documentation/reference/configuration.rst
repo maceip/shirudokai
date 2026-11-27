@@ -243,11 +243,15 @@ Settings
        ``init`` refuse with ``eventlog_full`` when the eventlog's size
        plus 4096 bytes exceeds this value.
    * - ``security.epoch``
-     - Monotonic anti-rollback epoch for signed config images. Activating
-       a config persists any higher epoch to the sealed floor at
-       ``/var/lib/shirudo/config-update/epoch``; ``image update``,
-       ``image stage`` and ``init`` refuse a config whose
-       ``security.epoch`` is lower than that floor with ``ESTALE``.
+     - Best-effort running-target anti-rollback epoch for signed config
+       images. Activating a config persists any higher epoch to the
+       sealed floor at ``/var/lib/shirudo/config-update/epoch``;
+       ``image update``, ``image stage`` and ``init`` refuse a config
+       whose ``security.epoch`` is lower than that floor with
+       ``ESTALE``. Because the floor is a plain file that reads as ``0``
+       when absent, it does not stop offline edits between boots (R14);
+       config-root activation measurement in the config PCR lets an
+       attesting operator detect a rollback.
    * - ``tpm.owner_auth``
      - Owner hierarchy authorization for defining the NV index. Needed
        only when the TPM's owner password is set. The initrd copy is

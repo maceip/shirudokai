@@ -2004,7 +2004,9 @@ R14 Configs roll back
    revocation records, and the selection persists across reboots. The
    config certificate itself changes only with the runtime image and a
    reboot.
-   Detection: ``--expect-config-root`` with ``--expect-config-pcr``.
+   Detection: the activation measurement of the config root in the config
+   PCR already lets an attesting operator detect a rollback
+   (``--expect-config-root`` with ``--expect-config-pcr``).
    Mitigation: increment ``security.epoch`` on every config publication,
    which covers the running target, and D2.
 
@@ -2467,9 +2469,11 @@ D1 Authenticated config PCR writers
 
 D2 Config rollback prevention
    Keep the ``security.epoch`` floor where a change between boots cannot
-   lower it, a TPM NV counter or a value extended into the register, and
-   refuse a target whose floor is missing once one was set; and
-   authenticate the selection journal (R14).
+   lower it, such as a value extended into the register (without a
+   persistent TPM NV index), and refuse a target whose floor is missing
+   once one was set; and authenticate the selection journal (R14). In
+   the meantime, config-root activation measurement in the config PCR
+   detects rollbacks.
 
 D3 The register as a systemd NvPCR
    Register the index as a systemd NvPCR, so that its name follows the

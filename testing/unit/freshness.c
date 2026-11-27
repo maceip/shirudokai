@@ -13,6 +13,7 @@
 
 #include "config.h"
 #include "freshness.h"
+#include "image_config.h"
 #include "unit.h"
 
 static void rm_rf(const char *dir)
@@ -195,12 +196,75 @@ static void config_parses_security_epoch_and_flags_bad_values(void)
 	rm_rf(dir);
 }
 
+static void image_config_epoch_rollback_is_refused(void)
+{
+	char tmpl[] = "/tmp/shirudo-unit-freshness-img-XXXXXX";
+	char floor_dir[512], img_dir[512], etc_dir[512], conf[512];
+	int floor_fd = -1, img_fd = -1;
+	__u64 epoch = 0;
+	char *dir;
+
+	dir = mkdtemp(tmpl);
+	ASSERT_TRUE(dir);
+	ASSERT_TRUE(strsprintf(floor_dir, sizeof(floor_dir), "%s/state", dir) > 0);
+	ASSERT_TRUE(strsprintf(img_dir, sizeof(img_dir), "%s/img", dir) > 0);
+	ASSERT_TRUE(strsprintf(etc_dir, sizeof(etc_dir), "%s/etc/shirudo",
+			       img_dir) > 0);
+	ASSERT_TRUE(strsprintf(conf, sizeof(conf), "%s/shirudo.conf",
+			       etc_dir) > 0);
+	ASSERT_EQ(mkdir(floor_dir, 0700), 0);
+	ASSERT_EQ(mkdir(img_dir, 0700), 0);
+	ASSERT_TRUE(strsprintf(etc_dir, sizeof(etc_dir), "%s/etc", img_dir) > 0);
+	ASSERT_EQ(mkdir(etc_dir, 0700), 0);
+	ASSERT_TRUE(strsprintf(etc_dir, sizeof(etc_dir), "%s/etc/shirudo",
+			       img_dir) > 0);
+	ASSERT_EQ(mkdir(etc_dir, 0700), 0);
+
+	floor_fd = open(floor_dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	ASSERT_TRUE(floor_fd >= 0);
+
+	/* Activate epoch 5 and advance the floor. */
+	ASSERT_EQ(write_raw(conf, "security.epoch = 5\n",
+			    strlen("security.epoch = 5\n")), 0);
+	img_fd = open(img_dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	ASSERT_TRUE(img_fd >= 0);
+	ASSERT_EQ(image_config_read_epoch(img_fd, &epoch), 0);
+	EXPECT_EQ(epoch, 5u);
+	ASSERT_EQ(freshness_verify_at(floor_fd, epoch), 0);
+	ASSERT_EQ(freshness_advance_at(floor_fd, epoch), 0);
+	close(img_fd);
+
+	/* Staging or updating to a lower epoch (4) is refused with -ESTALE. */
+	ASSERT_EQ(write_raw(conf, "security.epoch = 4\n",
+			    strlen("security.epoch = 4\n")), 0);
+	img_fd = open(img_dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	ASSERT_TRUE(img_fd >= 0);
+	ASSERT_EQ(image_config_read_epoch(img_fd, &epoch), 0);
+	EXPECT_EQ(epoch, 4u);
+	EXPECT_EQ(freshness_verify_at(floor_fd, epoch), -ESTALE);
+	close(img_fd);
+
+	/* Same or higher epoch (5, 6) is accepted. */
+	ASSERT_EQ(write_raw(conf, "security.epoch = 6\n",
+			    strlen("security.epoch = 6\n")), 0);
+	img_fd = open(img_dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	ASSERT_TRUE(img_fd >= 0);
+	ASSERT_EQ(image_config_read_epoch(img_fd, &epoch), 0);
+	EXPECT_EQ(epoch, 6u);
+	EXPECT_EQ(freshness_verify_at(floor_fd, epoch), 0);
+	close(img_fd);
+
+	close(floor_fd);
+	rm_rf(dir);
+}
+
 static const struct unit_case cases[] = {
 	UNIT_CASE(missing_floor_reads_as_zero_and_allows_initial_epoch),
 	UNIT_CASE(advance_persists_floor_and_rejects_rollback),
 	UNIT_CASE(descriptor_floor_helpers_persist_and_reject_rollback),
 	UNIT_CASE(corrupt_floor_fails_closed_with_euclean),
 	UNIT_CASE(config_parses_security_epoch_and_flags_bad_values),
+	UNIT_CASE(image_config_epoch_rollback_is_refused),
 	{}
 };
 
