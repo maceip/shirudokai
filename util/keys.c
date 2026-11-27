@@ -130,32 +130,52 @@ int keys_digest_der(const __u8 *der, size_t der_sz,
  * a member read from a config image has no path at all.
  */
 struct der_entry {
-	__u8	sha256[32];
-	__u8	*der;
-	size_t	len;
+	__u8		sha256[32];
+	__u8		*der;
+	size_t		len;
+	struct cert	cert;
+	__s64		not_before;
+	__s64		not_after;
+	bool		has_cert;
+	bool		has_window;
 };
 
 static struct der_entry der_store[8 * KEYS_MAX];
 static size_t der_stored;
 
-static int der_keep(const __u8 sha256[32], const __u8 *der, size_t len)
+static const struct der_entry *der_find(const __u8 sha256[32])
 {
-	struct der_entry *e;
 	size_t i;
 
 	for (i = 0; i < der_stored; i++) {
 		if (!memcmp(der_store[i].sha256, sha256, 32))
-			return 0;
+			return &der_store[i];
 	}
+	return NULL;
+}
+
+static int der_keep(const __u8 sha256[32], const __u8 *der, size_t len)
+{
+	struct der_entry *e;
+
+	if (der_find(sha256))
+		return 0;
 	if (der_stored >= ARRAY_SIZE(der_store))
 		return -E2BIG;
 	e = &der_store[der_stored];
+	memset(e, 0, sizeof(*e));
 	e->der = xmalloc(len);
 	if (!e->der)
 		return -ENOMEM;
 	memcpy(e->der, der, len);
 	memcpy(e->sha256, sha256, 32);
 	e->len = len;
+	if (!cert_read_der(der, len, &e->cert)) {
+		e->has_cert = true;
+		if (!cert_validity_window(&e->cert, &e->not_before,
+					  &e->not_after))
+			e->has_window = true;
+	}
 	der_stored++;
 	return 0;
 }
@@ -163,16 +183,13 @@ static int der_keep(const __u8 sha256[32], const __u8 *der, size_t len)
 int keys_cert_der(const struct trusted_cert *c, const __u8 **der,
 		  size_t *len)
 {
-	size_t i;
+	const struct der_entry *e = der_find(c->sha256);
 
-	for (i = 0; i < der_stored; i++) {
-		if (!memcmp(der_store[i].sha256, c->sha256, 32)) {
-			*der = der_store[i].der;
-			*len = der_store[i].len;
-			return 0;
-		}
-	}
-	return -ENOKEY;
+	if (!e)
+		return -ENOKEY;
+	*der = e->der;
+	*len = e->len;
+	return 0;
 }
 
 const struct trusted_cert *keys_member(const struct trusted_set *set,
@@ -339,6 +356,41 @@ int keys_vouch_encode_v2(__s64 not_after, const __u8 *cms, size_t cms_sz,
 	return 0;
 }
 
+static int verify_member_sig(const struct trusted_cert *m,
+			     const __u8 *payload, size_t payload_sz,
+			     const __u8 *sig, size_t sig_sz,
+			     bool check_time, __s64 unix_sec, int *valid_out)
+{
+	const struct der_entry *e = der_find(m->sha256);
+	struct cert tmp = {};
+	const struct cert *c;
+	int ret, valid = 0;
+
+	if (e && e->has_cert) {
+		c = &e->cert;
+		if (check_time) {
+			if (!e->has_window)
+				valid = -EINVAL;
+			else if (unix_sec < e->not_before ||
+				 unix_sec > e->not_after)
+				valid = -EKEYEXPIRED;
+		}
+	} else {
+		ret = keys_cert_read(m, &tmp);
+		if (ret)
+			return ret;
+		c = &tmp;
+		if (check_time)
+			valid = cert_valid_at(c, unix_sec);
+	}
+	ret = verify_detached(payload, payload_sz, sig, sig_sz, c);
+	if (c == &tmp)
+		cert_free(&tmp);
+	if (valid_out)
+		*valid_out = valid;
+	return ret;
+}
+
 int keys_verify_signature(const struct trusted_set *set,
 			  const __u8 *payload, size_t payload_sz,
 			  const __u8 *sig, size_t sig_sz,
@@ -347,14 +399,10 @@ int keys_verify_signature(const struct trusted_set *set,
 	size_t i;
 
 	for (i = 0; i < set->n; i++) {
-		struct cert cert = {};
 		int ret;
 
-		ret = keys_cert_read(&set->certs[i], &cert);
-		if (ret)
-			return ret;
-		ret = verify_detached(payload, payload_sz, sig, sig_sz, &cert);
-		cert_free(&cert);
+		ret = verify_member_sig(&set->certs[i], payload, payload_sz,
+					sig, sig_sz, false, 0, NULL);
 		if (!ret) {
 			if (signer)
 				memcpy(signer, set->certs[i].fingerprint, 32);
@@ -373,15 +421,10 @@ int keys_verify_signature_at(const struct trusted_set *set,
 	size_t i;
 
 	for (i = 0; i < set->n; i++) {
-		struct cert cert = {};
-		int ret, valid;
+		int ret, valid = 0;
 
-		ret = keys_cert_read(&set->certs[i], &cert);
-		if (ret)
-			return ret;
-		valid = cert_valid_at(&cert, unix_sec);
-		ret = verify_detached(payload, payload_sz, sig, sig_sz, &cert);
-		cert_free(&cert);
+		ret = verify_member_sig(&set->certs[i], payload, payload_sz,
+					sig, sig_sz, true, unix_sec, &valid);
 		if (!ret) {
 			if (valid) {
 				expired = true;
