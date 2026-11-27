@@ -891,6 +891,7 @@ queue_fixture build_fixture scope-kprobe.bpf.c shirudo-test-scope-kprobe "$FIXTU
 queue_fixture build_fixture xdp-virtual.bpf.c shirudo-test-xdp-virtual "$FIXTURE_WORK/trusted"
 queue_fixture build_fixture xdp-virtual.bpf.c shirudo-test-xdp-conflict "$FIXTURE_WORK/trusted"
 queue_fixture build_fixture xdp-vm.bpf.c shirudo-test-xdp-vm "$FIXTURE_WORK/trusted"
+queue_fixture build_fixture tcx-virtual.bpf.c shirudo-test-tcx-virtual "$FIXTURE_WORK/trusted"
 queue_fixture build_fixture basic.bpf.c shirudo-test-foreign "$FIXTURE_WORK/foreign"
 queue_fixture build_fixture basic.bpf.c shirudo-test-own-keyring "$FIXTURE_WORK/own"
 queue_fixture build_policy_labels_fixture
@@ -985,6 +986,14 @@ for xdp_kind in virtual conflict vm; do
 		--key "$FIXTURE_WORK/trusted/signing_key.pem" \
 		--cert "$FIXTURE_WORK/trusted/cert.der"
 done
+tcx_payload="$($REPO_ROOT/shirudo upatch info \
+	"$TMP_DIR/fixtures/shirudo-test-tcx-virtual.upatch" --json |
+	python3 -c 'import json,sys; print(json.load(sys.stdin)["payload_sha256"])')"
+"$REPO_ROOT/tools/shirudo-build/shirudo-build" --unload shirudo-test-tcx-virtual \
+	--payload-sha256 "$tcx_payload" \
+	-o "$TMP_DIR/fixtures/shirudo-test-tcx-virtual.unload.upatch" \
+	--key "$FIXTURE_WORK/trusted/signing_key.pem" \
+	--cert "$FIXTURE_WORK/trusted/cert.der"
 
 for scope in netfilter cgroup kprobe; do
 	scope_payload="$($REPO_ROOT/shirudo upatch info \
