@@ -51,27 +51,6 @@ static const struct help_item attest_subcmds[] = {
 	{ "ek-name",   "compute the TPM name of a cloud endorsement public key" },
 };
 
-enum evidence_opt {
-	EVIDENCE_NONCE,
-	EVIDENCE_PCRS,
-	EVIDENCE_CHALLENGE,
-	EVIDENCE_EK_RSA,
-	EVIDENCE_OUTPUT,
-};
-
-static const struct opt_spec evidence_opts[] = {
-	[EVIDENCE_NONCE] = { "--nonce", 0, 0, "<hex>",
-		"freshness value from the verifier (up to 64 bytes)" },
-	[EVIDENCE_PCRS] = { "--pcrs", 0, 0, "<list>",
-		"PCRs to quote, comma separated (default 0-7,9,11-15)" },
-	[EVIDENCE_CHALLENGE] = { "--challenge", 0, 0, "<path>",
-		"a challenge from the verifier to activate while attesting" },
-	[EVIDENCE_EK_RSA] = { "--ek-rsa", 0, 0, NULL,
-		"present the RSA endorsement key when the TPM has no certificate" },
-	[EVIDENCE_OUTPUT] = { "--output", 'o', 0, "<path>",
-		"write the evidence there (0600) instead of stdout" },
-};
-
 enum verify_opt {
 	VERIFY_EVIDENCE,
 	VERIFY_NONCE,
@@ -210,7 +189,7 @@ static const struct opt_spec predict_opts[] = {
 
 static const struct help_section attest_help_sections[] = {
 	HELP_ITEMS("subcommands:", attest_subcmds),
-	HELP_OPTIONS("evidence options (target):", evidence_opts),
+	HELP_OPTIONS("evidence options (target):", attest_evidence_opts),
 	HELP_OPTIONS("verify options (operator):", verify_opts),
 	HELP_OPTIONS("predict options (operator):", predict_opts),
 	HELP_OPTIONS("challenge options (operator):", challenge_opts),
@@ -1085,61 +1064,28 @@ static int cmd_attest_evidence(int argc, const char **argv)
 {
 	const struct attest_challenge *request;
 	struct attest_challenge challenge = {};
-	__u8 nonce[ATTEST_NONCE_MAX];
-	__u32 mask = ATTEST_PCR_DEFAULT;
-	const char *out_path = NULL, *challenge_path = NULL;
+	struct attest_evidence_args args;
 	char *doc = NULL;
-	size_t nonce_len = 0, len = 0, cap = 0;
-	struct opt_parser p;
-	bool rsa_ek = false;
-	int ret, opt;
+	size_t len = 0, cap = 0;
+	int ret;
 
-	OPT_INIT(&p, "attest", evidence_opts, &attest_help, argc, argv, 1);
-	for (opt = opt_next(&p); opt != OPT_END; opt = opt_next(&p)) {
-		switch (opt) {
-		case EVIDENCE_CHALLENGE:
-			challenge_path = p.value;
-			break;
-		case EVIDENCE_EK_RSA:
-			rsa_ek = true;
-			break;
-		case EVIDENCE_NONCE:
-			if (hex_decode_max(p.value, nonce, sizeof(nonce),
-					   &nonce_len) || !nonce_len) {
-				opt_usage(&p, "--nonce must be hex of up to %d bytes",
-					  ATTEST_NONCE_MAX);
-				return EXIT_USAGE;
-			}
-			break;
-		case EVIDENCE_PCRS:
-			if (attest_parse_pcrs(p.value, &mask)) {
-				opt_usage(&p, "--pcrs takes a comma separated list of 0..23");
-				return EXIT_USAGE;
-			}
-			break;
-		case EVIDENCE_OUTPUT:
-			out_path = p.value;
-			break;
-		case OPT_ARG:
-			opt_usage(&p, "unexpected argument '%s'", p.value);
-			return EXIT_USAGE;
-		case OPT_DONE:
-			return 0;
-		default:
-			return EXIT_USAGE;
-		}
-	}
-	if (!nonce_len)
+	ret = attest_parse_evidence_args(argc, argv, &attest_help, &args);
+	if (ret > 0)
+		return 0;
+	if (ret < 0)
+		return EXIT_USAGE;
+	if (!args.nonce_len)
 		pr_warn("attest: no --nonce; the evidence proves no freshness");
-	if (challenge_path &&
-	    attest_challenge_read(challenge_path, &challenge)) {
+	if (args.challenge_path &&
+	    attest_challenge_read(args.challenge_path, &challenge)) {
 		pr_err("attest: %s is not a shirudo credential challenge",
-		       challenge_path);
+		       args.challenge_path);
 		return 2;
 	}
 
-	request = challenge_path ? &challenge : NULL;
-	ret = attest_evidence_config(nonce, nonce_len, mask, rsa_ek, request,
+	request = args.challenge_path ? &challenge : NULL;
+	ret = attest_evidence_config(args.nonce, args.nonce_len, args.pcr_mask,
+				     args.rsa_ek, request,
 				     image_update_context(),
 				     &doc, &len, &cap);
 	if (ret == -ENXIO) {
@@ -1160,16 +1106,17 @@ static int cmd_attest_evidence(int argc, const char **argv)
 		pr_err("attest: evidence failed: %s", strerror(-ret));
 		return 1;
 	}
-	if (out_path) {
+	if (args.out_path) {
 		struct seal_output out;
 
-		ret = seal_output_create(&out, out_path, 0600);
+		ret = seal_output_create(&out, args.out_path, 0600);
 		if (ret) {
-			pr_err("attest: open %s: %s", out_path, strerror(-ret));
+			pr_err("attest: open %s: %s", args.out_path,
+			       strerror(-ret));
 		} else {
 			ret = seal_output_commit(&out, doc, len);
 			if (ret)
-				pr_err("attest: write %s: %s", out_path,
+				pr_err("attest: write %s: %s", args.out_path,
 				       strerror(-ret));
 		}
 	} else if (fwrite(doc, 1, len, stdout) != len ||

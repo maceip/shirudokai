@@ -28,12 +28,19 @@ Description
 
 Two cloud control planes publish an instance's endorsement public key
 out of band, without an endorsement certificate: GCP as PEM
-``SubjectPublicKeyInfo`` (Shielded VM ``getShieldedInstanceIdentity``)
-and AWS as base64 of a DER ``SubjectPublicKeyInfo`` (NitroTPM
-``GetInstanceTpmEkPub`` with ``--key-format der``). AWS offers the key
-types ``rsa-2048`` and ``ecc-sec-p384``; shirudo takes the RSA one and
-refuses P-384, and the target presents its RSA key with ``shirudo attest
---ek-rsa``. The ``tpmt`` format of that call has not been tried.
+``SubjectPublicKeyInfo`` and AWS as base64 of a DER
+``SubjectPublicKeyInfo``:
+
+.. code-block:: console
+
+   operator$ aws ec2 get-instance-tpm-ek-pub --key-type rsa-2048 --key-format der --query KeyValue --output text > instance-ek.b64
+   operator$ gcloud compute instances get-shielded-identity <instance> --format='value(encryptionKey.ekPub)' > instance-ek.pem
+
+``ek-name``, ``attest challenge --ek-pub`` and ``attest verify
+--ek-pub`` accept the raw base64 DER ``KeyValue`` output directly. AWS
+``--key-format tpmt`` and ``--key-type ecc-sec-p384`` are not supported.
+On AWS NitroTPM, the target presents its RSA key with ``shirudo attest
+--ek-rsa``.
 
 Azure publishes none. A Trusted Launch VM's vTPM holds no endorsement
 certificate, and neither the instance view nor the instance metadata

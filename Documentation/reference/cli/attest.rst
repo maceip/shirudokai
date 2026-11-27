@@ -139,7 +139,9 @@ Options
        provider that publishes a virtual TPM's endorsement key publishes
        the RSA one, which ``attest challenge --ek-pub`` and ``attest
        verify --ek-pub`` then compare with this one. A challenge made
-       from such evidence asks for the same key.
+       from such evidence asks for the same key. ``attest`` warns when
+       ``--ek-rsa`` is ignored because ``--challenge`` or an endorsement
+       certificate selects the key type.
    * - ``--output``, ``-o``
      - ``<path>``
      - standard output

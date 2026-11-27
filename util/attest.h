@@ -16,6 +16,7 @@
 
 #include "chain.h"
 #include "ek_cloud.h"
+#include "options.h"
 #include "tpm_wire.h"
 
 /* PCRs quoted by default: firmware and boot loader, kernel, initrd, systemd. */
@@ -54,6 +55,38 @@ struct config_update;
  * rsa_ek asks for the RSA 2048 endorsement key where neither a
  * challenge nor an endorsement certificate names the key's type.
  */
+enum attest_evidence_opt {
+	EVIDENCE_NONCE,
+	EVIDENCE_PCRS,
+	EVIDENCE_CHALLENGE,
+	EVIDENCE_EK_RSA,
+	EVIDENCE_OUTPUT,
+	ATTEST_EVIDENCE_N_OPTS,
+};
+
+struct attest_evidence_args {
+	__u8		nonce[ATTEST_NONCE_MAX];
+	size_t		nonce_len;
+	__u32		pcr_mask;
+	const char	*challenge_path;
+	const char	*out_path;
+	bool		rsa_ek;
+};
+
+extern const struct opt_spec attest_evidence_opts[ATTEST_EVIDENCE_N_OPTS];
+
+/*
+ * Parse `shirudo attest` (evidence) options. Returns 0 to proceed,
+ * 1 when --help/--list-opts was handled, or -EINVAL on usage error.
+ */
+int attest_parse_evidence_args(int argc, const char **argv,
+			       const struct help *help,
+			       struct attest_evidence_args *out);
+
+bool attest_ek_rsa_select(bool rsa_ek,
+			  const struct attest_challenge *challenge,
+			  bool has_cert, bool cert_rsa, bool *ignored);
+
 int attest_evidence_config(const __u8 *nonce, size_t nonce_len,
 			   __u32 pcr_mask, bool rsa_ek,
 			   const struct attest_challenge *c,

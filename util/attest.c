@@ -33,6 +33,7 @@
 #include "json.h"
 #include "log.h"
 #include "malloc.h"
+#include "options.h"
 #include "paths.h"
 #include "tpm.h"
 #include "upatch.h"
@@ -217,6 +218,84 @@ static void emit_certification(struct json_emit *e,
 	emit_hex(e, "after_signature", after->signature, after->signature_len);
 }
 
+const struct opt_spec attest_evidence_opts[ATTEST_EVIDENCE_N_OPTS] = {
+	[EVIDENCE_NONCE] = { "--nonce", 0, 0, "<hex>",
+		"freshness value from the verifier (up to 64 bytes)" },
+	[EVIDENCE_PCRS] = { "--pcrs", 0, 0, "<list>",
+		"PCRs to quote, comma separated (default 0-7,9,11-15)" },
+	[EVIDENCE_CHALLENGE] = { "--challenge", 0, 0, "<path>",
+		"a challenge from the verifier to activate while attesting" },
+	[EVIDENCE_EK_RSA] = { "--ek-rsa", 0, 0, NULL,
+		"present the RSA endorsement key when the TPM has no certificate" },
+	[EVIDENCE_OUTPUT] = { "--output", 'o', 0, "<path>",
+		"write the evidence there (0600) instead of stdout" },
+};
+
+int attest_parse_evidence_args(int argc, const char **argv,
+			       const struct help *help,
+			       struct attest_evidence_args *out)
+{
+	struct opt_parser p;
+	int opt;
+
+	memset(out, 0, sizeof(*out));
+	out->pcr_mask = ATTEST_PCR_DEFAULT;
+	OPT_INIT(&p, "attest", attest_evidence_opts, help, argc, argv, 1);
+	for (opt = opt_next(&p); opt != OPT_END; opt = opt_next(&p)) {
+		switch (opt) {
+		case EVIDENCE_CHALLENGE:
+			out->challenge_path = p.value;
+			break;
+		case EVIDENCE_EK_RSA:
+			out->rsa_ek = true;
+			break;
+		case EVIDENCE_NONCE:
+			if (hex_decode_max(p.value, out->nonce,
+					   sizeof(out->nonce),
+					   &out->nonce_len) ||
+			    !out->nonce_len) {
+				opt_usage(&p, "--nonce must be hex of up to %d bytes",
+					  ATTEST_NONCE_MAX);
+				return -EINVAL;
+			}
+			break;
+		case EVIDENCE_PCRS:
+			if (attest_parse_pcrs(p.value, &out->pcr_mask)) {
+				opt_usage(&p, "--pcrs takes a comma separated list of 0..23");
+				return -EINVAL;
+			}
+			break;
+		case EVIDENCE_OUTPUT:
+			out->out_path = p.value;
+			break;
+		case OPT_ARG:
+			opt_usage(&p, "unexpected argument '%s'", p.value);
+			return -EINVAL;
+		case OPT_DONE:
+			return 1;
+		default:
+			return -EINVAL;
+		}
+	}
+	return 0;
+}
+
+bool attest_ek_rsa_select(bool rsa_ek,
+			  const struct attest_challenge *challenge,
+			  bool has_cert, bool cert_rsa, bool *ignored)
+{
+	bool decide_challenge = challenge != NULL;
+	bool decide_cert = !decide_challenge && has_cert;
+
+	if (ignored)
+		*ignored = rsa_ek && (decide_challenge || decide_cert);
+	if (decide_challenge)
+		return challenge->ek_rsa;
+	if (decide_cert)
+		return cert_rsa;
+	return rsa_ek;
+}
+
 int attest_evidence_config(const __u8 *nonce, size_t nonce_len,
 			   __u32 pcr_mask, bool rsa_ek,
 			   const struct attest_challenge *c,
@@ -362,12 +441,18 @@ int attest_evidence_config(const __u8 *nonce, size_t nonce_len,
 	 * certificate describes; a TPM without a certificate yields its
 	 * ECC key, or its RSA key where the caller asked for that one.
 	 */
-	if (challenge)
-		ek_rsa = challenge->ek_rsa;
-	else if (ek_cert_len)
-		ek_rsa = ek_cert_rsa;
-	else
-		ek_rsa = rsa_ek;
+	{
+		bool ek_rsa_ignored = false;
+
+		ek_rsa = attest_ek_rsa_select(rsa_ek, challenge,
+					      ek_cert_len > 0, ek_cert_rsa,
+					      &ek_rsa_ignored);
+		if (ek_rsa_ignored)
+			pr_warn("attest: --ek-rsa ignored because %s selects "
+				"the endorsement key type",
+				challenge ? "--challenge" :
+				"the endorsement certificate");
+	}
 	ret = tpm_ek_create(tpm, ek_rsa, &ek);
 	if (ret)
 		goto out;

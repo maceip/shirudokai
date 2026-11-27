@@ -305,6 +305,47 @@ static void cloud_ek_pub_vouches_challenge_and_verify(void)
 			      "  FAIL  endorsement key: matches cloud public key\n") != NULL);
 }
 
+static void ek_rsa_option_selects_and_warns(void)
+{
+	const char *argv_rsa[] = { "attest", "--ek-rsa", "--nonce", "0102" };
+	const char *argv_def[] = { "attest", "--nonce", "0102" };
+	struct attest_evidence_args args;
+	struct attest_challenge chal_ecc = { .ek_rsa = false };
+	struct attest_challenge chal_rsa = { .ek_rsa = true };
+	bool ignored = false;
+
+	ASSERT_EQ(attest_parse_evidence_args(ARRAY_SIZE(argv_def), argv_def,
+					     NULL, &args), 0);
+	EXPECT_FALSE(args.rsa_ek);
+	EXPECT_EQ(args.nonce_len, 2U);
+
+	ASSERT_EQ(attest_parse_evidence_args(ARRAY_SIZE(argv_rsa), argv_rsa,
+					     NULL, &args), 0);
+	EXPECT_TRUE(args.rsa_ek);
+
+	/* Without certificate or challenge, --ek-rsa selects RSA. */
+	EXPECT_TRUE(attest_ek_rsa_select(args.rsa_ek, NULL, false, false,
+					 &ignored));
+	EXPECT_FALSE(ignored);
+	EXPECT_FALSE(attest_ek_rsa_select(false, NULL, false, false,
+					  &ignored));
+	EXPECT_FALSE(ignored);
+
+	/* Certificate or challenge overrides --ek-rsa and sets ignored. */
+	EXPECT_FALSE(attest_ek_rsa_select(args.rsa_ek, NULL, true, false,
+					  &ignored));
+	EXPECT_TRUE(ignored);
+	EXPECT_TRUE(attest_ek_rsa_select(args.rsa_ek, NULL, true, true,
+					 &ignored));
+	EXPECT_TRUE(ignored);
+	EXPECT_FALSE(attest_ek_rsa_select(args.rsa_ek, &chal_ecc, false, false,
+					  &ignored));
+	EXPECT_TRUE(ignored);
+	EXPECT_TRUE(attest_ek_rsa_select(args.rsa_ek, &chal_rsa, false, false,
+					 &ignored));
+	EXPECT_TRUE(ignored);
+}
+
 static const struct unit_case cases[] = {
 	UNIT_CASE(pcrs_are_a_list_up_to_23),
 	UNIT_CASE(pcr_value_is_a_pcr_and_an_equals),
@@ -312,6 +353,7 @@ static const struct unit_case cases[] = {
 	UNIT_CASE(report_ends_its_last_line_at_any_size),
 	UNIT_CASE(record_without_digest_is_refused),
 	UNIT_CASE(cloud_ek_pub_vouches_challenge_and_verify),
+	UNIT_CASE(ek_rsa_option_selects_and_warns),
 	{}
 };
 
