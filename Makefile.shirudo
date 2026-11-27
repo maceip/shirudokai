@@ -504,6 +504,19 @@ $(TREE_LIMIT_STAMP): FORCE_TREE_LIMITS
 $(TREE_LIMIT_OBJS): $(TREE_LIMIT_STAMP)
 $(TREE_LIMIT_OBJS): CFLAGS += $(TREE_LIMIT_CFLAGS)
 
+FIPS_STAMP := build/fips-$(PROFILE)
+FIPS_OBJS  := $(MAIN_OBJ) $(call obj,tools/shirudo-build/shirudo-build.o)
+
+.PHONY: FORCE_FIPS
+FORCE_FIPS:
+
+$(FIPS_STAMP): FORCE_FIPS
+	$(Q)mkdir -p $(dir $@)
+	$(Q)printf '%s\n' '$(FIPS)' | cmp -s - $@ 2>/dev/null || \
+	    printf '%s\n' '$(FIPS)' > $@
+
+$(FIPS_OBJS): $(FIPS_STAMP)
+
 # BPF objects pull vmlinux.h from vendor/linux, <bpf/...> helper headers
 # and UAPI kernel headers from vendor/libbpf, and shirudo's own BPF
 # library headers from bpf/lib.
@@ -1458,7 +1471,7 @@ clean:
 	          util/version_id.c
 	$(Q)rm -rf build/target build/unit build/quote-check build/fuzz-afl \
 	    build/fuzz-afl-cmplog
-	$(Q)rm -f $(DEPS) testing/helper/*.d
+	$(Q)rm -f $(DEPS) testing/helper/*.d build/fips-*
 	$(Q)rm -f $(BPF_OBJS) $(VMLINUX_H) systemd/shirudo.service \
 	    systemd/shirudo-initrd.service \
 	          systemd/shirudo-map-export.service \

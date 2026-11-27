@@ -30,7 +30,6 @@
 #include "util/crypto.h"
 #include "util/help.h"
 #include "util/hex.h"
-#include "util/io.h"
 #include "util/keys.h"
 #include "util/log.h"
 #include "util/malloc.h"
@@ -143,17 +142,7 @@ static int cert_algorithm_and_time_ok(const __u8 *der, size_t der_sz,
 
 static int write_vouch_file(const char *path, const void *data, size_t len)
 {
-	int fd, ret;
-
-	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
-	if (fd < 0)
-		return -errno;
-	ret = write_complete(fd, data, len);
-	if (close(fd) && !ret)
-		ret = -errno;
-	if (ret)
-		unlink(path);
-	return ret;
+	return seal_write_file_mode(path, data, len, 0644);
 }
 
 static int sign_and_write_vouch(const char *pkey, const char *cert,
@@ -473,9 +462,9 @@ int build_keys_rotate(int argc, const char **argv)
 	__u8 sha[32], old_fp[32], new_fp[32];
 	char old_hex[65], new_hex[65];
 	EVP_PKEY *pkey = NULL;
+	int ret = 1, opt, dfd = -1;
 	X509 *cert = NULL;
 	struct opt_parser p;
-	int ret = 1, opt;
 	__s64 now;
 
 	OPT_INIT(&p, "keys rotate", rotate_opts, &rotate_help, argc, argv, 1);
@@ -555,6 +544,17 @@ int build_keys_rotate(int argc, const char **argv)
 		pr_err("keys rotate: mkdir %s: %s", new_dir, strerror(-ret));
 		goto out;
 	}
+	dfd = open(new_dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+	if (dfd < 0) {
+		ret = -errno;
+		pr_err("keys rotate: open %s: %s", new_dir, strerror(-ret));
+		goto out;
+	}
+	if (fchmod(dfd, 0700) != 0) {
+		ret = -errno;
+		pr_err("keys rotate: chmod %s: %s", new_dir, strerror(-ret));
+		goto out;
+	}
 	ret = -EIO;
 	pkey = EVP_PKEY_Q_keygen(NULL, NULL, GENKEY_ALG);
 	cert = pkey ? X509_new() : NULL;
@@ -572,6 +572,10 @@ int build_keys_rotate(int argc, const char **argv)
 	if (!ret)
 		ret = sign_and_write_vouch(old_pkey, old_cert, new_der, new_sz,
 					   expires_days, now, vouch_path);
+	if (!ret && fsync(dfd) != 0) {
+		ret = -errno;
+		pr_err("keys rotate: fsync %s: %s", new_dir, strerror(-ret));
+	}
 	if (ret) {
 		unlink(new_pkey);
 		unlink(new_cert);
@@ -584,6 +588,8 @@ int build_keys_rotate(int argc, const char **argv)
 	printf("%s\n", new_hex);
 	ret = 0;
 out:
+	if (dfd >= 0)
+		close(dfd);
 	X509_free(cert);
 	EVP_PKEY_free(pkey);
 	xfree(new_der, new_sz);

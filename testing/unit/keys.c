@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <openssl/asn1.h>
@@ -370,12 +371,145 @@ static void an_image_keeps_what_a_revoked_voucher_admitted(void)
 	rm_rf(dir);
 }
 
+static void vouch_v1_and_admit_vouched_enforce_cert_validity(void)
+{
+	char tmpl_exp[] = "/tmp/shirudo-unit-keys-exp-XXXXXX";
+	char tmpl_adm[] = "/tmp/shirudo-unit-keys-adm-XXXXXX";
+	__u8 *der_exp_signer = NULL, *der_a = NULL;
+	__u8 *der_ok = NULL, *der_past = NULL, *der_fut = NULL;
+	size_t len_exp_signer = 0, len_a = 0;
+	size_t len_ok = 0, len_past = 0, len_fut = 0;
+	EVP_PKEY *pk_exp_signer = NULL, *pk_a = NULL;
+	EVP_PKEY *pk_ok = NULL, *pk_past = NULL, *pk_fut = NULL;
+	__u8 *pay = NULL, *sig = NULL;
+	size_t pay_sz = 0, sig_sz = 0;
+	__u8 sha[32], fp_a[32], fp_ok[32], fp_past[32], fp_fut[32], voucher[32];
+	char fp_ok_hex[65], fp_past_hex[65], fp_fut_hex[65];
+	char path[512], primary[512];
+	char *dir_exp, *dir_adm;
+	__s64 now = (__s64)time(NULL);
+	int root_fd = -1;
+
+	dir_exp = mkdtemp(tmpl_exp);
+	dir_adm = mkdtemp(tmpl_adm);
+	ASSERT_TRUE(dir_exp && dir_adm);
+
+	ASSERT_EQ(make_cert_der(now - 7200, now - 3600, &pk_exp_signer,
+				&der_exp_signer, &len_exp_signer), 0);
+	ASSERT_EQ(make_cert_der(now - 3600, now + 86400, &pk_a, &der_a,
+				&len_a), 0);
+	ASSERT_EQ(make_cert_der(now - 3600, now + 86400, &pk_ok, &der_ok,
+				&len_ok), 0);
+	ASSERT_EQ(make_cert_der(now - 7200, now - 3600, &pk_past, &der_past,
+				&len_past), 0);
+	ASSERT_EQ(make_cert_der(now + 3600, now + 7200, &pk_fut, &der_fut,
+				&len_fut), 0);
+
+	/* An expired v1 voucher is refused with -EKEYEXPIRED. */
+	ASSERT_TRUE(strsprintf(primary, sizeof(primary), "%s/cert.der",
+			       dir_exp) > 0);
+	ASSERT_EQ(write_raw(primary, der_exp_signer, len_exp_signer), 0);
+	ASSERT_EQ(keys_load(dir_exp, NULL, false, &set), 0);
+	ASSERT_EQ(keys_vouch_payload(der_ok, len_ok, &pay, &pay_sz), 0);
+	ASSERT_EQ(sign_detached_cms(pk_exp_signer, der_exp_signer,
+				    len_exp_signer, pay, pay_sz, &sig,
+				    &sig_sz), 0);
+	EXPECT_EQ(keys_verify_vouch(&set, der_ok, len_ok, sig, sig_sz,
+				    voucher), -EKEYEXPIRED);
+	xfree(sig, sig_sz);
+	xfree(pay, pay_sz);
+
+	/* Expired or not-yet-valid vouched candidates are skipped on load. */
+	ASSERT_EQ(keys_digest_der(der_a, len_a, sha, fp_a), 0);
+	ASSERT_EQ(keys_digest_der(der_ok, len_ok, sha, fp_ok), 0);
+	ASSERT_EQ(keys_digest_der(der_past, len_past, sha, fp_past), 0);
+	ASSERT_EQ(keys_digest_der(der_fut, len_fut, sha, fp_fut), 0);
+	hex_encode(fp_ok, 32, fp_ok_hex);
+	hex_encode(fp_past, 32, fp_past_hex);
+	hex_encode(fp_fut, 32, fp_fut_hex);
+
+	ASSERT_TRUE(strsprintf(path, sizeof(path), "%s/trusted", dir_adm) > 0);
+	ASSERT_EQ(mkdir(path, 0700), 0);
+	ASSERT_TRUE(strsprintf(primary, sizeof(primary), "%s/cert.der",
+			       dir_adm) > 0);
+	ASSERT_EQ(write_raw(primary, der_a, len_a), 0);
+
+	ASSERT_EQ(keys_vouch_payload(der_ok, len_ok, &pay, &pay_sz), 0);
+	ASSERT_EQ(sign_detached_cms(pk_a, der_a, len_a, pay, pay_sz, &sig,
+				    &sig_sz), 0);
+	ASSERT_TRUE(strsprintf(path, sizeof(path), "%s/trusted/%s.der",
+			       dir_adm, fp_ok_hex) > 0);
+	ASSERT_EQ(write_raw(path, der_ok, len_ok), 0);
+	ASSERT_TRUE(strsprintf(path, sizeof(path), "%s/trusted/%s.vouch",
+			       dir_adm, fp_ok_hex) > 0);
+	ASSERT_EQ(write_raw(path, sig, sig_sz), 0);
+	xfree(sig, sig_sz);
+	xfree(pay, pay_sz);
+
+	ASSERT_EQ(keys_vouch_payload(der_past, len_past, &pay, &pay_sz), 0);
+	ASSERT_EQ(sign_detached_cms(pk_a, der_a, len_a, pay, pay_sz, &sig,
+				    &sig_sz), 0);
+	ASSERT_TRUE(strsprintf(path, sizeof(path), "%s/trusted/%s.der",
+			       dir_adm, fp_past_hex) > 0);
+	ASSERT_EQ(write_raw(path, der_past, len_past), 0);
+	ASSERT_TRUE(strsprintf(path, sizeof(path), "%s/trusted/%s.vouch",
+			       dir_adm, fp_past_hex) > 0);
+	ASSERT_EQ(write_raw(path, sig, sig_sz), 0);
+	xfree(sig, sig_sz);
+	xfree(pay, pay_sz);
+
+	ASSERT_EQ(keys_vouch_payload(der_fut, len_fut, &pay, &pay_sz), 0);
+	ASSERT_EQ(sign_detached_cms(pk_a, der_a, len_a, pay, pay_sz, &sig,
+				    &sig_sz), 0);
+	ASSERT_TRUE(strsprintf(path, sizeof(path), "%s/trusted/%s.der",
+			       dir_adm, fp_fut_hex) > 0);
+	ASSERT_EQ(write_raw(path, der_fut, len_fut), 0);
+	ASSERT_TRUE(strsprintf(path, sizeof(path), "%s/trusted/%s.vouch",
+			       dir_adm, fp_fut_hex) > 0);
+	ASSERT_EQ(write_raw(path, sig, sig_sz), 0);
+	xfree(sig, sig_sz);
+	xfree(pay, pay_sz);
+
+	ASSERT_EQ(keys_load(dir_adm, NULL, true, &set), 0);
+	EXPECT_EQ(set.n, 2u);
+	EXPECT_EQ(set.n_unvouched, 2u);
+	EXPECT_TRUE(keys_member(&set, fp_a));
+	EXPECT_TRUE(keys_member(&set, fp_ok));
+	EXPECT_TRUE(!keys_member(&set, fp_past));
+	EXPECT_TRUE(!keys_member(&set, fp_fut));
+
+	root_fd = open(dir_adm, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	ASSERT_TRUE(root_fd >= 0);
+	ASSERT_EQ(keys_load_image_at(primary, root_fd, true, &set), 0);
+	EXPECT_EQ(set.n, 2u);
+	EXPECT_EQ(set.n_unvouched, 2u);
+	EXPECT_TRUE(keys_member(&set, fp_a));
+	EXPECT_TRUE(keys_member(&set, fp_ok));
+	EXPECT_TRUE(!keys_member(&set, fp_past));
+	EXPECT_TRUE(!keys_member(&set, fp_fut));
+	close(root_fd);
+
+	EVP_PKEY_free(pk_fut);
+	EVP_PKEY_free(pk_past);
+	EVP_PKEY_free(pk_ok);
+	EVP_PKEY_free(pk_a);
+	EVP_PKEY_free(pk_exp_signer);
+	xfree(der_fut, len_fut);
+	xfree(der_past, len_past);
+	xfree(der_ok, len_ok);
+	xfree(der_a, len_a);
+	xfree(der_exp_signer, len_exp_signer);
+	rm_rf(dir_adm);
+	rm_rf(dir_exp);
+}
+
 static const struct unit_case cases[] = {
 	UNIT_CASE(member_is_found_by_fingerprint),
 	UNIT_CASE(member_past_the_count_is_none),
 	UNIT_CASE(cert_valid_at_enforces_validity_bounds),
 	UNIT_CASE(vouch_v2_enforces_expiration_and_integrity),
 	UNIT_CASE(an_image_keeps_what_a_revoked_voucher_admitted),
+	UNIT_CASE(vouch_v1_and_admit_vouched_enforce_cert_validity),
 	{}
 };
 

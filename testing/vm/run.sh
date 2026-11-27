@@ -185,6 +185,11 @@ die()
 	exit 1
 }
 
+kvm_available()
+{
+	[[ -c /dev/kvm ]] && (exec 9<>/dev/kvm) 2>/dev/null
+}
+
 valid_vm_name()
 {
 	[[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$ ]]
@@ -1735,7 +1740,12 @@ KERNEL="$(resolve_kernel)"
 
 [[ "$TEST_VM_ARCH_SUPPORTED" == 1 ]] ||
 	die "test-vm supports x86_64 and aarch64 hosts only, not $TEST_VM_ARCH"
-[[ -r /dev/kvm && -w /dev/kvm ]] || die "/dev/kvm is required and must be accessible"
+if kvm_available; then
+	USE_KVM=1
+else
+	USE_KVM=0
+	log "/dev/kvm unavailable; falling back to TCG"
+fi
 
 RUNTIME_KEY="$(<"$TEST_VM_HOST_BUNDLE/runtime-image-key")"
 ROOTFS="$RUNTIME_CACHE_DIR/$RUNTIME_KEY.qcow2"
@@ -1999,7 +2009,13 @@ KERNEL_NET_DEVICE="virtio-net-pci,netdev=net0"
 # devices, declared so that the root disk is vda.
 case "$TEST_VM_ARCH" in
 x86_64)
-	MACHINE_ARGS=(-cpu host -machine q35)
+	if (( USE_KVM )); then
+		ACCEL_ARGS=(-enable-kvm)
+		MACHINE_ARGS=(-cpu host -machine q35)
+	else
+		ACCEL_ARGS=(-accel tcg,thread=multi)
+		MACHINE_ARGS=(-cpu max -machine q35)
+	fi
 	DISK_ARGS=(
 		-drive "file=${OVERLAY},if=virtio,format=qcow2"
 		-drive "file=${SEED},if=virtio,format=raw,readonly=on"
@@ -2007,7 +2023,13 @@ x86_64)
 	TPM_DEVICE="tpm-tis,tpmdev=tpm0"
 	;;
 aarch64)
-	MACHINE_ARGS=(-cpu host -machine "virt,gic-version=host")
+	if (( USE_KVM )); then
+		ACCEL_ARGS=(-enable-kvm)
+		MACHINE_ARGS=(-cpu host -machine "virt,gic-version=host")
+	else
+		ACCEL_ARGS=(-accel tcg,thread=multi)
+		MACHINE_ARGS=(-cpu max,pauth-impdef=on -machine "virt,gic-version=3")
+	fi
 	DISK_ARGS=(
 		-drive "file=${OVERLAY},if=none,id=rootdisk,format=qcow2"
 		-device "virtio-blk-pci,drive=rootdisk"
@@ -2019,7 +2041,7 @@ aarch64)
 esac
 
 QEMU_ARGS=(
-	-enable-kvm \
+	"${ACCEL_ARGS[@]}" \
 	"${MACHINE_ARGS[@]}" \
 	-smp "$CPUS" \
 	-m "$MEMORY" \

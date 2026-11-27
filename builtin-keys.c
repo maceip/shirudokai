@@ -751,6 +751,36 @@ static const struct help keys_revoke_help = {
 		   "in a signed config image and activate it with image update.",
 };
 
+enum keys_rotate_opt {
+	KEYS_ROTATE_OLD_KEYS_DIR,
+	KEYS_ROTATE_KEYS_DIR,
+	KEYS_ROTATE_EXPIRES_DAYS,
+};
+
+static const struct opt_spec keys_rotate_opts[] = {
+	[KEYS_ROTATE_OLD_KEYS_DIR] = { "--old-keys-dir", 0, 0, "<dir>",
+		"directory holding the retiring signing_key.pem and cert.der" },
+	[KEYS_ROTATE_KEYS_DIR] = { "--keys-dir", 0, 0, "<dir>",
+		"new directory for the replacement keypair and vouch" },
+	[KEYS_ROTATE_EXPIRES_DAYS] = { "--expires-days", 0, 0, "<n>",
+		"vouch expiration window in days (default 90)" },
+};
+
+static const struct help_section keys_rotate_sections[] = {
+	HELP_OPTIONS("options:", keys_rotate_opts),
+};
+
+static const struct help keys_rotate_help = {
+	.usage	    = "shirudo keys rotate --old-keys-dir <dir> "
+		      "--keys-dir <new-dir> [--expires-days <n>]",
+	.summary    = "Generate a new ML-DSA-87 signing keypair and X.509 "
+		      "certificate under\n<new-dir> and sign a bounded vouch "
+		      "for it with the retiring key in <dir>.\nPrints the new "
+		      "certificate's fingerprint.",
+	.sections   = keys_rotate_sections,
+	.n_sections = ARRAY_SIZE(keys_rotate_sections),
+};
+
 static int format_key_event(const char *type, const char *fp_hex,
 			    const __u8 cert_sha[32], const __u8 event[32],
 			    char *buf, size_t size)
@@ -995,9 +1025,19 @@ int keys_revoke_image(const __u8 *der, size_t size, bool boot)
 
 static int keys_revoke(int argc, const char **argv)
 {
+	struct opt_parser p;
+	int opt;
+
 	if (argc == 2 && is_help(argv[1])) {
 		print_help(&keys_revoke_help);
 		return 0;
+	}
+	opt_init(&p, "keys revoke", NULL, 0, &keys_revoke_help, argc, argv, 1);
+	for (opt = opt_next(&p); opt != OPT_END; opt = opt_next(&p)) {
+		if (opt == OPT_DONE)
+			return 0;
+		if (opt != OPT_ARG)
+			return EXIT_USAGE;
 	}
 	pr_err("keys revoke: put revocation records in a signed config image, "
 	       "then run `shirudo image update`");
@@ -1013,7 +1053,31 @@ static int keys_vouch(int argc, const char **argv)
 
 static int keys_rotate(int argc, const char **argv)
 {
-	if ((argc < 2 || !is_help(argv[1])) && enforcement_active()) {
+	struct opt_parser p;
+	int opt;
+
+	if (argc == 2 && is_help(argv[1])) {
+		print_help(&keys_rotate_help);
+		return 0;
+	}
+	OPT_INIT(&p, "keys rotate", keys_rotate_opts, &keys_rotate_help,
+		 argc, argv, 1);
+	for (opt = opt_next(&p); opt != OPT_END; opt = opt_next(&p)) {
+		switch (opt) {
+		case KEYS_ROTATE_OLD_KEYS_DIR:
+		case KEYS_ROTATE_KEYS_DIR:
+		case KEYS_ROTATE_EXPIRES_DAYS:
+			break;
+		case OPT_DONE:
+			return 0;
+		case OPT_ARG:
+			opt_usage(&p, "unexpected argument '%s'", p.value);
+			return EXIT_USAGE;
+		default:
+			return EXIT_USAGE;
+		}
+	}
+	if (enforcement_active()) {
 		pr_err("keys rotate: refusing on a target: signing keys belong on the operator host");
 		return 1;
 	}

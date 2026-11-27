@@ -87,6 +87,8 @@ bool ek_cloud_template_valid(const struct tpm_public *pub)
 	policy_l1 = !memneq_explicit(pub->policy, shirudo_tpm_ek_policy, 32) &&
 		    pub->attrs == TPM_EK_ATTRS;
 	policy_l2 = !memneq_explicit(pub->policy, shirudo_tpm_ek_policy_l2, 32);
+	if (policy_l2 && pub->attrs != (TPM_EK_ATTRS | TPM_ATTR_USER_WITH_AUTH))
+		return false;
 	if (!policy_l1 && !policy_l2)
 		return false;
 	if (pub->type == TPM_ALG_RSA)

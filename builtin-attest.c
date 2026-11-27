@@ -222,7 +222,7 @@ static const struct help_section attest_help_sections[] = {
 
 static const struct help attest_help = {
 	.usage      = "shirudo attest [--nonce=<hex>] [--pcrs=<list>] "
-		      "[--challenge=<path>] [--output=<path>]\n"
+		      "[--challenge=<path>] [--ek-rsa] [--output=<path>]\n"
 		      "       shirudo attest verify --evidence=<path> --nonce=<hex> "
 		      "--ak-name=<hex> [options]\n"
 		      "       shirudo attest predict --cert=<cert.der> [options]\n"

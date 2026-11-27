@@ -239,6 +239,23 @@ static void ecc_p256_vectors_and_tamper_rejection(void)
 	EXPECT_EQ(ek_cloud_parse(bad_tpm2b, 2 + bad_len, &parsed),
 		  -EKEYREJECTED);
 
+	/* PolicyB (L-2) without userWithAuth, or PolicyA (L-1) with it, is rejected. */
+	bad_pub = pub_l2;
+	bad_pub.attrs = TPM_EK_ATTRS;
+	EXPECT_FALSE(ek_cloud_template_valid(&bad_pub));
+	ASSERT_EQ(tpm_public_marshal(&bad_pub, bad_tpm2b + 2, TPM_PUBLIC_MAX,
+				     &bad_len), 0);
+	put_be16(bad_tpm2b, (__u16)bad_len);
+	EXPECT_EQ(ek_cloud_parse(bad_tpm2b, 2 + bad_len, &parsed),
+		  -EKEYREJECTED);
+	EXPECT_EQ(ek_cloud_verify_presented(spki.pem, spki.pem_len,
+					    bad_tpm2b, 2 + bad_len, vname,
+					    &vlen), -EKEYREJECTED);
+
+	bad_pub = pub_l1;
+	bad_pub.attrs |= TPM_ATTR_USER_WITH_AUTH;
+	EXPECT_FALSE(ek_cloud_template_valid(&bad_pub));
+
 	EVP_PKEY_free(other);
 	EVP_PKEY_free(pkey);
 }
