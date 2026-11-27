@@ -229,12 +229,15 @@ static int parse_hex32(const char *what, const char *hex, __u8 out[32])
 struct members {
 	struct measured_upatch	*set;
 	size_t				n;
+	const char			**observe_names;
+	size_t				n_observe;
 };
 
 static int member_add_file(struct members *m, const char *path)
 {
 	struct measured_upatch e;
 	struct upatch u;
+	bool observe;
 	int ret;
 
 	ret = upatch_open(path, &u);
@@ -242,10 +245,15 @@ static int member_add_file(struct members *m, const char *path)
 		pr_err("attest: open %s: %s", path, strerror(-ret));
 		return ret;
 	}
+	observe = u.hdr.type == UPATCH_TYPE_BPF &&
+		  upatch_signed_mode(&u) == UPATCH_MODE_OBSERVE;
 	measured_upatch_of(&e, &u);
 	upatch_close(&u);
 	ret = measured_set_add(m->set, &m->n, ATTEST_MEMBERS_MAX, e.name,
 			       e.payload_hex, e.type);
+	if (!ret && observe && m->observe_names &&
+	    m->n_observe < ATTEST_MEMBERS_MAX)
+		m->observe_names[m->n_observe++] = m->set[m->n - 1].name;
 	if (ret)
 		pr_err("attest: --upatch %s: %s", path,
 		       ret == -EEXIST ? "a second upatch of that name" :
@@ -651,8 +659,9 @@ static int cmd_attest_verify(int argc, const char **argv)
 	int err, ret = EXIT_USAGE, opt;
 
 	m.set = xcalloc(ATTEST_MEMBERS_MAX, sizeof(*m.set));
+	m.observe_names = xcalloc(ATTEST_MEMBERS_MAX, sizeof(*m.observe_names));
 	report = xmalloc(ATTEST_REPORT_MAX);
-	if (!m.set || !report)
+	if (!m.set || !m.observe_names || !report)
 		goto out;
 	OPT_INIT(&p, "attest verify", verify_opts, &attest_help, argc, argv, 2);
 	for (opt = opt_next(&p); opt != OPT_END; opt = opt_next(&p)) {
@@ -846,6 +855,8 @@ static int cmd_attest_verify(int argc, const char **argv)
 		}
 		x.have_init = true;
 	}
+	x.observe_names = m.observe_names;
+	x.n_observe = m.n_observe;
 	if (read_evidence(evidence_path, &evidence, &evidence_len))
 		goto out;
 	err = attest_verify(evidence, evidence_len, &x, report,
@@ -869,6 +880,9 @@ out:
 	xfree(evidence, evidence ? evidence_len + 1 : 0);
 	xfree(report, report ? ATTEST_REPORT_MAX : 0);
 	xfree(m.set, m.set ? ATTEST_MEMBERS_MAX * sizeof(*m.set) : 0);
+	xfree(m.observe_names,
+	      m.observe_names ? ATTEST_MEMBERS_MAX * sizeof(*m.observe_names) :
+	      0);
 	memzero_explicit(&x, sizeof(x));
 	return ret;
 }

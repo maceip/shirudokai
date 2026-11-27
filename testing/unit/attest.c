@@ -346,6 +346,51 @@ static void ek_rsa_option_selects_and_warns(void)
 	EXPECT_TRUE(ignored);
 }
 
+static void upatch_load_observe_mode_shows_in_verify(void)
+{
+	static const __u8 nonce[16] = {
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+	};
+	static const char * const obs[] = { "obs-shield" };
+	struct attest_expect expect = {
+		.nonce = nonce,
+		.nonce_len = sizeof(nonce),
+		.observe_names = obs,
+		.n_observe = ARRAY_SIZE(obs),
+	};
+	static char doc[8192], report[ATTEST_REPORT_MAX];
+	static const char marker[] = "\"type\":\"upatch_load\"";
+	static const char mode_json[] = "\"mode\":\"observe\",";
+	static const char bad_mode[] = "\"mode\":\"bogus\",";
+	const char *full;
+	char *load, *upatch_obj;
+	size_t len, pos;
+
+	full = read_evidence(&len);
+	ASSERT_TRUE(len + sizeof(mode_json) < sizeof(doc));
+	memcpy(doc, full, len);
+	load = span_find(doc, len, marker);
+	ASSERT_TRUE(load);
+	upatch_obj = span_find(load, len - (size_t)(load - doc),
+			       "\"upatch\":{");
+	ASSERT_TRUE(upatch_obj);
+	pos = (size_t)(upatch_obj - doc) + sizeof("\"upatch\":{") - 1;
+	memmove(doc + pos + sizeof(mode_json) - 1, doc + pos, len - pos);
+	memcpy(doc + pos, mode_json, sizeof(mode_json) - 1);
+	len += sizeof(mode_json) - 1;
+
+	EXPECT_EQ(attest_verify(doc, len, &expect, report, sizeof(report)),
+		  -EKEYREJECTED);
+	EXPECT_TRUE(span_find(report, strlen(report),
+			      "  NOTE  expected upatch obs-shield: observe mode\n") != NULL);
+	EXPECT_TRUE(span_find(report, strlen(report), "(observe)\n") != NULL);
+
+	memcpy(doc + pos, bad_mode, sizeof(bad_mode) - 1);
+	EXPECT_EQ(attest_verify(doc, len, &expect, report, sizeof(report)),
+		  -EINVAL);
+}
+
 static const struct unit_case cases[] = {
 	UNIT_CASE(pcrs_are_a_list_up_to_23),
 	UNIT_CASE(pcr_value_is_a_pcr_and_an_equals),
@@ -354,6 +399,7 @@ static const struct unit_case cases[] = {
 	UNIT_CASE(record_without_digest_is_refused),
 	UNIT_CASE(cloud_ek_pub_vouches_challenge_and_verify),
 	UNIT_CASE(ek_rsa_option_selects_and_warns),
+	UNIT_CASE(upatch_load_observe_mode_shows_in_verify),
 	{}
 };
 

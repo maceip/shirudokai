@@ -139,6 +139,8 @@ struct attest_expect {
 	__u32		config_pcr;
 	bool		have_config_nvpcr_name;
 	__u8		config_nvpcr_name[34];
+	const char	* const *observe_names;
+	size_t		n_observe;
 };
 
 /*

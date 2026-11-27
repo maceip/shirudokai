@@ -691,6 +691,7 @@ struct parse {
 	__s64		rec_reset;
 	char		upatch_name[UPATCH_NAME_MAX + 1];
 	char		upatch_payload_hex[65];
+	char		upatch_mode[16];
 	char		tree_id[UPATCH_NAME_MAX + 1];
 	char		tree_op[16];
 	char		tree_digest_hex[sizeof("sha256:") + 64];
@@ -794,9 +795,20 @@ static int on_record(void *ctx)
 						&load)) {
 		__u8 payload[32], event[32];
 
-		if (!upatch_name_valid(p->upatch_name) ||
-		    strscpy(r->label, p->upatch_name, sizeof(r->label)) < 0)
+		if (p->upatch_mode[0] &&
+		    strcmp(p->upatch_mode, "observe") &&
+		    strcmp(p->upatch_mode, "enforce"))
 			return -EINVAL;
+		if (!upatch_name_valid(p->upatch_name))
+			return -EINVAL;
+		if (!strcmp(p->upatch_mode, "observe")) {
+			if (strsprintf(r->label, sizeof(r->label),
+				       "%s (observe)", p->upatch_name) < 0)
+				return -E2BIG;
+		} else if (strscpy(r->label, p->upatch_name,
+				   sizeof(r->label)) < 0) {
+			return -E2BIG;
+		}
 		if (!hex_decode(p->upatch_payload_hex, payload, 32) &&
 		    !chain_upatch_event(chain_upatch_tag(payload_type, load),
 					p->upatch_name, payload, event))
@@ -841,6 +853,7 @@ static int on_record(void *ctx)
 	p->chain_hex[0] = '\0';
 	p->upatch_name[0] = '\0';
 	p->upatch_payload_hex[0] = '\0';
+	p->upatch_mode[0] = '\0';
 	p->tree_id[0] = '\0';
 	p->tree_op[0] = '\0';
 	p->tree_digest_hex[0] = '\0';
@@ -1053,6 +1066,8 @@ static int evidence_parse(struct verify *v, const char *evidence, size_t len)
 		{ "payload_sha256", JSON_T_STRING,
 		  p->upatch_payload_hex, sizeof(p->upatch_payload_hex),
 		  0, NULL, 0 },
+		{ "mode", JSON_T_STRING, p->upatch_mode,
+		  sizeof(p->upatch_mode), 0, NULL, 0 },
 	};
 	struct json_field key_sub[] = {
 		{ "fingerprint", JSON_T_STRING,
@@ -1687,6 +1702,9 @@ static void verify_state(struct verify *v)
 		note(rep, "no expected state given; the register value is "
 		     "%s", p->reg_value_hex);
 	}
+	for (i = 0; i < expect->n_observe; i++)
+		note(rep, "expected upatch %s: observe mode",
+		     expect->observe_names[i]);
 	for (i = 1; i < p->n_recs; i++)
 		note(rep, "event after boot: %s %s", p->recs[i].type,
 		     p->recs[i].label);

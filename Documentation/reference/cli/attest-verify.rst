@@ -114,7 +114,8 @@ Options
      - ``<file>``
      - An artifact archived on the target at boot. Repeatable, each
        upatch name once across ``--upatch`` and ``--expect``. Needs
-       ``--cert``.
+       ``--cert``. When the artifact was built with ``--observe``,
+       ``verify`` notes it as observe mode.
    * - ``--expect``
      - ``[java:]<name>=<digest>``
      - An archived upatch by name and payload digest, ``java:`` before

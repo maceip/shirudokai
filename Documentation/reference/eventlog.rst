@@ -115,7 +115,11 @@ Event kinds
    * - ``upatch_load``
      - ``shirudo upatch load``, after the load, before it reports
        success.
-     - ``upatch``: object with ``name`` and ``payload_sha256``.
+     - ``upatch``: object with ``name``, ``payload_sha256``, and
+       ``mode`` (``observe`` when a BPF upatch was built with
+       ``--observe``; omitted otherwise). ``payload_sha256`` already
+       covers the signed ``.upatch`` header and ``.rodata``, so the
+       register extension digest is unchanged.
    * - ``upatch_unload``
      - ``shirudo upatch unload``, before the detach. A live config
        activation that revokes a key writes one per loaded upatch the

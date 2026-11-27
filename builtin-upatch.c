@@ -3307,7 +3307,7 @@ static int version_gate(const char *expect_version_id, bool no_version_check,
 static int format_upatch_event(const char *type, const char *name,
 			       const __u8 payload[32],
 			       const __u8 event[32], const char *reason,
-			       char *buf, size_t size)
+			       bool observe, char *buf, size_t size)
 {
 	struct json_emit e = { .buf = buf, .cap = size };
 	char payload_hex[65];
@@ -3317,6 +3317,8 @@ static int format_upatch_event(const char *type, const char *name,
 	json_obj_open_key(&e, "upatch");
 	json_kv_string(&e, "name", name);
 	json_kv_string(&e, "payload_sha256", payload_hex);
+	if (observe)
+		json_kv_string(&e, "mode", "observe");
 	json_obj_close(&e);
 	if (reason)
 		json_kv_string(&e, "reason", reason);
@@ -3337,8 +3339,8 @@ static int format_upatch_event(const char *type, const char *name,
  * tells a failure after the register moved from one before it.
  */
 static int upatch_chain_event_locked(__u32 payload_type, bool load,
-				     const char *op, const char *name,
-				     const __u8 payload[32],
+				     bool observe, const char *op,
+				     const char *name, const __u8 payload[32],
 				     const char *reason, char out_chain[65],
 				     bool *measured)
 {
@@ -3364,8 +3366,8 @@ static int upatch_chain_event_locked(__u32 payload_type, bool load,
 	 * where after the extend it would leave the register ahead of the
 	 * log.
 	 */
-	ret = format_upatch_event(type, name, payload, event, reason, record,
-				  sizeof(record));
+	ret = format_upatch_event(type, name, payload, event, reason, observe,
+				  record, sizeof(record));
 	if (ret)
 		return ret;
 
@@ -3925,9 +3927,12 @@ static int upatch_load(const struct load_args *args, int fd)
 		goto done;
 	}
 
-	err = upatch_chain_event_locked(u.hdr.type, true, "load", name,
-					payload, NULL, rep.chain_after,
-					&measured);
+	err = upatch_chain_event_locked(u.hdr.type, true,
+					u.hdr.type == UPATCH_TYPE_BPF &&
+					upatch_signed_mode(&u) ==
+					UPATCH_MODE_OBSERVE,
+					"load", name, payload, NULL,
+					rep.chain_after, &measured);
 	if (err) {
 		if (!measured)
 			unload_unmeasured(name, u.hdr.type);
@@ -4007,9 +4012,9 @@ static int java_unload_locked(const char *name,
 			 "archived payload does not match directive");
 		return 1;
 	}
-	err = upatch_chain_event_locked(UPATCH_TYPE_JAVA, false, "unload",
-					name, payload, NULL, rep->chain_after,
-					NULL);
+	err = upatch_chain_event_locked(UPATCH_TYPE_JAVA, false, false,
+					"unload", name, payload, NULL,
+					rep->chain_after, NULL);
 	if (err) {
 		rep_fail(rep, "tpm_extend", chain_event_category(err, false),
 			 err, "chain extend failed; nothing removed");
@@ -4222,8 +4227,9 @@ static int cmd_upatch_unload(int argc, const char **argv, int fd)
 	 * fails after the event leaves a shield the register says is gone,
 	 * which the next status reports and the operator can repeat.
 	 */
-	err = upatch_chain_event_locked(UPATCH_TYPE_BPF, false, "unload", name,
-					payload, NULL, rep.chain_after, NULL);
+	err = upatch_chain_event_locked(UPATCH_TYPE_BPF, false, false,
+					"unload", name, payload, NULL,
+					rep.chain_after, NULL);
 	if (err) {
 		rep_fail(&rep, "tpm_extend", chain_event_category(err, false),
 			 err, "chain extend failed; nothing detached");
@@ -4405,8 +4411,9 @@ static int upatch_purge_locked(const char *name, const struct cert *signer,
 	if (loaded < 0)
 		return loaded;
 	if (loaded) {
-		ret = upatch_chain_event_locked(type, false, "purge", name,
-						payload, reason, NULL, NULL);
+		ret = upatch_chain_event_locked(type, false, false, "purge",
+						name, payload, reason, NULL,
+						NULL);
 		if (ret)
 			return ret;
 		ret = type == UPATCH_TYPE_JAVA ? java_agent_retire(name) :
