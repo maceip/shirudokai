@@ -60,6 +60,10 @@ which bpf-next and the bpf fixes tree for 7.4 contain and which the
 tree does not carry; :doc:`/operate/plan/system-requirements` says
 why.
 
+``struct_ops`` upatches additionally need the uncarried
+``struct_ops``-by-name kernel RFC (``aspsk/wip/struct-oops``), so they
+build and sign but cannot load on the documented kernel.
+
 How the test kernel includes them
 ---------------------------------
 

@@ -101,6 +101,12 @@ Kernel source
        before it grants a read-only access to another task's memory to
        ``CAP_PERFMON``. The seal refuses a task with runtime authority
        there, and ``init`` fails without the hook.
+   * - ``struct_ops``-by-name (``aspsk/wip/struct-oops``, not carried)
+     - Required only to load ``struct_ops`` upatches. The signed loader
+       names the struct and its members rather than passing BTF type
+       IDs; :src:`testing/kernel/patches/` does not carry this RFC, so
+       ``struct_ops`` upatches build and sign but cannot load on the
+       documented kernel.
 
 :doc:`/internals/kernel-patches` describes the required changes and
 their status. :src:`testing/kernel/` carries the patches and builds the

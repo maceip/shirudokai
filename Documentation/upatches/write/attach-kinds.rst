@@ -791,7 +791,9 @@ the signed loader creates the map, loads the programs and populates the
 program FDs. ``shirudo`` then attaches the map with ``BPF_LINK_CREATE``
 and ``BPF_STRUCT_OPS`` and pins the link so ``upatch unload`` detaches
 and unregisters it atomically. ``shirudo build`` refuses a map in
-``SEC(".struct_ops")`` without ``.link``.
+``SEC(".struct_ops")`` without ``.link``, allows at most one
+``struct_ops`` map per upatch, and currently allowlists only
+``tcp_congestion_ops`` (refusing other types such as ``sched_ext_ops``).
 
 Programs that attach nowhere
 ----------------------------
@@ -886,6 +888,8 @@ it generates a loader.
        tcx/ingress, tcx/egress and struct_ops``
    * - a map in ``SEC(".struct_ops")``
      - ``struct_ops map '<map>' must be in SEC(".struct_ops.link")``
+   * - a ``struct_ops`` map of an unallowlisted type
+     - ``struct_ops map '<map>' uses unsupported type '<type>'``
    * - ``syscall`` with another program name
      - ``SEC("syscall") program '<name>' must be named shirudo_test__<id>``
 

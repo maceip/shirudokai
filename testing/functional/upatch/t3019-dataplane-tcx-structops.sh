@@ -236,7 +236,26 @@ test_expect_success 'struct_ops map outside .struct_ops.link and unreferenced ca
 	EOF
 	! build_upatch "$WORK/two-ops.bpf.c" "$WORK/two-ops.upatch" two-ops 2>"$WORK/two-ops.err" &&
 	grep -q "at most one struct_ops map" "$WORK/two-ops.err" &&
-	[ ! -e "$WORK/two-ops.upatch" ]
+	[ ! -e "$WORK/two-ops.upatch" ] &&
+	cat >"$WORK/disallowed-ops.bpf.c" <<-\EOF &&
+	// SPDX-License-Identifier: GPL-2.0 OR BSD-2-Clause
+	#include "vmlinux.h"
+	#include <bpf/bpf_helpers.h>
+	#include <bpf/bpf_tracing.h>
+	char _license[] SEC("license") = "Dual BSD/GPL";
+	struct shirudo_test_disallowed_ops {
+		s32 (*init)(void);
+	};
+	SEC("struct_ops/t3019_disallowed_init")
+	s32 BPF_PROG(t3019_disallowed_init) { return 0; }
+	SEC(".struct_ops.link")
+	struct shirudo_test_disallowed_ops t3019_disallowed = {
+		.init = (void *)t3019_disallowed_init,
+	};
+	EOF
+	! build_upatch "$WORK/disallowed-ops.bpf.c" "$WORK/disallowed-ops.upatch" disallowed-ops 2>"$WORK/disallowed-ops.err" &&
+	grep -q "uses unsupported type .shirudo_test_disallowed_ops." "$WORK/disallowed-ops.err" &&
+	[ ! -e "$WORK/disallowed-ops.upatch" ]
 '
 
 test_done

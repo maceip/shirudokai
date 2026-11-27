@@ -1548,16 +1548,53 @@ static int compose_signed_data(const void *data, __u32 data_len,
 	return 0;
 }
 
+static const char *const allowed_struct_ops_types[] = {
+	"tcp_congestion_ops",
+};
+
+static bool struct_ops_type_allowed(const char *name)
+{
+	size_t i;
+
+	if (!name || !name[0])
+		return false;
+	for (i = 0; i < ARRAY_SIZE(allowed_struct_ops_types); i++) {
+		if (strcmp(name, allowed_struct_ops_types[i]) == 0)
+			return true;
+	}
+	return false;
+}
+
+static const char *struct_ops_map_type_name(const struct btf *btf,
+					    const struct bpf_map *m)
+{
+	const struct btf_type *t;
+	__u32 type_id;
+
+	if (!btf)
+		return NULL;
+	type_id = bpf_map__btf_value_type_id(m);
+	if (!type_id)
+		return NULL;
+	t = btf__type_by_id(btf, type_id);
+	if (!t || BTF_INFO_KIND(t->info) != BTF_KIND_STRUCT)
+		return NULL;
+	return btf__name_by_offset(btf, t->name_off);
+}
+
 /*
  * Without BPF_F_LINK the map update in the loader registers the
  * struct_ops, before the target holds a pin that could take it out.
  */
 static int validate_struct_ops_maps(struct bpf_object *obj)
 {
+	const struct btf *btf = bpf_object__btf(obj);
 	__u32 nr_struct_ops = 0;
 	struct bpf_map *m;
 
 	bpf_object__for_each_map(m, obj) {
+		const char *tname;
+
 		if (bpf_map__type(m) != BPF_MAP_TYPE_STRUCT_OPS)
 			continue;
 		if (!(bpf_map__map_flags(m) & BPF_F_LINK)) {
@@ -1568,6 +1605,12 @@ static int validate_struct_ops_maps(struct bpf_object *obj)
 		if (++nr_struct_ops > 1) {
 			pr_err("at most one struct_ops map is supported per upatch");
 			return -EINVAL;
+		}
+		tname = struct_ops_map_type_name(btf, m);
+		if (!struct_ops_type_allowed(tname)) {
+			pr_err("struct_ops map '%s' uses unsupported type '%s'",
+			       bpf_map__name(m), tname ? tname : "?");
+			return -EOPNOTSUPP;
 		}
 	}
 	return 0;
