@@ -33,7 +33,9 @@ The checks look at a file's name, not at what the file is:
 
 The package raises the cost of the common web-shell and reverse-shell
 payloads. It is not a boundary; `app-sandbox`, which decides by policy
-label and not by name, is the one to use for that.
+label and not by name, is the one to use for that. For the same reason,
+`Beefile` omits `fixes` so the backend does not double-count
+`CVE-2026-109618` and `CVE-2026-109619` alongside `app-sandbox`.
 
 ## Telemetry maps
 

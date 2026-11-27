@@ -17,4 +17,3 @@ paths = ["/usr/sbin/php-fpm*", "/usr/local/sbin/php-fpm", "/usr/sbin/apache2", "
 
 [upatches.tree]
 id = "web-worker-guard"
-fixes = ["CVE-2026-109618", "CVE-2026-109619"]
