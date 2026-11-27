@@ -28,10 +28,10 @@ int LLVMFuzzerTestOneInput(const __u8 *data, size_t size)
 		if (key.rsa && (key.n_len != 256 || !(key.n[0] & 0x80) ||
 				key.e != 65537))
 			abort();
-		if (ek_cloud_build_public(&key, EK_TEMPLATE_L1, &pub1, tpmt1,
-					  &len1, name1) ||
-		    ek_cloud_build_public(&key, EK_TEMPLATE_L2, &pub2, tpmt2,
-					  &len2, name2))
+		if (ek_cloud_build_public(&key, EK_TEMPLATE_POLICY_A, &pub1,
+					  tpmt1, &len1, name1) ||
+		    ek_cloud_build_public(&key, EK_TEMPLATE_POLICY_B, &pub2,
+					  tpmt2, &len2, name2))
 			abort();
 		if (name1[0] != 0x00 || name1[1] != 0x0b ||
 		    name2[0] != 0x00 || name2[1] != 0x0b ||

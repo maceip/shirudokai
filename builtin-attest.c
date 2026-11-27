@@ -167,15 +167,12 @@ static const struct opt_spec challenge_opts[] = {
 
 enum ek_name_opt {
 	EK_NAME_PUB,
-	EK_NAME_TEMPLATE,
 	EK_NAME_JSON,
 };
 
 static const struct opt_spec ek_name_opts[] = {
 	[EK_NAME_PUB] = { "--ek-pub", 0, 0, "<path>",
 		"cloud endorsement public key (PEM, DER or TPM2B_PUBLIC)" },
-	[EK_NAME_TEMPLATE] = { "--template", 0, 0, "l1|l2",
-		"TCG endorsement key template policy (default l1)" },
 	[EK_NAME_JSON] = { "--json", 0, 0, NULL,
 		"print the endorsement key metadata and name as JSON" },
 };
@@ -229,8 +226,7 @@ static const struct help attest_help = {
 		      "       shirudo attest challenge --evidence=<path> "
 		      "--output=<path> --ek-ca=<bundle>|--ek-pub=<path>|"
 		      "--ek-name=<hex>|--trust-presented-ek [options]\n"
-		      "       shirudo attest ek-name --ek-pub=<path> "
-		      "[--template=l1|l2] [--json]",
+		      "       shirudo attest ek-name --ek-pub=<path> [--json]",
 	.summary    = "Without a subcommand: emit a TPM-signed evidence document "
 		      "for this\ntarget (quote over the PCRs, certification of "
 		      "the measurement register,\nthis boot's eventlog, the "
@@ -1019,10 +1015,17 @@ out:
 	return ret;
 }
 
+static const char *ek_template_name(enum ek_template tmpl, bool rsa)
+{
+	if (tmpl == EK_TEMPLATE_POLICY_A)
+		return rsa ? "l1" : "l2";
+	return rsa ? "h1" : "h2";
+}
+
 static int cmd_attest_ek_name(int argc, const char **argv)
 {
-	enum ek_template tmpl = EK_TEMPLATE_L1, used_tmpl = EK_TEMPLATE_L1;
-	bool force_tmpl = false, json = false, rsa = false;
+	enum ek_template used_tmpl = EK_TEMPLATE_POLICY_A;
+	bool json = false, rsa = false;
 	char hex[2 * TPM_NAME_MAX + 1];
 	__u8 name[TPM_NAME_MAX];
 	const char *ek_path = NULL;
@@ -1036,17 +1039,6 @@ static int cmd_attest_ek_name(int argc, const char **argv)
 		switch (opt) {
 		case EK_NAME_PUB:
 			ek_path = p.value;
-			break;
-		case EK_NAME_TEMPLATE:
-			if (!strcmp(p.value, "l1")) {
-				tmpl = EK_TEMPLATE_L1;
-			} else if (!strcmp(p.value, "l2")) {
-				tmpl = EK_TEMPLATE_L2;
-			} else {
-				opt_usage(&p, "--template must be l1 or l2");
-				goto out;
-			}
-			force_tmpl = true;
 			break;
 		case EK_NAME_JSON:
 			json = true;
@@ -1067,8 +1059,8 @@ static int cmd_attest_ek_name(int argc, const char **argv)
 	}
 	if (read_ek_pub(ek_path, &ek_pub, &ek_pub_len))
 		goto out;
-	err = ek_cloud_name(ek_pub, ek_pub_len, tmpl, force_tmpl, &rsa,
-			    &used_tmpl, name);
+	err = ek_cloud_name(ek_pub, ek_pub_len, EK_TEMPLATE_POLICY_A, false,
+			    &rsa, &used_tmpl, name);
 	if (err) {
 		pr_err("attest ek-name: %s", strerror(-err));
 		ret = 1;
@@ -1083,7 +1075,7 @@ static int cmd_attest_ek_name(int argc, const char **argv)
 		json_kv_int(&e, "schema", 1);
 		json_kv_string(&e, "type", rsa ? "rsa" : "ecc");
 		json_kv_string(&e, "template",
-			       used_tmpl == EK_TEMPLATE_L1 ? "l1" : "l2");
+			       ek_template_name(used_tmpl, rsa));
 		json_kv_string(&e, "ek_name", hex);
 		json_obj_close(&e);
 		if (e.err) {

@@ -127,7 +127,7 @@ int tpm_qualified_name(__u32 hierarchy,
 #define TPM_ATTR_USER_WITH_AUTH	0x00000040u
 #define TPM_ATTR_SIGN_ENCRYPT	0x00040000u
 extern const __u8 shirudo_tpm_ek_policy[TPM_DIGEST_LEN];
-extern const __u8 shirudo_tpm_ek_policy_l2[TPM_DIGEST_LEN];
+extern const __u8 shirudo_tpm_ek_policy_b[TPM_DIGEST_LEN];
 
 /*
  * A TPMT_PUBLIC of the shapes shirudo makes or checks: a SHA-256-named

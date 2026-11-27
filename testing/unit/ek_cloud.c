@@ -60,7 +60,7 @@ static void rsa2048_vectors_across_cloud_formats(void)
 	__u8 vname[TPM_NAME_MAX];
 	char b64_tpm2b[2048], b64_wrapped[2200];
 	size_t len_l1 = 0, len_l2 = 0, tpm2b_len, vlen = 0, off = 0, i;
-	enum ek_template used_tmpl = EK_TEMPLATE_L2;
+	enum ek_template used_tmpl = EK_TEMPLATE_POLICY_B;
 	struct ek_cloud_key parsed;
 	struct tpm_public pub_l1, pub_l2;
 	struct spki_blobs spki, other_spki;
@@ -80,31 +80,33 @@ static void rsa2048_vectors_across_cloud_formats(void)
 	EXPECT_EQ(parsed.n_len, 256U);
 	EXPECT_EQ(parsed.e, 65537U);
 
-	ASSERT_EQ(ek_cloud_build_public(&parsed, EK_TEMPLATE_L1, &pub_l1,
+	ASSERT_EQ(ek_cloud_build_public(&parsed, EK_TEMPLATE_POLICY_A, &pub_l1,
 					tpmt_l1, &len_l1, name_pem), 0);
-	ASSERT_EQ(ek_cloud_build_public(&parsed, EK_TEMPLATE_L2, &pub_l2,
+	ASSERT_EQ(ek_cloud_build_public(&parsed, EK_TEMPLATE_POLICY_B, &pub_l2,
 					tpmt_l2, &len_l2, name_l2), 0);
+	EXPECT_TRUE(ek_low_range_template_valid(&pub_l1));
+	EXPECT_FALSE(ek_low_range_template_valid(&pub_l2));
 	EXPECT_EQ(name_pem[0], 0x00);
 	EXPECT_EQ(name_pem[1], 0x0b);
 	EXPECT_TRUE(memcmp(name_pem, name_l2, TPM_NAME_LEN) != 0);
 
-	ASSERT_EQ(ek_cloud_name(spki.der, spki.der_len, EK_TEMPLATE_L1, false,
-				&rsa, &used_tmpl, name_der), 0);
+	ASSERT_EQ(ek_cloud_name(spki.der, spki.der_len, EK_TEMPLATE_POLICY_A,
+				false, &rsa, &used_tmpl, name_der), 0);
 	EXPECT_TRUE(rsa);
-	EXPECT_EQ(used_tmpl, EK_TEMPLATE_L1);
+	EXPECT_EQ(used_tmpl, EK_TEMPLATE_POLICY_A);
 	EXPECT_EQ(memcmp(name_pem, name_der, TPM_NAME_LEN), 0);
 
 	ASSERT_EQ(ek_cloud_name(spki.der_b64, strlen(spki.der_b64),
-				EK_TEMPLATE_L1, false, NULL, NULL,
+				EK_TEMPLATE_POLICY_A, false, NULL, NULL,
 				name_b64_der), 0);
 	EXPECT_EQ(memcmp(name_pem, name_b64_der, TPM_NAME_LEN), 0);
 
 	/* Raw and line-wrapped base64 TPM2B_PUBLIC (AWS NitroTPM / Azure). */
 	tpm2b_len = tpm_put2b(tpm2b, tpmt_l1, len_l1);
-	ASSERT_EQ(ek_cloud_name(tpm2b, tpm2b_len, EK_TEMPLATE_L1, false,
+	ASSERT_EQ(ek_cloud_name(tpm2b, tpm2b_len, EK_TEMPLATE_POLICY_A, false,
 				&rsa, &used_tmpl, name_tpm2b), 0);
 	EXPECT_TRUE(rsa);
-	EXPECT_EQ(used_tmpl, EK_TEMPLATE_L1);
+	EXPECT_EQ(used_tmpl, EK_TEMPLATE_POLICY_A);
 	EXPECT_EQ(memcmp(name_pem, name_tpm2b, TPM_NAME_LEN), 0);
 
 	ASSERT_EQ(base64_encode(tpm2b, tpm2b_len, b64_tpm2b, sizeof(b64_tpm2b)),
@@ -116,7 +118,7 @@ static void rsa2048_vectors_across_cloud_formats(void)
 	}
 	b64_wrapped[off++] = '\n';
 	b64_wrapped[off] = '\0';
-	ASSERT_EQ(ek_cloud_name(b64_wrapped, off, EK_TEMPLATE_L1, false,
+	ASSERT_EQ(ek_cloud_name(b64_wrapped, off, EK_TEMPLATE_POLICY_A, false,
 				NULL, NULL, name_b64_tpm2b), 0);
 	EXPECT_EQ(memcmp(name_pem, name_b64_tpm2b, TPM_NAME_LEN), 0);
 
@@ -156,7 +158,7 @@ static void ecc_p256_vectors_and_tamper_rejection(void)
 	struct tpm_public pub_l1, pub_l2, bad_pub;
 	struct spki_blobs spki, other_spki;
 	char b64_l2[1024];
-	enum ek_template used_tmpl = EK_TEMPLATE_L1;
+	enum ek_template used_tmpl = EK_TEMPLATE_POLICY_A;
 	EVP_PKEY *pkey, *other;
 
 	pkey = EVP_PKEY_Q_keygen(NULL, NULL, "EC", "P-256");
@@ -170,16 +172,16 @@ static void ecc_p256_vectors_and_tamper_rejection(void)
 				 &other_parsed), 0);
 	EXPECT_FALSE(parsed.rsa);
 
-	ASSERT_EQ(ek_cloud_build_public(&parsed, EK_TEMPLATE_L1, &pub_l1,
+	ASSERT_EQ(ek_cloud_build_public(&parsed, EK_TEMPLATE_POLICY_A, &pub_l1,
 					tpmt_l1, &len_l1, name_l1), 0);
-	ASSERT_EQ(ek_cloud_build_public(&parsed, EK_TEMPLATE_L2, &pub_l2,
+	ASSERT_EQ(ek_cloud_build_public(&parsed, EK_TEMPLATE_POLICY_B, &pub_l2,
 					tpmt_l2, &len_l2, name_l2), 0);
 
 	tpm2b_len = tpm_put2b(tpm2b, tpmt_l2, len_l2);
 	ASSERT_EQ(base64_encode(tpm2b, tpm2b_len, b64_l2, sizeof(b64_l2)), 0);
-	ASSERT_EQ(ek_cloud_name(b64_l2, strlen(b64_l2), EK_TEMPLATE_L1, false,
-				NULL, &used_tmpl, vname), 0);
-	EXPECT_EQ(used_tmpl, EK_TEMPLATE_L2);
+	ASSERT_EQ(ek_cloud_name(b64_l2, strlen(b64_l2), EK_TEMPLATE_POLICY_A,
+				false, NULL, &used_tmpl, vname), 0);
+	EXPECT_EQ(used_tmpl, EK_TEMPLATE_POLICY_B);
 	EXPECT_EQ(memcmp(vname, name_l2, TPM_NAME_LEN), 0);
 
 	/* Cloud TPM2B_PUBLIC pins the exact template as well as the point. */
@@ -313,24 +315,29 @@ static const __u8 azure_ek_name[TPM_NAME_LEN] = {
 	0xe0,
 };
 
-static const __u8 tcg_policy_b_sha256[TPM_DIGEST_LEN] = {
-	0xca, 0x3d, 0x0a, 0x99, 0xa2, 0xb9, 0x39, 0x06, 0xf7, 0xa3, 0x34,
-	0x24, 0x14, 0xef, 0xcf, 0xb3, 0xa3, 0x85, 0xd4, 0x4c, 0xd1, 0xfd,
-	0x45, 0x90, 0x89, 0xd1, 0x9b, 0x50, 0x71, 0xc0, 0xb7, 0xa0,
+/* TCG EK Credential Profile PolicyCSHA256 (TPM2_PolicyAuthorizeNV). */
+static const __u8 tcg_policy_c_sha256[TPM_DIGEST_LEN] = {
+	0x37, 0x67, 0xe2, 0xed, 0xd4, 0x3f, 0xf4, 0x5a, 0x3a, 0x7e, 0x1e,
+	0xae, 0xfc, 0xef, 0x78, 0x64, 0x3d, 0xca, 0x96, 0x46, 0x32, 0xe7,
+	0xaa, 0xd8, 0x2c, 0x67, 0x3a, 0x30, 0xd8, 0x63, 0x3f, 0xde,
 };
 
 static void name_of_a_real_vtpm_key_and_the_tcg_policies(void)
 {
-	enum ek_template tmpl = EK_TEMPLATE_L2;
-	__u8 name[TPM_NAME_MAX];
+	__u8 name[TPM_NAME_MAX], derived_policy_b[TPM_DIGEST_LEN];
+	enum ek_template tmpl = EK_TEMPLATE_POLICY_B;
 	bool rsa = false;
 
 	ASSERT_EQ(ek_cloud_name(azure_ek_pem, sizeof(azure_ek_pem) - 1,
-				EK_TEMPLATE_L1, false, &rsa, &tmpl, name), 0);
+				EK_TEMPLATE_POLICY_A, false, &rsa, &tmpl,
+				name), 0);
 	EXPECT_TRUE(rsa);
-	EXPECT_EQ(tmpl, EK_TEMPLATE_L1);
+	EXPECT_EQ(tmpl, EK_TEMPLATE_POLICY_A);
 	EXPECT_EQ(memcmp(name, azure_ek_name, TPM_NAME_LEN), 0);
-	EXPECT_EQ(memcmp(shirudo_tpm_ek_policy_l2, tcg_policy_b_sha256,
+
+	ASSERT_EQ(tpm_policy_or(shirudo_tpm_ek_policy, tcg_policy_c_sha256,
+				derived_policy_b), 0);
+	EXPECT_EQ(memcmp(shirudo_tpm_ek_policy_b, derived_policy_b,
 			 TPM_DIGEST_LEN), 0);
 }
 

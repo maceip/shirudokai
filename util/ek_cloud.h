@@ -19,8 +19,8 @@
 #define EK_CLOUD_MAX	(16 * 1024)
 
 enum ek_template {
-	EK_TEMPLATE_L1,
-	EK_TEMPLATE_L2,
+	EK_TEMPLATE_POLICY_A,
+	EK_TEMPLATE_POLICY_B,
 };
 
 enum ek_cloud_format {
@@ -42,6 +42,7 @@ struct ek_cloud_key {
 	__u8			y[32];
 };
 
+bool ek_low_range_template_valid(const struct tpm_public *pub);
 bool ek_cloud_template_valid(const struct tpm_public *pub);
 
 int ek_cloud_parse(const void *data, size_t len,

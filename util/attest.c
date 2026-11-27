@@ -1158,7 +1158,9 @@ static int verify_ek(struct verify *v)
 		    !tpm_object_name(ek_public, ek_public_len, computed) &&
 		    !memneq_explicit(computed, ek_name, TPM_NAME_LEN),
 		    "endorsement key: name matches its public area");
-		say(rep, parsed && ek_cloud_template_valid(&ek_pub),
+		say(rep, parsed && (expect->have_ek_pub ?
+				    ek_cloud_template_valid(&ek_pub) :
+				    ek_low_range_template_valid(&ek_pub)),
 		    "endorsement key: TCG default template under the "
 		    "endorsement policy");
 	} else {
@@ -1869,7 +1871,8 @@ int attest_challenge_make(const char *evidence, size_t len,
 	say(&rep, !tpm_object_name(ek_public, ek_public_len, computed) &&
 	    !memneq_explicit(computed, ek_name, TPM_NAME_LEN),
 	    "endorsement key: name matches its public area");
-	say(&rep, ek_cloud_template_valid(&pub),
+	say(&rep, pol->ek_pub ? ek_cloud_template_valid(&pub) :
+		  ek_low_range_template_valid(&pub),
 	    "endorsement key: TCG default template under the endorsement "
 	    "policy");
 	if (top[2].seen) {

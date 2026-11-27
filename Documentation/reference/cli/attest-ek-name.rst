@@ -19,7 +19,7 @@ Usage
 
 .. code-block:: none
 
-   shirudo attest ek-name --ek-pub=<path> [--template=l1|l2] [--json]
+   shirudo attest ek-name --ek-pub=<path> [--json]
 
 Every option takes its value after ``=`` or as the next argument.
 
@@ -44,11 +44,12 @@ That pins the key as ``--ek-name`` does: it proves that the same TPM
 answers later, not that Azure vouches for it.
 
 ``ek-name`` parses RSA-2048 (exponent 65537) and ECC NIST P-256 keys in
-any of those formats, builds the canonical TCG endorsement key
-``TPMT_PUBLIC`` when the input is ``SubjectPublicKeyInfo`` (or uses the
-marshalled ``TPMT_PUBLIC`` of a ``TPM2B_PUBLIC`` input unless
-``--template`` overrides it), and prints ``0x000b || SHA-256(TPMT_PUBLIC)``
-as 68 lowercase hexadecimal characters.
+any of those formats, builds the canonical TCG low-range endorsement key
+``TPMT_PUBLIC`` (L-1 for RSA, L-2 for ECC, under PolicyA) when the
+input is ``SubjectPublicKeyInfo`` (or uses the marshalled
+``TPMT_PUBLIC`` of a ``TPM2B_PUBLIC`` input), and prints
+``0x000b || SHA-256(TPMT_PUBLIC)`` as 68 lowercase hexadecimal
+characters.
 
 Options
 -------
@@ -64,19 +65,11 @@ Options
      - ``<path>``
      - Required. Cloud endorsement public key in PEM SPKI, DER SPKI, or
        raw or base64 ``TPM2B_PUBLIC`` format.
-   * - ``--template``
-     - ``l1`` or ``l2``
-     - TCG endorsement policy template: ``l1`` selects the standard
-       low-range policy
-       (``837197674484b3f81a90cc8d46a5d724fd52d76e06520b64f2a1da1b331469aa``),
-       ``l2`` the high-range SHA-256 policy, PolicyB
-       (``ca3d0a99a2b93906f7a3342414efcfb3a385d44cd1fd459089d19b5071c0b7a0``).
-       Defaults to ``l1`` for SPKI inputs and to the embedded policy for
-       ``TPM2B_PUBLIC`` inputs.
    * - ``--json``
      - none
      - Print one JSON object with ``schema`` (1), ``type`` (``rsa`` or
-       ``ecc``), ``template`` (``l1`` or ``l2``) and ``ek_name``.
+       ``ecc``), ``template`` (``l1`` or ``l2`` for PolicyA, ``h1`` or
+       ``h2`` for PolicyB) and ``ek_name``.
 
 Exit status
 -----------
@@ -92,9 +85,8 @@ Exit status
    * - 1
      - Computing or encoding the name failed.
    * - 2
-     - A usage error: ``--ek-pub`` missing, unreadable, malformed, not an
-       approved RSA-2048 or NIST P-256 endorsement key, or an invalid
-       ``--template`` value.
+     - A usage error: ``--ek-pub`` missing, unreadable, malformed, or not
+       an approved RSA-2048 or NIST P-256 endorsement key.
 
 Examples
 --------

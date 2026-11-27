@@ -70,26 +70,13 @@ static bool p256_point_valid(const __u8 x[32], const __u8 y[32])
 	return ok;
 }
 
-bool ek_cloud_template_valid(const struct tpm_public *pub)
+static bool ek_template_common_valid(const struct tpm_public *pub)
 {
-	bool policy_l1, policy_l2;
-
 	if (!pub)
-		return false;
-	if ((pub->attrs & TPM_EK_ATTRS) != TPM_EK_ATTRS ||
-	    (pub->attrs & TPM_ATTR_SIGN_ENCRYPT) != 0 ||
-	    (pub->attrs & ~(TPM_EK_ATTRS | TPM_ATTR_USER_WITH_AUTH)) != 0)
 		return false;
 	if (pub->sym_alg != TPM_ALG_AES || pub->sym_bits != 128 ||
 	    pub->sym_mode != TPM_ALG_CFB || pub->scheme != TPM_ALG_NULL ||
 	    pub->policy_len != 32)
-		return false;
-	policy_l1 = !memneq_explicit(pub->policy, shirudo_tpm_ek_policy, 32) &&
-		    pub->attrs == TPM_EK_ATTRS;
-	policy_l2 = !memneq_explicit(pub->policy, shirudo_tpm_ek_policy_l2, 32);
-	if (policy_l2 && pub->attrs != (TPM_EK_ATTRS | TPM_ATTR_USER_WITH_AUTH))
-		return false;
-	if (!policy_l1 && !policy_l2)
 		return false;
 	if (pub->type == TPM_ALG_RSA)
 		return pub->rsa_bits == 2048 && pub->n_len == 256 &&
@@ -99,6 +86,24 @@ bool ek_cloud_template_valid(const struct tpm_public *pub)
 		return pub->curve == TPM_ECC_NIST_P256 &&
 		       p256_point_valid(pub->x, pub->y);
 	return false;
+}
+
+bool ek_low_range_template_valid(const struct tpm_public *pub)
+{
+	if (!ek_template_common_valid(pub))
+		return false;
+	return pub->attrs == TPM_EK_ATTRS &&
+	       !memneq_explicit(pub->policy, shirudo_tpm_ek_policy, 32);
+}
+
+bool ek_cloud_template_valid(const struct tpm_public *pub)
+{
+	if (ek_low_range_template_valid(pub))
+		return true;
+	if (!ek_template_common_valid(pub))
+		return false;
+	return pub->attrs == (TPM_EK_ATTRS | TPM_ATTR_USER_WITH_AUTH) &&
+	       !memneq_explicit(pub->policy, shirudo_tpm_ek_policy_b, 32);
 }
 
 static int extract_evp_pubkey(EVP_PKEY *pk, struct ek_cloud_key *out)
@@ -345,12 +350,12 @@ int ek_cloud_build_public(const struct ek_cloud_key *key,
 		return -EINVAL;
 	memset(pub, 0, sizeof(*pub));
 	pub->type = key->rsa ? TPM_ALG_RSA : TPM_ALG_ECC;
-	if (tmpl == EK_TEMPLATE_L1) {
+	if (tmpl == EK_TEMPLATE_POLICY_A) {
 		pub->attrs = TPM_EK_ATTRS;
 		memcpy(pub->policy, shirudo_tpm_ek_policy, 32);
-	} else if (tmpl == EK_TEMPLATE_L2) {
+	} else if (tmpl == EK_TEMPLATE_POLICY_B) {
 		pub->attrs = TPM_EK_ATTRS | TPM_ATTR_USER_WITH_AUTH;
-		memcpy(pub->policy, shirudo_tpm_ek_policy_l2, 32);
+		memcpy(pub->policy, shirudo_tpm_ek_policy_b, 32);
 	} else {
 		return -EINVAL;
 	}
@@ -402,7 +407,7 @@ int ek_cloud_name(const void *cloud_pub, size_t cloud_len,
 		if (out_tmpl)
 			*out_tmpl = !memneq_explicit(key.tpm_pub.policy,
 						     shirudo_tpm_ek_policy, 32) ?
-				    EK_TEMPLATE_L1 : EK_TEMPLATE_L2;
+				    EK_TEMPLATE_POLICY_A : EK_TEMPLATE_POLICY_B;
 		memcpy(out_ek_name, key.name, TPM_NAME_LEN);
 		return 0;
 	}
