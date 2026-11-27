@@ -210,20 +210,20 @@ static int netdev_upatch_complete(const char *name, const struct prog_spec *spec
 		if (stat(pin, &st))
 			return errno == ENOENT ? 0 : -errno;
 	}
-	expected = nr_attach - nr_netdev;
-	if (!expected && !has_struct_ops)
+	expected = nr_attach - nr_netdev + (has_struct_ops ? 1 : 0);
+	if (!expected)
 		return 1;
 	ret = upatch_each_link_info(name, count_non_netdev_link, &found);
 	if (ret)
 		return ret;
-	return has_struct_ops ? found > expected : found == expected;
+	return found == expected;
 }
 
 static int links_complete_specs(const char *name,
 				const struct prog_spec *specs, __u32 nr_progs)
 {
 	bool has_netdev = false, has_struct_ops = false;
-	__u32 i, nr_attach = 0, total;
+	__u32 i, nr_attach = 0;
 	struct upatch_pins pins;
 	int ret;
 
@@ -243,8 +243,9 @@ static int links_complete_specs(const char *name,
 		return ret;
 	if (!has_struct_ops)
 		return upatch_pins_complete(&pins, nr_attach);
-	total = pins.has_link ? 1 : pins.nr_links;
-	return total > nr_attach && upatch_pins_complete(&pins, total);
+	if (nr_attach == UINT32_MAX)
+		return -EOVERFLOW;
+	return upatch_pins_complete(&pins, nr_attach + 1);
 }
 
 int upatch_links_complete(const char *name, const char *path)
