@@ -13,6 +13,8 @@
 
 #include <bpf/btf.h>
 
+#include <shirudo/string.h>
+
 #include "unit.h"
 #include "json.h"
 #include "malloc.h"
@@ -136,14 +138,14 @@ static void ringbuf_btf_resolve_and_format(void)
 	ASSERT_EQ(err_v, -13);
 	ASSERT_STREQ(act, "ACT_DENY");
 	ASSERT_STREQ(comm, "sshd");
-	ASSERT_TRUE(strstr(json_out, "\"ports\":[22,443]"));
+	ASSERT_TRUE(str_contains(json_out, "\"ports\":[22,443]"));
 	xstrfree(json_out);
 
 	ASSERT_EQ(ringbuf_format_record(&spec, &ev, sizeof(ev), false,
 					&text_out), 0);
 	ASSERT_TRUE(text_out);
-	ASSERT_TRUE(strstr(text_out,
-			   "events (24 B): { pid=4242, err=-13, action=ACT_DENY"));
+	ASSERT_TRUE(str_contains(text_out,
+				 "events (24 B): { pid=4242, err=-13, action=ACT_DENY"));
 	xstrfree(text_out);
 
 	btf__free(btf);
@@ -335,11 +337,61 @@ static void shield_hits_summary_percpu_and_struct(void)
 	btf__free(btf);
 }
 
+static void map_name_and_btf_formatting_guards(void)
+{
+	struct map_view v = {};
+	__u32 second = 99;
+	char *cell;
+	int u32_id, st_id;
+	struct btf *btf;
+
+	EXPECT_TRUE(upatch_nproc_possible() > 0);
+
+	EXPECT_TRUE(upatch_map_name_valid("events"));
+	EXPECT_TRUE(upatch_map_name_valid(".rodata"));
+	EXPECT_TRUE(upatch_map_name_valid("__serial_buf"));
+	EXPECT_TRUE(upatch_map_name_valid("shield_counters"));
+	EXPECT_TRUE(upatch_map_name_valid("shield_stack_ids"));
+	EXPECT_FALSE(upatch_map_name_valid(NULL));
+	EXPECT_FALSE(upatch_map_name_valid(""));
+	EXPECT_FALSE(upatch_map_name_valid("."));
+	EXPECT_FALSE(upatch_map_name_valid(".."));
+	EXPECT_FALSE(upatch_map_name_valid("../bad"));
+	EXPECT_FALSE(upatch_map_name_valid("bad/map"));
+	EXPECT_FALSE(upatch_map_name_valid("bad-hyphen"));
+	EXPECT_FALSE(upatch_map_name_valid("seventeen_chars17"));
+
+	EXPECT_EQ(upatch_maps_read("ok-upatch", "..", 0, 0, &v), -EINVAL);
+	EXPECT_EQ(upatch_maps_read("../bad", "events", 0, 0, &v), -EINVAL);
+
+	/*
+	 * When member 0 lies past bytes_size and member 1 lies within (e.g.
+	 * out-of-order union/struct BTF offsets), btf_format_value omits a
+	 * leading comma before the first emitted member.
+	 */
+	btf = btf__new_empty();
+	ASSERT_TRUE(btf);
+	u32_id = btf__add_int(btf, "__u32", 4, 0);
+	st_id = btf__add_struct(btf, "reordered", 8);
+	ASSERT_TRUE(u32_id > 0 && st_id > 0);
+	ASSERT_EQ(btf__add_field(btf, "tail", u32_id, 32, 0), 0);
+	ASSERT_EQ(btf__add_field(btf, "head", u32_id, 0, 0), 0);
+
+	v.btf = btf;
+	cell = upatch_map_format_cell(&v, (__u32)st_id, &second,
+				      sizeof(second), "struct reordered");
+	ASSERT_TRUE(cell);
+	EXPECT_STREQ(cell, "{ head=99 }");
+	xstrfree(cell);
+	btf__free(btf);
+}
+
 static const struct unit_case cases[] = {
 	UNIT_CASE(ringbuf_btf_resolve_and_format),
 	UNIT_CASE(ringbuf_untyped_and_short_records),
 	UNIT_CASE(ringbuf_batch_bounding_and_validation),
 	UNIT_CASE(shield_hits_summary_percpu_and_struct),
+	UNIT_CASE(map_name_and_btf_formatting_guards),
 	{}
 };
 

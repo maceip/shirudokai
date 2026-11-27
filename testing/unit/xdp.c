@@ -368,7 +368,15 @@ static void kernel_discovery_revalidates_devices(void)
 	ASSERT_EQ(ret, 0);
 	EXPECT_TRUE(count > 0);
 	for (i = 0; i < count; i++) {
+		struct xdp_device mutated = devices[i];
+
 		EXPECT_EQ(xdp_device_verify(&devices[i]), 0);
+		mutated.name[0] = mutated.name[0] == 'x' ? 'y' : 'x';
+		EXPECT_EQ(xdp_device_verify(&mutated), -EXDEV);
+		mutated = devices[i];
+		mutated.driver[0] = mutated.driver[0] == 'x' ? 'y' : 'x';
+		mutated.driver[1] = '\0';
+		EXPECT_EQ(xdp_device_verify(&mutated), -EXDEV);
 		if (i)
 			EXPECT_TRUE(devices[i - 1].ifindex < devices[i].ifindex);
 	}
@@ -446,6 +454,54 @@ static void device_globs_match_ifname_and_driver(void)
 						  "ifname=lo"));
 }
 
+static void same_netns_veth_filter_ties_only_when_both_ends_match(void)
+{
+	struct xdp_device veths[2] = {};
+
+	memcpy(veths[0].name, "veth-low", sizeof("veth-low"));
+	memcpy(veths[0].kind, "veth", sizeof("veth"));
+	veths[0].ifindex = 10;
+	veths[0].peer_ifindex = 11;
+
+	memcpy(veths[1].name, "veth-high", sizeof("veth-high"));
+	memcpy(veths[1].kind, "veth", sizeof("veth"));
+	veths[1].ifindex = 11;
+	veths[1].peer_ifindex = 10;
+
+	/* Both match: lower ifindex wins. */
+	EXPECT_TRUE(xdp_device_selected_filtered(veths, 2, 0,
+						 UPATCH_XDP_VIRTUAL, ""));
+	EXPECT_FALSE(xdp_device_selected_filtered(veths, 2, 1,
+						  UPATCH_XDP_VIRTUAL, ""));
+	EXPECT_TRUE(xdp_device_selected_filtered(veths, 2, 0,
+						 UPATCH_XDP_VIRTUAL,
+						 "ifname=veth-*"));
+	EXPECT_FALSE(xdp_device_selected_filtered(veths, 2, 1,
+						  UPATCH_XDP_VIRTUAL,
+						  "ifname=veth-*"));
+
+	/* Only higher-ifindex peer matches: it is selected. */
+	EXPECT_FALSE(xdp_device_selected_filtered(veths, 2, 0,
+						  UPATCH_XDP_VIRTUAL,
+						  "ifname=veth-high"));
+	EXPECT_TRUE(xdp_device_selected_filtered(veths, 2, 1,
+						 UPATCH_XDP_VIRTUAL,
+						 "ifname=veth-high"));
+
+	/* Only lower-ifindex peer matches: it is selected. */
+	EXPECT_TRUE(xdp_device_selected_filtered(veths, 2, 0,
+						 UPATCH_XDP_VIRTUAL,
+						 "ifname=veth-low"));
+	EXPECT_FALSE(xdp_device_selected_filtered(veths, 2, 1,
+						  UPATCH_XDP_VIRTUAL,
+						  "ifname=veth-low"));
+
+	/* Missing peer is still refused even when filter matches one end. */
+	EXPECT_FALSE(xdp_device_selected_filtered(veths, 1, 0,
+						  UPATCH_XDP_VIRTUAL,
+						  "ifname=veth-low"));
+}
+
 static const struct unit_case cases[] = {
 	UNIT_CASE(classes_are_exclusive),
 	UNIT_CASE(netdevsim_is_virtual_whatever_its_port_says),
@@ -468,6 +524,7 @@ static const struct unit_case cases[] = {
 	UNIT_CASE(kernel_discovery_revalidates_devices),
 	UNIT_CASE(device_filters_are_validated),
 	UNIT_CASE(device_globs_match_ifname_and_driver),
+	UNIT_CASE(same_netns_veth_filter_ties_only_when_both_ends_match),
 	{}
 };
 

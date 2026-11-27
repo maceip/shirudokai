@@ -603,8 +603,22 @@ static void mode_load(struct mode_fixture *f, __u32 flags, __u32 signed_mode,
 	f->trailer.nr_sections = cpu_to_le32(nr_sections);
 }
 
+struct java_observe_fixture {
+	struct upatch_header header;
+	__u8 signature[8];
+	__u8 jar[8];
+	char name[UPATCH_NAME_MAX];
+	__le32 type;
+	__le32 mode;
+	struct upatch_signed_section dir[4];
+	struct upatch_signed_trailer trailer;
+};
+
+#define JAVA_OBS_DATA_OFF	offsetof(struct java_observe_fixture, jar)
+
 static void observe_mode_matches_the_signed_section(void)
 {
+	struct java_observe_fixture jf = {};
 	struct mode_fixture f;
 	struct upatch u;
 
@@ -636,6 +650,43 @@ static void observe_mode_matches_the_signed_section(void)
 	mode_load(&f, DIRECTIVE_OBSERVE | DIRECTIVE_UNLOAD,
 		  UPATCH_MODE_OBSERVE, 2);
 	EXPECT_EQ(upatch_open_memory(&f, sizeof(f), &u), -EBADMSG);
+
+	/* DIRECTIVE_OBSERVE on a Java payload is refused even with MODE. */
+	jf.header.magic = cpu_to_le64(UPATCH_MAGIC);
+	jf.header.version = cpu_to_le32(UPATCH_VERSION);
+	jf.header.flags = cpu_to_le32(DIRECTIVE_OBSERVE);
+	jf.header.type = cpu_to_le32(UPATCH_TYPE_JAVA);
+	memcpy(jf.header.name, "agent", sizeof("agent"));
+	jf.header.signature_off =
+		cpu_to_le32(offsetof(struct java_observe_fixture, signature));
+	jf.header.signature_len = cpu_to_le32(sizeof(jf.signature));
+	jf.header.data_off = cpu_to_le32(JAVA_OBS_DATA_OFF);
+	jf.header.data_len = cpu_to_le32(sizeof(jf) - JAVA_OBS_DATA_OFF);
+	memcpy(jf.jar, "PK\x03\x04jar", sizeof(jf.jar));
+	memcpy(jf.name, "agent", sizeof("agent"));
+	jf.type = cpu_to_le32(UPATCH_TYPE_JAVA);
+	jf.mode = cpu_to_le32(UPATCH_MODE_OBSERVE);
+	jf.dir[0].tag = cpu_to_le32(UPATCH_SECTION_NAME);
+	jf.dir[0].off = cpu_to_le32(offsetof(struct java_observe_fixture, name) -
+				    JAVA_OBS_DATA_OFF);
+	jf.dir[0].len = cpu_to_le32(sizeof(jf.name));
+	jf.dir[1].tag = cpu_to_le32(UPATCH_SECTION_JAR);
+	jf.dir[1].off = 0;
+	jf.dir[1].len = cpu_to_le32(sizeof(jf.jar));
+	jf.dir[2].tag = cpu_to_le32(UPATCH_SECTION_TYPE);
+	jf.dir[2].off = cpu_to_le32(offsetof(struct java_observe_fixture, type) -
+				    JAVA_OBS_DATA_OFF);
+	jf.dir[2].len = cpu_to_le32(sizeof(jf.type));
+	jf.dir[3].tag = cpu_to_le32(UPATCH_SECTION_MODE);
+	jf.dir[3].off = cpu_to_le32(offsetof(struct java_observe_fixture, mode) -
+				    JAVA_OBS_DATA_OFF);
+	jf.dir[3].len = cpu_to_le32(sizeof(jf.mode));
+	jf.trailer.magic = cpu_to_le32(UPATCH_SIGNED_TRAILER_MAGIC);
+	jf.trailer.version = cpu_to_le32(UPATCH_SIGNED_VERSION);
+	jf.trailer.dir_off = cpu_to_le32(offsetof(struct java_observe_fixture, dir) -
+					 JAVA_OBS_DATA_OFF);
+	jf.trailer.nr_sections = cpu_to_le32(4);
+	EXPECT_EQ(upatch_open_memory(&jf, sizeof(jf), &u), -EBADMSG);
 }
 
 static void prog_specs_take_a_struct_ops_program_without_a_site(void)

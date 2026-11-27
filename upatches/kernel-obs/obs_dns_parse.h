@@ -93,8 +93,8 @@ struct obs_ident {
 #define DNS_MAX_WIRE_NAME_BYTES	255
 #define DNS_MAX_LABEL_BYTES	63
 #define DNS_MAX_LABELS		127
-#define DNS_MAX_NAME_STEPS	(DNS_MAX_LABELS + 1)
 #define DNS_MAX_JUMPS		16
+#define DNS_MAX_NAME_STEPS	(DNS_MAX_LABELS + 1 + DNS_MAX_JUMPS)
 /* A 1232-byte UDP response can hold at most 75 minimal 16-byte A answers. */
 #define DNS_MAX_ANSWERS		75
 #define DNS_MAX_UDP_BYTES	1232
@@ -386,11 +386,11 @@ dns_validate_packet(const __u8 *data, const __u8 *data_end, __u32 wire_len,
 		return DNS_PKT_LEN_BAD;
 
 	/* Keep ports in network byte order to match struct dns_request_key. */
-	meta->sport = (__u16)(((__u16)udp[1] << 8) | (__u16)udp[0]);
 #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
 	meta->sport = ((__u16)udp[0] << 8) | (__u16)udp[1];
 	meta->dport = ((__u16)udp[2] << 8) | (__u16)udp[3];
 #else
+	meta->sport = (__u16)(((__u16)udp[1] << 8) | (__u16)udp[0]);
 	meta->dport = (__u16)(((__u16)udp[3] << 8) | (__u16)udp[2]);
 #endif
 	sport = ((__u16)udp[0] << 8) | (__u16)udp[1];
@@ -413,6 +413,21 @@ dns_validate_packet(const __u8 *data, const __u8 *data_end, __u32 wire_len,
 	meta->dns_off = l4_off + 8;
 	meta->dns_end = dns_end;
 	return DNS_PKT_OK;
+}
+
+DNS_INLINE bool dns_hdr_bounded(const __u8 *data, const __u8 *data_end,
+				__u32 dns_off, __u32 dns_end)
+{
+	const __u8 *hdr;
+
+	barrier_var(dns_off);
+	barrier_var(dns_end);
+	if (dns_end > DNS_MAX_PACKET_BYTES ||
+	    dns_off > DNS_MAX_PACKET_BYTES - sizeof(struct dns_hdr) ||
+	    dns_off + sizeof(struct dns_hdr) > dns_end)
+		return false;
+	hdr = data + dns_off;
+	return hdr + sizeof(struct dns_hdr) <= data_end;
 }
 
 /*

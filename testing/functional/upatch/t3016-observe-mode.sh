@@ -159,6 +159,32 @@ test_expect_success 'shirudo build refuses --observe combined with --unload' '
 		-o "$WORK/bad.unload.upatch" >/dev/null 2>&1
 '
 
+test_expect_success 'enforce build zeros nonzero shirudo_observe_mode and refuses non-.rodata or non-32-bit int' '
+	sed "s/shirudo_observe_mode = 0/shirudo_observe_mode = 1/" \
+		"$WORK/shield.bpf.c" >"$WORK/init-one.bpf.c" &&
+	build_shield "$WORK/init-one.bpf.c" --name cve-shield \
+		-o "$WORK/init-one-enf.upatch" >/dev/null 2>&1 &&
+	python3 - "$WORK/init-one-enf.upatch" "$WORK/enforce.upatch" <<-\PY &&
+	import struct, sys
+	for p in sys.argv[1:]:
+	    b = open(p, "rb").read()
+	    data_off, = struct.unpack_from("<I", b, 328)
+	    rodata_off, = struct.unpack_from("<I", b, 348)
+	    val, = struct.unpack_from("<I", b, data_off + rodata_off)
+	    assert val == 0, (p, val)
+	PY
+	sed "s/const volatile __u32 shirudo_observe_mode = 0/volatile __u32 shirudo_observe_mode = 1/" \
+		"$WORK/shield.bpf.c" >"$WORK/in-data.bpf.c" &&
+	! build_shield "$WORK/in-data.bpf.c" --name bad-data \
+		-o "$WORK/in-data.upatch" >"$WORK/in-data.log" 2>&1 &&
+	grep -q "shirudo_observe_mode must be in .rodata" "$WORK/in-data.log" &&
+	sed "s/const volatile __u32 shirudo_observe_mode = 0/const volatile __u64 shirudo_observe_mode = 0/" \
+		"$WORK/shield.bpf.c" >"$WORK/u64.bpf.c" &&
+	! build_shield "$WORK/u64.bpf.c" --name bad-u64 \
+		-o "$WORK/u64.upatch" >"$WORK/u64.log" 2>&1 &&
+	grep -q "must be a 32-bit integer" "$WORK/u64.log"
+'
+
 test_expect_success 'shirudo upatch check passes valid reproducer snapshots and reports stack IDs' '
 	cat >"$WORK/before.json" <<-\EOF &&
 	{"activity":100,"hits":0,"enforced":0,"observed":0,"missed_runs":0,"stack_ids":[]}

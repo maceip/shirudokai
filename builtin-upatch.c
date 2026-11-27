@@ -4810,6 +4810,10 @@ static int cmd_upatch_map(int argc, const char **argv)
 			opt_usage(&p, "invalid upatch name '%s'", upatch);
 			return EXIT_USAGE;
 		}
+		if (!upatch_map_name_valid(map)) {
+			opt_usage(&p, "invalid map name '%s'", map);
+			return EXIT_USAGE;
+		}
 		return export_one_map(upatch, map, json_output, json_path, otel,
 				      &otel_opts, show_full, peek,
 				      !json_output && !otel);
@@ -5530,12 +5534,13 @@ static int reconcile_attach(int prog_fd, const char *name,
 	return 0;
 }
 
-static int reconcile_prog_failed(const char *name, int err,
+static int reconcile_prog_failed(const char *name, bool tcx, int err,
 				 struct op_report *rep)
 {
-	pr_err("upatch reconcile: an XDP program of %s: %s", name,
-	       strerror(-err));
+	pr_err("upatch reconcile: %s program of %s: %s",
+	       tcx ? "a TCX" : "an XDP", name, strerror(-err));
 	rep_fail(rep, "pre_flight", cat_from_pin_errno(-err), err,
+		 tcx ? "cannot open a TCX program pin" :
 		 "cannot open an XDP program pin");
 	return 1;
 }
@@ -5619,22 +5624,25 @@ static int reconcile_walk(const struct xdp_work *w,
 	struct reconcile_pass pass = {
 		.name = w->name, .next = next, .needed = needed, .rep = rep,
 	};
+	bool tcx = false;
 	int ret;
 
 	ret = upatch_xdp_each_uncovered(w->name, w->specs, w->u.hdr.nr_progs,
 					devices, count, reconcile_device, &pass);
-	if (ret == 0)
+	if (ret == 0) {
+		tcx = true;
 		ret = upatch_tcx_each_uncovered(w->name, w->specs,
 						w->u.hdr.nr_progs, devices,
 						count, reconcile_tcx_device,
 						&pass);
+	}
 	if (ret >= 0)
 		return ret;
 	if (!next) {
 		*needed = true;
 		return 0;
 	}
-	return reconcile_prog_failed(w->name, ret, rep);
+	return reconcile_prog_failed(w->name, tcx, ret, rep);
 }
 
 static int reconcile_apply(const struct xdp_work *w,
@@ -5812,8 +5820,8 @@ static const struct help_section upatch_check_sections[] = {
 
 static const struct help upatch_check_help = {
 	.usage      = "shirudo upatch check [<name>] --before <file> --after-exploit <file>\n"
-		      "                            [--after-benign <file>] [--json]\n"
-		      "       shirudo upatch check <name> --test-input <file> [--benign-input <file>]\n"
+		      "                            --after-benign <file> [--json]\n"
+		      "       shirudo upatch check <name> --test-input <file> --benign-input <file>\n"
 		      "                            [--counters-map <map>] [--stack-map <map>] [--json]",
 	.summary    = "Verify a shield in observe or test-run mode before switching\n"
 		      "to enforcement: checks exploit_hits_delta > 0,\n"
@@ -6048,7 +6056,7 @@ static int cmd_upatch_events(int argc, const char **argv)
 		opt_usage(&p, "invalid upatch name '%s'", upatch);
 		return EXIT_USAGE;
 	}
-	if (map && (!map[0] || strchr(map, '/') || strlen(map) > MAP_NAME_MAX)) {
+	if (map && !upatch_map_name_valid(map)) {
 		opt_usage(&p, "invalid map name '%s'", map);
 		return EXIT_USAGE;
 	}
@@ -6120,7 +6128,8 @@ static const struct help_item upatch_subcmds[] = {
 	{ "map",    "read pinned map contents (target-only; BTF type-aware)" },
 	{ "check",  "verify shield observe/test-run telemetry around a reproducer" },
 	{ "events", "read queued records from pinned ringbuf maps (target-only; one-shot)" },
-	{ "reconcile", "attach loaded XDP upatches to devices that appeared later (target-only)" },
+	{ "reconcile",
+	  "attach loaded XDP and TCX upatches to devices that appeared later (target-only)" },
 };
 
 static const struct help_section upatch_help_sections[] = {

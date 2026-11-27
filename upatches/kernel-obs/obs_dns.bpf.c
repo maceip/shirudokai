@@ -16,15 +16,16 @@ BUILD_BUG_ON_MSG(sizeof(struct dns_request) != 296,
 		 "dns request value layout must remain 8-byte aligned");
 
 struct {
-	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, DNS_REQ_MAP_ENTRIES);
 	__type(key, struct dns_request_key);
 	__type(value, struct dns_request);
 } obs_i_dns_req SEC(".maps");
 
+/* Slot 0 is egress query scratch; slot 1 is ingress response scratch. */
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-	__uint(max_entries, 1);
+	__uint(max_entries, 2);
 	__type(key, __u32);
 	__type(value, struct dns_scratch);
 } obs_i_dns_tmp SEC(".maps");
@@ -61,58 +62,48 @@ static __always_inline void dns_debug_inc(__u32 key)
 
 static __always_inline void dns_req_live_inc(void)
 {
-	__u32 key = DNS_DBG_REQ_LIVE, tries;
+	__u32 key = DNS_DBG_REQ_LIVE;
 	__u64 *live;
 
 	live = bpf_map_lookup_elem(&obs_i_dns_dbg, &key);
-	if (!live)
-		return;
-#pragma clang loop unroll(disable)
-	for (tries = 0; tries < 8; tries++) {
-		__u64 cur = READ_ONCE(*live);
-
-		if (cur >= DNS_REQ_MAP_ENTRIES) {
-			dns_debug_inc(DNS_DBG_REQ_LRU_EVICT);
-			return;
-		}
-		if (__sync_val_compare_and_swap(live, cur, cur + 1) == cur)
-			return;
-	}
+	if (live)
+		__sync_fetch_and_add(live, 1);
 }
 
-static __always_inline void dns_req_delete(const struct dns_request_key *req_key)
+static __always_inline bool dns_req_delete(const struct dns_request_key *req_key)
 {
-	__u32 key = DNS_DBG_REQ_LIVE, tries;
+	__u32 key = DNS_DBG_REQ_LIVE;
 	__u64 *live;
 
 	if (bpf_map_delete_elem(&obs_i_dns_req, req_key) != 0)
-		return;
+		return false;
 	live = bpf_map_lookup_elem(&obs_i_dns_dbg, &key);
-	if (!live)
-		return;
-#pragma clang loop unroll(disable)
-	for (tries = 0; tries < 8; tries++) {
-		__u64 cur = READ_ONCE(*live);
-
-		if (cur == 0)
-			return;
-		if (__sync_val_compare_and_swap(live, cur, cur - 1) == cur)
-			return;
-	}
+	if (live)
+		__sync_fetch_and_add(live, (__u64)-1);
+	return true;
 }
 
 __attribute__((noinline)) void
 obs_dns_emit_name(struct serial_chunk *chunk, __u32 base,
 		  const struct dns_name __arena *stat)
 {
+	__u64 seen;
 	int i;
 
 	if (!chunk || !stat ||
 	    base > SERIAL_CHUNK_PAYLOAD - sizeof(struct dns_name))
 		return;
 	barrier_var(base);
-	*(__u64 *)&chunk->data[base] = stat->seen;
-	*(__u64 *)&chunk->data[base + 8] = stat->last_ns;
+	seen = __atomic_load_n(&stat->seen, __ATOMIC_ACQUIRE);
+	*(__u64 *)&chunk->data[base] = seen;
+	if (!seen) {
+		*(__u64 *)&chunk->data[base + 8] = 0;
+#pragma clang loop unroll(disable)
+		for (i = 0; i < DNS_NAME_BYTES; i++)
+			chunk->data[base + 16 + i] = 0;
+		return;
+	}
+	*(__u64 *)&chunk->data[base + 8] = READ_ONCE(stat->last_ns);
 #pragma clang loop unroll(disable)
 	for (i = 0; i < DNS_NAME_BYTES; i++)
 		chunk->data[base + 16 + i] = stat->name[i];
@@ -178,13 +169,31 @@ obs_dns_name_copy_to_arena(char __arena *dst, const struct dns_request *req)
 	dst[DNS_MAX_NAME_CHARS] = 0;
 }
 
+__attribute__((noinline)) void
+obs_dns_copy_request(struct dns_request *dst, const struct dns_request *src)
+{
+	int i;
+
+	if (!dst || !src)
+		return;
+	dst->exe = src->exe;
+	dst->cgroup = src->cgroup;
+	dst->sent_ns = src->sent_ns;
+#pragma clang loop unroll(disable)
+	for (i = 0; i < DNS_NAME_BYTES; i++)
+		dst->name[i] = src->name[i];
+	dst->qtype = src->qtype;
+	dst->qclass = src->qclass;
+	dst->_pad = 0;
+}
+
 static __always_inline void dns_name_set(struct dns_name __arena *stat,
 					 const struct dns_request *req,
 					 __u64 now)
 {
-	stat->seen = 1;
-	stat->last_ns = now;
 	obs_dns_name_copy_to_arena(stat->name, req);
+	WRITE_ONCE(stat->last_ns, now);
+	__atomic_store_n(&stat->seen, 1, __ATOMIC_RELEASE);
 }
 
 /* Up to four names per address; the oldest gives way to a new one. */
@@ -198,16 +207,20 @@ static __always_inline void dns_names_touch(struct dns_entry __arena *e,
 
 #pragma clang loop unroll(disable)
 	for (i = 0; i < DNS_MAX_NAMES_PER_IP; i++) {
+		__u64 seen, last_ns;
+
 		stat = &e->val.names[i];
-		if (stat->seen && obs_dns_name_equal_arena(stat->name, req)) {
+		seen = __atomic_load_n(&stat->seen, __ATOMIC_ACQUIRE);
+		if (seen && obs_dns_name_equal_arena(stat->name, req)) {
 			__sync_fetch_and_add(&stat->seen, 1);
-			stat->last_ns = now;
+			WRITE_ONCE(stat->last_ns, now);
 			return;
 		}
-		if (!stat->seen && !empty_stat)
+		if (!seen && !empty_stat)
 			empty_stat = stat;
-		if (stat->last_ns < oldest) {
-			oldest = stat->last_ns;
+		last_ns = READ_ONCE(stat->last_ns);
+		if (last_ns < oldest) {
+			oldest = last_ns;
 			oldest_stat = stat;
 		}
 	}
@@ -467,25 +480,27 @@ static __always_inline void dns_store_pending_query(struct dns_request_key *req_
 	}
 	if (err == -EEXIST) {
 		existing = bpf_map_lookup_elem(&obs_i_dns_req, req_key);
-		if (existing && dns_is_req_stale(existing, now_ns)) {
+		if (!existing || !dns_is_req_stale(existing, now_ns))
+			return;
+		if (dns_req_delete(req_key))
 			dns_debug_inc(DNS_DBG_RESP_STALE);
-			dns_req_delete(req_key);
-			err = bpf_map_update_elem(&obs_i_dns_req, req_key, req,
-						  BPF_NOEXIST);
-			if (err == 0) {
-				dns_req_live_inc();
-				dns_debug_inc(DNS_DBG_QUERY_STORED);
-				return;
-			}
+		err = bpf_map_update_elem(&obs_i_dns_req, req_key, req,
+					  BPF_NOEXIST);
+		if (err == 0) {
+			dns_req_live_inc();
+			dns_debug_inc(DNS_DBG_QUERY_STORED);
+			return;
 		}
+		if (err == -EEXIST)
+			return;
 	}
 	dns_debug_inc(DNS_DBG_REQ_TABLE_FULL);
 }
 
 /*
- * The scratch is per CPU and unguarded: kernel-obs is written for a kernel
- * without preemptible RCU, where no egress run starts on a CPU before
- * another one there ends.
+ * The scratch is per CPU and unguarded, with separate slots for egress and
+ * ingress: kernel-obs is written for a kernel without preemptible RCU,
+ * where neither two egress runs nor two ingress runs interleave on a CPU.
  */
 static __always_inline void dns_parse_query_payload(struct __sk_buff *skb,
 						    __u32 dns_off,
@@ -493,7 +508,7 @@ static __always_inline void dns_parse_query_payload(struct __sk_buff *skb,
 						    struct dns_request_key *req_key)
 {
 	const __u8 *data = dns_skb_data(skb), *data_end = dns_skb_data_end(skb);
-	__u16 id, flags, qdcount, qtype, qclass, arcount;
+	__u16 id, flags, qdcount, qtype, qclass;
 	struct dns_scratch *scratch;
 	struct obs_ident ident = {};
 	__u64 now_ns = bpf_ktime_get_ns();
@@ -505,10 +520,10 @@ static __always_inline void dns_parse_query_payload(struct __sk_buff *skb,
 		dns_debug_inc(DNS_DBG_QUERY_NO_UID);
 		return;
 	}
-	if (!dns_read_u16_bounded(data, data_end, dns_off, dns_end, &id) ||
+	if (!dns_hdr_bounded(data, data_end, dns_off, dns_end) ||
+	    !dns_read_u16_bounded(data, data_end, dns_off, dns_end, &id) ||
 	    !dns_read_u16_bounded(data, data_end, dns_off + 2, dns_end, &flags) ||
-	    !dns_read_u16_bounded(data, data_end, dns_off + 4, dns_end, &qdcount) ||
-	    !dns_read_u16_bounded(data, data_end, dns_off + 10, dns_end, &arcount)) {
+	    !dns_read_u16_bounded(data, data_end, dns_off + 4, dns_end, &qdcount)) {
 		dns_debug_inc(DNS_DBG_QUERY_HDR_FAIL);
 		return;
 	}
@@ -626,19 +641,20 @@ static __always_inline void dns_parse_response_payload(struct __sk_buff *skb,
 						       struct dns_request_key *req_key)
 {
 	const __u8 *data = dns_skb_data(skb), *data_end = dns_skb_data_end(skb);
-	__u16 id, flags, qdcount, ancount, arcount, qtype, qclass;
+	__u16 id, flags, qdcount, ancount, qtype, qclass;
 	__u64 now = obs_now(), now_ns = bpf_ktime_get_ns();
+	struct dns_scratch *scratch;
 	struct dns_request *req;
-	__u32 off, next = 0;
+	__u32 one = 1, off, next = 0;
 	bool bad_flags = false;
 	int qrc, answer_off, i;
 
 	dns_debug_inc(DNS_DBG_RESP_PACKET);
-	if (!dns_read_u16_bounded(data, data_end, dns_off, dns_end, &id) ||
+	if (!dns_hdr_bounded(data, data_end, dns_off, dns_end) ||
+	    !dns_read_u16_bounded(data, data_end, dns_off, dns_end, &id) ||
 	    !dns_read_u16_bounded(data, data_end, dns_off + 2, dns_end, &flags) ||
 	    !dns_read_u16_bounded(data, data_end, dns_off + 4, dns_end, &qdcount) ||
-	    !dns_read_u16_bounded(data, data_end, dns_off + 6, dns_end, &ancount) ||
-	    !dns_read_u16_bounded(data, data_end, dns_off + 10, dns_end, &arcount)) {
+	    !dns_read_u16_bounded(data, data_end, dns_off + 6, dns_end, &ancount)) {
 		dns_debug_inc(DNS_DBG_RESP_HDR_FAIL);
 		return;
 	}
@@ -663,6 +679,9 @@ static __always_inline void dns_parse_response_payload(struct __sk_buff *skb,
 		return;
 	}
 
+	scratch = bpf_map_lookup_elem(&obs_i_dns_tmp, &one);
+	if (!scratch)
+		return;
 	req_key->id = id;
 	req = bpf_map_lookup_elem(&obs_i_dns_req, req_key);
 	if (!req) {
@@ -672,15 +691,18 @@ static __always_inline void dns_parse_response_payload(struct __sk_buff *skb,
 			dns_debug_inc(DNS_DBG_RESP_REQ_MISS);
 		return;
 	}
-	if (dns_is_req_stale(req, now_ns)) {
-		dns_debug_inc(DNS_DBG_RESP_STALE);
-		dns_req_delete(req_key);
-		dns_debug_inc(DNS_DBG_RESP_DELETE);
+	obs_dns_copy_request(&scratch->req, req);
+	if (dns_is_req_stale(&scratch->req, now_ns)) {
+		if (dns_req_delete(req_key)) {
+			dns_debug_inc(DNS_DBG_RESP_STALE);
+			dns_debug_inc(DNS_DBG_RESP_DELETE);
+		}
 		return;
 	}
 
 	qrc = dns_match_qname(skb, dns_off, dns_end,
-			      dns_off + sizeof(struct dns_hdr), req, &next);
+			      dns_off + sizeof(struct dns_hdr), &scratch->req,
+			      &next);
 	if (qrc < 0) {
 		if (qrc == -EBADMSG)
 			dns_debug_inc(DNS_DBG_RESP_QNAME_MISMATCH);
@@ -695,29 +717,28 @@ static __always_inline void dns_parse_response_payload(struct __sk_buff *skb,
 		dns_debug_inc(DNS_DBG_RESP_QTYPE_READ_FAIL);
 		return;
 	}
-	if (qtype != req->qtype) {
+	if (qtype != scratch->req.qtype) {
 		dns_debug_inc(DNS_DBG_RESP_QTYPE_MISMATCH);
 		return;
 	}
-	if (qclass != DNS_CLASS_IN || qclass != req->qclass) {
+	if (qclass != DNS_CLASS_IN || qclass != scratch->req.qclass) {
 		dns_debug_inc(DNS_DBG_RESP_QCLASS_MISMATCH);
 		return;
 	}
 
 	/*
-	 * A correlated response carrying TC=1, non-zero OPCODE, or non-zero
-	 * RCODE (e.g. NXDOMAIN or truncated UDP fallback to TCP) retires the
-	 * pending query without recording partial or untrusted answers.
+	 * Consume the pending entry once before walking answers so no racing
+	 * response or slot reuse on another CPU can alter scratch->req or
+	 * double-record answers. Correlated TC=1, bad OPCODE, bad RCODE, or
+	 * empty-answer responses retire the query without recording answers.
 	 */
-	if (bad_flags) {
-		dns_req_delete(req_key);
-		dns_debug_inc(DNS_DBG_RESP_DELETE);
+	if (!dns_req_delete(req_key))
 		return;
-	}
+	dns_debug_inc(DNS_DBG_RESP_DELETE);
+	if (bad_flags)
+		return;
 	if (ancount == 0) {
 		dns_debug_inc(DNS_DBG_RESP_NO_ANSWER);
-		dns_req_delete(req_key);
-		dns_debug_inc(DNS_DBG_RESP_DELETE);
 		return;
 	}
 
@@ -726,17 +747,14 @@ static __always_inline void dns_parse_response_payload(struct __sk_buff *skb,
 	for (i = 0; i < DNS_MAX_ANSWERS; i++) {
 		if (i >= ancount)
 			break;
-		answer_off = obs_dns_parse_answer(skb, req, dns_off, dns_end,
-						  off, now);
+		answer_off = obs_dns_parse_answer(skb, &scratch->req, dns_off,
+						  dns_end, off, now);
 		if (answer_off < 0)
 			break;
 		off = (__u32)answer_off;
 	}
 	if (i == DNS_MAX_ANSWERS && ancount > DNS_MAX_ANSWERS)
 		dns_debug_inc(DNS_DBG_RESP_ANSWER_CAP);
-
-	dns_req_delete(req_key);
-	dns_debug_inc(DNS_DBG_RESP_DELETE);
 }
 
 /*

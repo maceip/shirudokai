@@ -421,7 +421,8 @@ static int upatch_parse(const void *data, size_t size,
 		goto err;
 	}
 	if ((out->hdr.flags & DIRECTIVE_OBSERVE) &&
-	    (out->hdr.flags & DIRECTIVE_UNLOAD)) {
+	    ((out->hdr.flags & DIRECTIVE_UNLOAD) ||
+	     out->hdr.type == UPATCH_TYPE_JAVA)) {
 		ret = -EBADMSG;
 		goto err;
 	}

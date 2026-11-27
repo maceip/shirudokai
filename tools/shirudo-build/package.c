@@ -200,6 +200,10 @@ static int package_resign_symbols(const char *original,
 	    nr_symbols != nr_ranges || !strcmp(original, output) ||
 	    !strcmp(modified, output))
 		return -EINVAL;
+	for (i = 0; i < nr_symbols; i++) {
+		if (!symbols[i] || !strcmp(symbols[i], "shirudo_observe_mode"))
+			return -EINVAL;
+	}
 	ret = upatch_open(original, &src);
 	if (ret)
 		return ret;
@@ -364,7 +368,7 @@ int build_package_patch_rodata(const char *input, const char *output,
 	int fd, ret;
 
 	if (!input || !output || !symbol || !value || !value_len ||
-	    !strcmp(input, output))
+	    !strcmp(input, output) || !strcmp(symbol, "shirudo_observe_mode"))
 		return -EINVAL;
 	ret = upatch_open(input, &src);
 	if (ret)
@@ -1550,15 +1554,21 @@ static int compose_signed_data(const void *data, __u32 data_len,
  */
 static int validate_struct_ops_maps(struct bpf_object *obj)
 {
+	__u32 nr_struct_ops = 0;
 	struct bpf_map *m;
 
 	bpf_object__for_each_map(m, obj) {
-		if (bpf_map__type(m) != BPF_MAP_TYPE_STRUCT_OPS ||
-		    (bpf_map__map_flags(m) & BPF_F_LINK))
+		if (bpf_map__type(m) != BPF_MAP_TYPE_STRUCT_OPS)
 			continue;
-		pr_err("struct_ops map '%s' must be in SEC(\".struct_ops.link\")",
-		       bpf_map__name(m));
-		return -EINVAL;
+		if (!(bpf_map__map_flags(m) & BPF_F_LINK)) {
+			pr_err("struct_ops map '%s' must be in SEC(\".struct_ops.link\")",
+			       bpf_map__name(m));
+			return -EINVAL;
+		}
+		if (++nr_struct_ops > 1) {
+			pr_err("at most one struct_ops map is supported per upatch");
+			return -EINVAL;
+		}
 	}
 	return 0;
 }
@@ -2159,92 +2169,109 @@ static int observe_mode_missing(void)
 }
 
 /*
- * In observe mode, rewrite `const volatile __u32 shirudo_observe_mode` in
- * .rodata to 1 before loader generation so the signed loader data and
- * payload_sha256 cover the rewritten value.
+ * Synchronize `const volatile __u32 shirudo_observe_mode` in .rodata with
+ * the build mode before loader generation: 1 for observe, 0 for enforce, so
+ * an enforce build always zeros the flag even if the source initialized it
+ * to 1, and any placement outside .rodata or non-32-bit-int type is refused.
  */
-static int rewrite_observe_rodata(struct bpf_object *obj)
+static int sync_observe_rodata(struct bpf_object *obj, bool observe)
 {
-	const struct btf_var_secinfo *vars;
-	__le32 mode_val = cpu_to_le32(1);
-	const struct btf_type *sec;
-	struct bpf_map *rodata;
-	const struct btf *btf;
-	const __u8 *init_val;
-	size_t rodata_sz = 0;
+	__le32 mode_val = cpu_to_le32(observe ? 1U : 0U);
+	const struct btf *btf = bpf_object__btf(obj);
 	bool found = false;
-	__s32 sec_id;
-	__u8 *copy;
-	__u32 i;
-	int err;
+	__u32 id, cnt;
 
-	rodata = find_rodata(obj);
-	btf = bpf_object__btf(obj);
-	if (!rodata || !btf)
-		return observe_mode_missing();
-	sec_id = btf__find_by_name_kind(btf, ".rodata", BTF_KIND_DATASEC);
-	if (sec_id <= 0)
-		return observe_mode_missing();
-	sec = btf__type_by_id(btf, (__u32)sec_id);
-	if (!sec || BTF_INFO_KIND(sec->info) != BTF_KIND_DATASEC)
-		return -EINVAL;
-	init_val = bpf_map__initial_value(rodata, &rodata_sz);
-	if (!init_val || rodata_sz < sec->size)
-		return -EINVAL;
-	vars = (const struct btf_var_secinfo *)(sec + 1);
-	for (i = 0; i < BTF_INFO_VLEN(sec->info); i++) {
-		const struct btf_type *var, *vt;
-		__u32 off, sz, end, tid, depth;
-		const char *name;
+	if (!btf)
+		return observe ? observe_mode_missing() : 0;
+	cnt = btf__type_cnt(btf);
+	for (id = 1; id < cnt; id++) {
+		const struct btf_var_secinfo *vars;
+		const struct btf_type *sec;
+		const char *sec_name;
+		__u32 i, vlen;
 
-		var = btf__type_by_id(btf, vars[i].type);
-		if (!var || BTF_INFO_KIND(var->info) != BTF_KIND_VAR)
+		sec = btf__type_by_id(btf, id);
+		if (!sec || BTF_INFO_KIND(sec->info) != BTF_KIND_DATASEC)
 			continue;
-		name = btf__name_by_offset(btf, var->name_off);
-		if (!name || strcmp(name, "shirudo_observe_mode") != 0)
-			continue;
-		if (found)
-			return -EEXIST;
-		off = vars[i].offset;
-		sz = vars[i].size;
-		tid = var->type;
-		for (depth = 0; depth < 8 && tid; depth++) {
+		sec_name = btf__name_by_offset(btf, sec->name_off);
+		vars = (const struct btf_var_secinfo *)(sec + 1);
+		vlen = BTF_INFO_VLEN(sec->info);
+		for (i = 0; i < vlen; i++) {
+			const struct btf_type *var, *vt;
+			__u32 off, sz, end, tid, depth, enc;
+			struct bpf_map *rodata;
+			const __u8 *init_val;
+			size_t rodata_sz = 0;
+			const char *name;
+			__u8 *copy;
+			int err;
+
+			var = btf__type_by_id(btf, vars[i].type);
+			if (!var || BTF_INFO_KIND(var->info) != BTF_KIND_VAR)
+				continue;
+			name = btf__name_by_offset(btf, var->name_off);
+			if (!name || strcmp(name, "shirudo_observe_mode") != 0)
+				continue;
+			if (found)
+				return -EINVAL;
+			if (!sec_name || strcmp(sec_name, ".rodata") != 0) {
+				pr_err("shirudo_observe_mode must be in .rodata, not '%s'",
+				       sec_name ? sec_name : "");
+				return -EINVAL;
+			}
+			off = vars[i].offset;
+			sz = vars[i].size;
+			tid = var->type;
+			for (depth = 0; depth < 8 && tid; depth++) {
+				vt = btf__type_by_id(btf, tid);
+				if (!vt)
+					break;
+				if (BTF_INFO_KIND(vt->info) == BTF_KIND_TYPEDEF ||
+				    BTF_INFO_KIND(vt->info) == BTF_KIND_VOLATILE ||
+				    BTF_INFO_KIND(vt->info) == BTF_KIND_CONST ||
+				    BTF_INFO_KIND(vt->info) == BTF_KIND_RESTRICT ||
+				    BTF_INFO_KIND(vt->info) == BTF_KIND_TYPE_TAG)
+					tid = vt->type;
+				else
+					break;
+			}
 			vt = btf__type_by_id(btf, tid);
-			if (!vt)
-				break;
-			if (BTF_INFO_KIND(vt->info) == BTF_KIND_TYPEDEF ||
-			    BTF_INFO_KIND(vt->info) == BTF_KIND_VOLATILE ||
-			    BTF_INFO_KIND(vt->info) == BTF_KIND_CONST ||
-			    BTF_INFO_KIND(vt->info) == BTF_KIND_RESTRICT ||
-			    BTF_INFO_KIND(vt->info) == BTF_KIND_TYPE_TAG)
-				tid = vt->type;
-			else
-				break;
+			if (sz != sizeof(__u32) || !vt ||
+			    BTF_INFO_KIND(vt->info) != BTF_KIND_INT ||
+			    vt->size != sizeof(__u32)) {
+				pr_err("shirudo_observe_mode in .rodata must be a 32-bit integer");
+				return -EINVAL;
+			}
+			enc = *(const __u32 *)(vt + 1);
+			if (BTF_INT_OFFSET(enc) != 0 ||
+			    BTF_INT_BITS(enc) != 32) {
+				pr_err("shirudo_observe_mode in .rodata must be a 32-bit integer");
+				return -EINVAL;
+			}
+			rodata = find_rodata(obj);
+			if (!rodata)
+				return -EINVAL;
+			init_val = bpf_map__initial_value(rodata, &rodata_sz);
+			if (!init_val || rodata_sz < sec->size ||
+			    check_add_overflow(off, sz, &end) ||
+			    end > rodata_sz)
+				return -EINVAL;
+			copy = xmalloc(rodata_sz);
+			if (!copy)
+				return -ENOMEM;
+			memcpy(copy, init_val, rodata_sz);
+			memcpy(copy + off, &mode_val, sizeof(mode_val));
+			err = bpf_map__set_initial_value(rodata, copy,
+							 rodata_sz);
+			xfree(copy, rodata_sz);
+			if (err) {
+				pr_err("set_initial_value(.rodata): %d", err);
+				return err;
+			}
+			found = true;
 		}
-		vt = btf__type_by_id(btf, tid);
-		if (sz != sizeof(__u32) || !vt ||
-		    (BTF_INFO_KIND(vt->info) != BTF_KIND_INT &&
-		     BTF_INFO_KIND(vt->info) != BTF_KIND_ENUM) ||
-		    vt->size != sizeof(__u32)) {
-			pr_err("shirudo_observe_mode in .rodata must be a 32-bit integer");
-			return -EINVAL;
-		}
-		if (check_add_overflow(off, sz, &end) || end > rodata_sz)
-			return -EINVAL;
-		copy = xmalloc(rodata_sz);
-		if (!copy)
-			return -ENOMEM;
-		memcpy(copy, init_val, rodata_sz);
-		memcpy(copy + off, &mode_val, sizeof(mode_val));
-		err = bpf_map__set_initial_value(rodata, copy, rodata_sz);
-		xfree(copy, rodata_sz);
-		if (err) {
-			pr_err("set_initial_value(.rodata): %d", err);
-			return err;
-		}
-		found = true;
 	}
-	return found ? 0 : observe_mode_missing();
+	return found || !observe ? 0 : observe_mode_missing();
 }
 
 /*
@@ -2315,11 +2342,9 @@ static int finalize_object(struct bpf_object *obj, const char *out_path,
 		free_decoder_set(&decoders);
 		if (err)
 			goto out;
-		if (flags & DIRECTIVE_OBSERVE) {
-			err = rewrite_observe_rodata(obj);
-			if (err)
-				goto out;
-		}
+		err = sync_observe_rodata(obj, (flags & DIRECTIVE_OBSERVE) != 0);
+		if (err)
+			goto out;
 	}
 
 	opts.gen_hash = true;

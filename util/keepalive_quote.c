@@ -40,6 +40,7 @@ noinline_for_stack int
 tpm_quote_digest(const __u8 digest[CRYPTO_SHA256_LEN], struct tpm_key *ak,
 		 struct tpm_attestation *att)
 {
+	struct tpm_key key = {};
 	struct tpm *tpm = NULL;
 	int ret;
 
@@ -48,10 +49,14 @@ tpm_quote_digest(const __u8 digest[CRYPTO_SHA256_LEN], struct tpm_key *ak,
 		return ret;
 	*ak = (struct tpm_key){};
 	*att = (struct tpm_attestation){};
-	ret = tpm_ak_create(tpm, ak);
+	ret = tpm_ak_create(tpm, &key);
 	if (!ret)
-		ret = tpm_quote(tpm, ak, digest, CRYPTO_SHA256_LEN, 0, att);
-	tpm_key_flush(tpm, ak);
+		ret = tpm_quote(tpm, &key, digest, CRYPTO_SHA256_LEN, 0, att);
+	if (!ret) {
+		*ak = key;
+		ak->handle = 0;
+	}
+	tpm_key_flush(tpm, &key);
 	tpm_close(tpm);
 	return ret;
 }

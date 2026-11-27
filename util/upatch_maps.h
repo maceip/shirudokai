@@ -130,6 +130,8 @@ void upatch_maps_emit_json_object(struct json_emit *e,
 				  const struct map_view *v);
 
 bool upatch_map_is_percpu(__u32 type);
+int  upatch_nproc_possible(void);
+bool upatch_map_name_valid(const char *name);
 __u32 upatch_map_value_stride(const struct map_view *v);
 char *upatch_map_format_cell(const struct map_view *v,
 			     __u32 type_id, const void *value,

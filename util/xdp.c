@@ -408,8 +408,19 @@ bool xdp_device_match_glob(const struct xdp_device *dev, const char *filter)
 bool xdp_device_selected_filtered(const struct xdp_device *devs, size_t count,
 				  size_t index, __u32 mask, const char *filter)
 {
-	return xdp_device_selected(devs, count, index, mask) &&
-	       xdp_device_match_glob(&devs[index], filter);
+	const struct xdp_device *dev = &devs[index];
+	const struct xdp_device *peer;
+
+	if (dev->unresolved || !(xdp_device_class(dev) & mask) ||
+	    !xdp_device_match_glob(dev, filter))
+		return false;
+	if (strcmp(dev->kind, "veth") || dev->peer_other_netns)
+		return true;
+	peer = veth_peer(devs, count, dev);
+	if (!peer)
+		return false;
+	return !xdp_device_match_glob(peer, filter) ||
+	       dev->ifindex < peer->ifindex;
 }
 
 enum xdp_reconcile xdp_reconcile_action(bool selected, __u32 attached,
@@ -869,6 +880,8 @@ int xdp_device_verify(const struct xdp_device *expected)
 	if (dev->ifindex != expected->ifindex ||
 	    dev->peer_ifindex != expected->peer_ifindex ||
 	    dev->peer_other_netns != expected->peer_other_netns ||
+	    strcmp(dev->name, expected->name) ||
+	    strcmp(dev->driver, expected->driver) ||
 	    strcmp(dev->kind, expected->kind) ||
 	    xdp_device_class(dev) != xdp_device_class(expected))
 		ret = -EXDEV;

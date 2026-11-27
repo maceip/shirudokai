@@ -25,7 +25,7 @@
 #endif
 
 static const struct help build_help = {
-	.usage   = "shirudo build [--observe] <input.bpf.c|.bpf.o> [-o <output.upatch>] [options]\n"
+	.usage   = "shirudo build [--observe] <input.bpf.c|.bpf.o|.jar> [-o <output.upatch>] [options]\n"
 		   "       shirudo build --unload <upatch-name> [-o <output.upatch>] [options]",
 	.summary = "Build a signed BPF .upatch artifact ready\nfor target-side loading. "
 		   "Operator-only: "
