@@ -48,6 +48,10 @@ lookup goes on to the network as it would without the guard.
   "observe")` turns blocking off. The guard mitigates a bug in an
   application; it is no boundary against code that already runs in the
   JVM.
+- The agent reaches only JVMs started with `-javaagent` or
+  `JAVA_TOOL_OPTIONS` from `/run/environment.d/shirudo.conf` after the
+  upatch is loaded (see `Documentation/upatches/write/java-agents.rst`),
+  so the `Beefile` does not claim node-wide `fixes` for `CVE-2021-44228`.
 
 ## Build
 

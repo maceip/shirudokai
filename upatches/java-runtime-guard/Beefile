@@ -13,4 +13,3 @@ source = "java-runtime-guard.jar"
 
 [upatches.tree]
 id = "java-runtime-guard"
-fixes = ["CVE-2021-44228"]

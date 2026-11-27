@@ -279,7 +279,8 @@ signed config image.
        without external dependencies, ``java-runtime-guard`` builds a
        signed ``.bee`` package with pure JDK tools and passes
        ``RuntimeGuardTest`` under ``-javaagent`` across JNDI,
-       deserialization and shell guards in observe and enforce modes, and
+       deserialization and the ``ShellExecGuard`` helper in observe and
+       enforce modes, and
        ``web-worker-guard`` builds a signed BPF LSM ``.bee`` package that
        passes the ``bpf_`` Coccinelle rules
    * - ``t3018-sandbox-pod-llm``

@@ -150,7 +150,7 @@ test_expect_success 'java-runtime-guard builds signed .bee with pure JDK tools' 
 	PY
 '
 
-test_expect_success 'RuntimeGuardTest passes under -javaagent (JNDI, deserialization, exec, observe/enforce)' '
+test_expect_success 'RuntimeGuardTest passes under -javaagent (JNDI, deserialization, ShellExecGuard helper, observe/enforce)' '
 	mkdir -p "$WORK/jrg-test-classes" &&
 	javac --release 21 \
 		-cp "$WORK/java-runtime-guard/java-runtime-guard.jar" \
