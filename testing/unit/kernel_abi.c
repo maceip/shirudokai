@@ -12,6 +12,7 @@
 #include <shirudo/string.h>
 
 #include "kernel_abi.h"
+#include "../helper/kernel_patch_status.h"
 #include "loader.h"
 #include "unit.h"
 
@@ -344,11 +345,12 @@ static int add_carried_patch_btf(struct btf *btf, bool add_xattr,
 
 static int add_self_referential_dentry(struct btf *btf)
 {
-	int mod, ptr, st;
+	int mod, ptr, st, safe;
 
 	/*
 	 * Point d_parent to the upcoming struct dentry id (mod + 2) so the
-	 * synthetic BTF carries the self-referential struct pahole emits.
+	 * synthetic BTF carries the self-referential struct pahole emits,
+	 * plus BTF_TYPE_SAFE_TRUSTED_OR_NULL(struct dentry) from patch 0023.
 	 */
 	mod = btf__add_const(btf, 1);
 	if (mod < 0)
@@ -356,6 +358,11 @@ static int add_self_referential_dentry(struct btf *btf)
 	ptr = btf__add_ptr(btf, mod + 2);
 	st = btf__add_struct(btf, "dentry", 8);
 	if (ptr < 0 || st != mod + 2)
+		return -1;
+	if (btf__add_field(btf, "d_parent", ptr, 0, 0) < 0)
+		return -1;
+	safe = btf__add_struct(btf, "dentry__safe_trusted_or_null", 8);
+	if (safe < 0)
 		return -1;
 	if (btf__add_field(btf, "d_parent", ptr, 0, 0) < 0)
 		return -1;
@@ -390,8 +397,8 @@ static void patch_status_qualifies_complete_kernel(void)
 
 	EXPECT_EQ(kernel_abi_patch_status_btf(btf, &st), 0);
 	EXPECT_TRUE(st.signed_loader_abi);
-	EXPECT_UEQ(st.n_btf_ready, 2);
-	EXPECT_UEQ(st.n_runtime_only, 3);
+	EXPECT_UEQ(st.n_btf_ready, 3);
+	EXPECT_UEQ(st.n_runtime_only, 2);
 	EXPECT_UEQ(st.n_missing, 0);
 	EXPECT_UEQ(st.patches[KERNEL_PATCH_0020_TPM_COMMAND].number, 20);
 	EXPECT_EQ(st.patches[KERNEL_PATCH_0020_TPM_COMMAND].readiness,
@@ -401,7 +408,7 @@ static void patch_status_qualifies_complete_kernel(void)
 	EXPECT_EQ(st.patches[KERNEL_PATCH_0022_SLEEPABLE_INODE].readiness,
 		  KERNEL_PATCH_RUNTIME_ONLY);
 	EXPECT_EQ(st.patches[KERNEL_PATCH_0023_TRUSTED_D_PARENT].readiness,
-		  KERNEL_PATCH_RUNTIME_ONLY);
+		  KERNEL_PATCH_BTF_READY);
 	EXPECT_EQ(st.patches[KERNEL_PATCH_0024_MM_READ_ACCESS].readiness,
 		  KERNEL_PATCH_BTF_READY);
 	EXPECT_STREQ(kernel_patch_readiness_name(KERNEL_PATCH_BTF_READY),

@@ -75,13 +75,14 @@ stages the image for the test VM.
 Qualifying a target kernel
 --------------------------
 
-``kernel_abi_patch_status()`` in :src:`util/kernel_abi.c` classifies a
-kernel's ``vmlinux`` BTF against the signed-loader ABI and patches
-``0020`` through ``0024`` before boot or in CI: ``0020``
-(``bpf_lsm_tpm_command``) and ``0024`` (``bpf_lsm_mm_read_access``)
-appear directly in BTF as ``btf_ready`` or ``missing``, while ``0021``,
-``0022`` and ``0023`` change kfunc permission checks, the sleepable hook
-set and verifier pointer trust without changing BTF types
+``kernel_abi_patch_status()`` in :src:`testing/helper/kernel_patch_status.c`
+classifies a kernel's ``vmlinux`` BTF against the signed-loader ABI
+and patches ``0020`` through ``0024`` before boot or in CI: ``0020``
+(``bpf_lsm_tpm_command``), ``0023``
+(``struct dentry__safe_trusted_or_null.d_parent``) and ``0024``
+(``bpf_lsm_mm_read_access``) appear directly in BTF as ``btf_ready`` or
+``missing``, while ``0021`` and ``0022`` change kfunc permission checks
+and the sleepable hook set without changing BTF types
 (``runtime_only``).
 
 :src:`testing/helper/test-kernel-patches.c` and the functional test

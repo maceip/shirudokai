@@ -115,10 +115,13 @@ Kernel configuration
        patches carried by the shirudo kernel build
        (:doc:`/internals/kernel-patches`)
      - ``tpm_command`` lets shirudo refuse extensions of its register by
-       other processes, and ``mm_read_access`` and patches ``0021`` to
-       ``0023`` close read-only mm inspection and directory-label gaps.
-     - yes, ``signed_loader_kernel_abi`` and ``kernel_lsm_hooks`` before
-       ``init`` loads guards
+       other processes, ``mm_read_access`` closes read-only mm
+       inspection, and patches ``0021`` to ``0023`` close unprivileged
+       xattr reads, sleepable inode hooks and directory-label gaps.
+     - partly: ``signed_loader_kernel_abi`` checks ``0020`` and
+       ``0024``; ``kernel_lsm_hooks`` checks the hook names of
+       ``0022`` (sleepability and ``0023`` show when ``seal`` loads;
+       ``0021`` shows only at run time)
    * - ``CONFIG_I2C_CHARDEV=n`` and ``CONFIG_SPI_SPIDEV=n``, or neither
        reaching the TPM's bus
      - The ``tpm_command`` hook sees only commands written through the

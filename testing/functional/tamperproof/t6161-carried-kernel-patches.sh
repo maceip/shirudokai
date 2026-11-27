@@ -80,7 +80,7 @@ test_expect_success 'kernel_abi_patch_status reports BTF readiness for 0020..002
 	grep -qx "0020 tpm_command btf_ready" "$WORK/status" &&
 	grep -qx "0021 security_bpf_xattr runtime_only" "$WORK/status" &&
 	grep -qx "0022 sleepable_inode_hooks runtime_only" "$WORK/status" &&
-	grep -qx "0023 trusted_dentry_parent runtime_only" "$WORK/status" &&
+	grep -qx "0023 trusted_dentry_parent btf_ready" "$WORK/status" &&
 	grep -qx "0024 mm_read_access btf_ready" "$WORK/status"
 '
 
@@ -99,15 +99,25 @@ test_expect_success '0022 and 0023: sleepable inode hooks and trusted dentry->d_
 
 test_expect_success '0022: lsm.s/inode_copy_up refuses overlay copy-up of an uncached labelled file' '
 	mkdir -p "$WORK/ov" &&
-	! unshare -m sh -c "
-		mount --make-rprivate / &&
-		mount -t tmpfs tmpfs $WORK/ov &&
-		mkdir $WORK/ov/up $WORK/ov/work $WORK/ov/merged &&
+	unshare -m sh -s "$WORK/ov" "$MNT/ov_lower" <<-\EOF
+		set -e
+		ov=$1
+		lower=$2
+		mount --make-rprivate /
+		mount -t tmpfs tmpfs "$ov"
+		mkdir "$ov/up" "$ov/work" "$ov/merged"
 		mount -t overlay overlay \
-			-o lowerdir=$MNT/ov_lower,upperdir=$WORK/ov/up,workdir=$WORK/ov/work \
-			$WORK/ov/merged &&
-		: >>$WORK/ov/merged/copyup
-	" 2>/dev/null
+			-o "lowerdir=$lower,upperdir=$ov/up,workdir=$ov/work" \
+			"$ov/merged"
+		set +e
+		err=$( (: >>"$ov/merged/copyup") 2>&1 )
+		rc=$?
+		[ "$rc" -ne 0 ] || exit 1
+		case "$err" in
+		*[Pp]ermission\ denied*|*[Oo]peration\ not\ permitted*) exit 0 ;;
+		*) printf "%s\n" "$err" >&2; exit 1 ;;
+		esac
+	EOF
 '
 
 test_expect_success '0024: lsm/mm_read_access refuses read-only /proc/<pid> inspection under root' '

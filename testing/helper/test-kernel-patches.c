@@ -33,9 +33,11 @@
 #include <shirudo/misc.h>
 #include <shirudo/string.h>
 
-#include "kernel_abi.h"
+#define SHIRUDO_TPM_COPY(dst, src, len) (memcpy((dst), (src), (len)), 0)
+#include <shirudo/tpm_command.h>
 
-#define REGISTER_NV_INDEX	0x01818e00U
+#include "kernel_patch_status.h"
+
 #define TPM2_ST_NO_SESSIONS	0x8001U
 #define TPM2_ST_SESSIONS	0x8002U
 #define TPM2_CC_NV_EXTEND	0x00000136U
@@ -93,8 +95,8 @@ static size_t build_nv_extend(__u8 buf[64], __u32 declared_len)
 	put_be16(buf, TPM2_ST_SESSIONS);
 	put_be32(buf + 2, declared_len);
 	put_be32(buf + 6, TPM2_CC_NV_EXTEND);
-	put_be32(buf + 10, REGISTER_NV_INDEX);
-	put_be32(buf + 14, REGISTER_NV_INDEX);
+	put_be32(buf + 10, SHIRUDO_TPM_REGISTER_NV_INDEX);
+	put_be32(buf + 14, SHIRUDO_TPM_REGISTER_NV_INDEX);
 	put_be32(buf + 18, 9);
 	put_be32(buf + 22, 0x40000009U);
 	buf[30] = 1;

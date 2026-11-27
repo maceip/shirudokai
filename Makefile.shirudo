@@ -996,6 +996,7 @@ testing/helper/test-shared-bpf: testing/helper/test-shared-bpf.c
 	$(Q)$(CC) $(CFLAGS) -o $@ $^
 
 testing/helper/test-kernel-patches: testing/helper/test-kernel-patches.c \
+		testing/helper/kernel_patch_status.o \
 		util/kernel_abi.o util/string.o $(LIBBPF_A)
 	@printf '  CC      $@\n'
 	$(Q)$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LIBELF_LIBS) $(ZLIB_LIBS)
@@ -1187,6 +1188,10 @@ build/unit/jar: UNIT_OBJS := tools/shirudo-build/jar.o
 build/unit/jar: tools/shirudo-build/jar.o
 build/unit/bpm_feed: UNIT_OBJS := util/bpm_feed.o
 build/unit/bpm_feed: util/bpm_feed.o
+
+# Patch-status qualification lives with the test helper, outside the target.
+build/unit/kernel_abi: UNIT_OBJS := testing/helper/kernel_patch_status.o
+build/unit/kernel_abi: testing/helper/kernel_patch_status.o
 
 UNIT_COVERAGE_CFLAGS = $(if $(filter --coverage,$(CFLAGS)),-DUNIT_GCOV)
 

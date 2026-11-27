@@ -113,9 +113,9 @@ BTF and requires:
 The pre-flight runs it as ``signed_loader_kernel_abi``, and every
 ``upatch load`` and ``upatch unload`` without ``--no-precheck`` runs it
 before ``BPF_PROG_LOAD``. A failure is ``kernel_abi_unsupported``.
-``kernel_abi_patch_status()`` evaluates the signed-loader ABI and the
-BTF prerequisites of carried patches ``0020`` to ``0024`` together for
-release-kernel qualification.
+``kernel_abi_patch_status()`` in :src:`testing/helper/kernel_patch_status.c`
+evaluates the signed-loader ABI and the BTF prerequisites of carried
+patches ``0020`` to ``0024`` together for release-kernel qualification.
 Beside it the pre-flight runs ``kernel_lsm_hooks``: it reads the hooks
 of every ``lsm`` and ``lsm.s`` program from the embedded ``bpf2`` and
 ``seal`` objects and refuses a kernel whose BTF has no
@@ -377,12 +377,12 @@ LSM hooks
    * - ``inode_create``, ``inode_symlink``, ``inode_mknod``,
        ``inode_rename`` (all sleepable)
      - ``seal``
-     - Carried patch 0004, for the read of ``dentry->d_parent``
+     - Carried patch ``0023``, for the read of ``dentry->d_parent``
    * - ``inode_mkdir``, ``inode_link``, ``inode_set_acl``,
        ``inode_remove_acl``, ``inode_file_setattr``, ``inode_copy_up``
        (all sleepable)
      - ``seal``
-     - Carried patch 0003, and 0004 for ``inode_mkdir`` and
+     - Carried patch ``0022``, and ``0023`` for ``inode_mkdir`` and
        ``inode_link``
 
 A hook the kernel's BTF lacks fails the pre-flight check
