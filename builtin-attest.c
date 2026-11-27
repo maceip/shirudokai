@@ -615,26 +615,21 @@ static int report_emit_json(const char *report, const char *verdict)
 	return ret;
 }
 
-static int read_ek_pub(const char *path, __u8 **out, size_t *len)
+static int read_ek_pub(const char *path, struct ek_cloud_key *out)
 {
-	struct ek_cloud_key key;
+	__u8 *raw = NULL;
+	size_t len = 0;
 	int ret;
 
-	*out = NULL;
-	*len = 0;
-	ret = read_file(path, EK_CLOUD_MAX, out, len);
-	if (!ret && !*len) {
-		xfree(*out, 1);
-		*out = NULL;
+	ret = read_file(path, EK_CLOUD_MAX, &raw, &len);
+	if (!ret && !len) {
+		xfree(raw, 1);
+		raw = NULL;
 		ret = -ENODATA;
 	}
 	if (!ret) {
-		ret = ek_cloud_parse(*out, *len, &key);
-		if (ret) {
-			xfree(*out, *len + 1);
-			*out = NULL;
-			*len = 0;
-		}
+		ret = ek_cloud_parse(raw, len, out);
+		xfree(raw, len + 1);
 	}
 	if (ret)
 		pr_err("attest: --ek-pub %s: %s", path,
@@ -667,11 +662,11 @@ static int cmd_attest_verify(int argc, const char **argv)
 	__u8 cert_shas[KEYS_MAX][32];
 	size_t n_certs = 0;
 	__u8 tree_root[32] = {};
-	__u8 *ek_pub = NULL;
+	struct ek_cloud_key ek_key;
 	const char *evidence_path = NULL;
 	struct members m = {};
 	char *evidence = NULL, *report;
-	size_t evidence_len = 0, nonce_len = 0, ek_pub_len = 0;
+	size_t evidence_len = 0, nonce_len = 0;
 	struct opt_parser p;
 	bool have_cert = false, have_nonce = false, have_tree_root = false;
 	int err, ret = EXIT_USAGE, opt;
@@ -797,11 +792,9 @@ static int cmd_attest_verify(int argc, const char **argv)
 			x.have_ek_name = true;
 			break;
 		case VERIFY_EK_PUB:
-			if (read_ek_pub(p.value, &ek_pub, &ek_pub_len))
+			if (read_ek_pub(p.value, &ek_key))
 				goto out;
-			x.ek_pub = ek_pub;
-			x.ek_pub_len = ek_pub_len;
-			x.have_ek_pub = true;
+			x.ek_key = &ek_key;
 			break;
 		case VERIFY_EXPECT_BIND_PCR: {
 			const char *value;
@@ -894,7 +887,6 @@ static int cmd_attest_verify(int argc, const char **argv)
 		ret = err ? 1 : 0;
 	}
 out:
-	xfree(ek_pub, ek_pub ? ek_pub_len + 1 : 0);
 	xfree(evidence, evidence ? evidence_len + 1 : 0);
 	xfree(report, report ? ATTEST_REPORT_MAX : 0);
 	xfree(m.set, m.set ? ATTEST_MEMBERS_MAX * sizeof(*m.set) : 0);
@@ -907,11 +899,11 @@ static int cmd_attest_challenge(int argc, const char **argv)
 	struct attest_challenge_policy pol = {};
 	__u8 credential[TPM_CREDENTIAL_LEN];
 	__u8 ak_name[TPM_NAME_LEN], ek_name[TPM_NAME_LEN];
-	__u8 *ek_pub = NULL;
+	struct ek_cloud_key ek_key;
 	const char *evidence_path = NULL, *out_path = NULL;
 	char *evidence = NULL, *doc = NULL, *report;
 	char hex[2 * TPM_CREDENTIAL_LEN + 1];
-	size_t evidence_len = 0, len = 0, cap = 0, ek_pub_len = 0;
+	size_t evidence_len = 0, len = 0, cap = 0;
 	int err, ret = EXIT_USAGE, opt;
 	struct opt_parser p;
 
@@ -944,10 +936,9 @@ static int cmd_attest_challenge(int argc, const char **argv)
 			pol.ek_name = ek_name;
 			break;
 		case CHALLENGE_EK_PUB:
-			if (read_ek_pub(p.value, &ek_pub, &ek_pub_len))
+			if (read_ek_pub(p.value, &ek_key))
 				goto out;
-			pol.ek_pub = ek_pub;
-			pol.ek_pub_len = ek_pub_len;
+			pol.ek_key = &ek_key;
 			break;
 		case CHALLENGE_TRUST_PRESENTED_EK:
 			pol.trust_presented = true;
@@ -1008,7 +999,6 @@ static int cmd_attest_challenge(int argc, const char **argv)
 	ret = 0;
 out:
 	memzero_explicit(credential, sizeof(credential));
-	xfree(ek_pub, ek_pub ? ek_pub_len + 1 : 0);
 	xfree(doc, cap);
 	xfree(evidence, evidence ? evidence_len + 1 : 0);
 	xfree(report, ATTEST_REPORT_MAX);
@@ -1029,8 +1019,7 @@ static int cmd_attest_ek_name(int argc, const char **argv)
 	char hex[2 * TPM_NAME_MAX + 1];
 	__u8 name[TPM_NAME_MAX];
 	const char *ek_path = NULL;
-	__u8 *ek_pub = NULL;
-	size_t ek_pub_len = 0;
+	struct ek_cloud_key ek_key;
 	struct opt_parser p;
 	int ret = EXIT_USAGE, opt, err;
 
@@ -1057,9 +1046,9 @@ static int cmd_attest_ek_name(int argc, const char **argv)
 		opt_usage(&p, "--ek-pub is required");
 		goto out;
 	}
-	if (read_ek_pub(ek_path, &ek_pub, &ek_pub_len))
+	if (read_ek_pub(ek_path, &ek_key))
 		goto out;
-	err = ek_cloud_name(ek_pub, ek_pub_len, EK_TEMPLATE_POLICY_A, false,
+	err = ek_cloud_name(&ek_key, EK_TEMPLATE_POLICY_A, false,
 			    &rsa, &used_tmpl, name);
 	if (err) {
 		pr_err("attest ek-name: %s", strerror(-err));
@@ -1089,7 +1078,6 @@ static int cmd_attest_ek_name(int argc, const char **argv)
 	}
 	ret = 0;
 out:
-	xfree(ek_pub, ek_pub ? ek_pub_len + 1 : 0);
 	return ret;
 }
 

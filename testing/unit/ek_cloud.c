@@ -90,20 +90,23 @@ static void rsa2048_vectors_across_cloud_formats(void)
 	EXPECT_EQ(name_pem[1], 0x0b);
 	EXPECT_TRUE(memcmp(name_pem, name_l2, TPM_NAME_LEN) != 0);
 
-	ASSERT_EQ(ek_cloud_name(spki.der, spki.der_len, EK_TEMPLATE_POLICY_A,
+	ASSERT_EQ(ek_cloud_parse(spki.der, spki.der_len, &parsed), 0);
+	ASSERT_EQ(ek_cloud_name(&parsed, EK_TEMPLATE_POLICY_A,
 				false, &rsa, &used_tmpl, name_der), 0);
 	EXPECT_TRUE(rsa);
 	EXPECT_EQ(used_tmpl, EK_TEMPLATE_POLICY_A);
 	EXPECT_EQ(memcmp(name_pem, name_der, TPM_NAME_LEN), 0);
 
-	ASSERT_EQ(ek_cloud_name(spki.der_b64, strlen(spki.der_b64),
-				EK_TEMPLATE_POLICY_A, false, NULL, NULL,
-				name_b64_der), 0);
+	ASSERT_EQ(ek_cloud_parse(spki.der_b64, strlen(spki.der_b64), &parsed),
+		  0);
+	ASSERT_EQ(ek_cloud_name(&parsed, EK_TEMPLATE_POLICY_A, false, NULL,
+				NULL, name_b64_der), 0);
 	EXPECT_EQ(memcmp(name_pem, name_b64_der, TPM_NAME_LEN), 0);
 
 	/* Raw and line-wrapped base64 TPM2B_PUBLIC (AWS NitroTPM / Azure). */
 	tpm2b_len = tpm_put2b(tpm2b, tpmt_l1, len_l1);
-	ASSERT_EQ(ek_cloud_name(tpm2b, tpm2b_len, EK_TEMPLATE_POLICY_A, false,
+	ASSERT_EQ(ek_cloud_parse(tpm2b, tpm2b_len, &parsed), 0);
+	ASSERT_EQ(ek_cloud_name(&parsed, EK_TEMPLATE_POLICY_A, false,
 				&rsa, &used_tmpl, name_tpm2b), 0);
 	EXPECT_TRUE(rsa);
 	EXPECT_EQ(used_tmpl, EK_TEMPLATE_POLICY_A);
@@ -118,31 +121,39 @@ static void rsa2048_vectors_across_cloud_formats(void)
 	}
 	b64_wrapped[off++] = '\n';
 	b64_wrapped[off] = '\0';
-	ASSERT_EQ(ek_cloud_name(b64_wrapped, off, EK_TEMPLATE_POLICY_A, false,
+	ASSERT_EQ(ek_cloud_parse(b64_wrapped, off, &parsed), 0);
+	ASSERT_EQ(ek_cloud_name(&parsed, EK_TEMPLATE_POLICY_A, false,
 				NULL, NULL, name_b64_tpm2b), 0);
 	EXPECT_EQ(memcmp(name_pem, name_b64_tpm2b, TPM_NAME_LEN), 0);
 
 	/* Presented verification accepts both L-1 and L-2 against SPKI. */
-	ASSERT_EQ(ek_cloud_verify_presented(spki.pem, spki.pem_len,
-					    tpm2b, tpm2b_len, vname, &vlen), 0);
-	EXPECT_EQ(vlen, TPM_NAME_LEN);
-	EXPECT_EQ(memcmp(vname, name_pem, TPM_NAME_LEN), 0);
+	{
+		struct ek_cloud_key other_parsed;
 
-	tpm2b_len = tpm_put2b(tpm2b, tpmt_l2, len_l2);
-	ASSERT_EQ(ek_cloud_verify_presented(spki.pem, spki.pem_len,
-					    tpm2b, tpm2b_len, vname, &vlen), 0);
-	EXPECT_EQ(vlen, TPM_NAME_LEN);
-	EXPECT_EQ(memcmp(vname, name_l2, TPM_NAME_LEN), 0);
+		ASSERT_EQ(ek_cloud_parse(spki.pem, spki.pem_len, &parsed), 0);
+		ASSERT_EQ(ek_cloud_parse(other_spki.pem, other_spki.pem_len,
+					 &other_parsed), 0);
+		ASSERT_EQ(ek_cloud_verify_presented(&parsed, tpm2b, tpm2b_len,
+						    vname, &vlen), 0);
+		EXPECT_EQ(vlen, TPM_NAME_LEN);
+		EXPECT_EQ(memcmp(vname, name_pem, TPM_NAME_LEN), 0);
 
-	/* Tampered modulus or different RSA key is refused. */
-	memcpy(tampered, tpm2b, tpm2b_len);
-	tampered[tpm2b_len - 1] ^= 0x02;
-	EXPECT_EQ(ek_cloud_verify_presented(spki.pem, spki.pem_len,
-					    tampered, tpm2b_len, vname, &vlen),
-		  -EKEYREJECTED);
-	EXPECT_EQ(ek_cloud_verify_presented(other_spki.pem, other_spki.pem_len,
-					    tpm2b, tpm2b_len, vname, &vlen),
-		  -EKEYREJECTED);
+		tpm2b_len = tpm_put2b(tpm2b, tpmt_l2, len_l2);
+		ASSERT_EQ(ek_cloud_verify_presented(&parsed, tpm2b, tpm2b_len,
+						    vname, &vlen), 0);
+		EXPECT_EQ(vlen, TPM_NAME_LEN);
+		EXPECT_EQ(memcmp(vname, name_l2, TPM_NAME_LEN), 0);
+
+		/* Tampered modulus or different RSA key is refused. */
+		memcpy(tampered, tpm2b, tpm2b_len);
+		tampered[tpm2b_len - 1] ^= 0x02;
+		EXPECT_EQ(ek_cloud_verify_presented(&parsed, tampered,
+						    tpm2b_len, vname, &vlen),
+			  -EKEYREJECTED);
+		EXPECT_EQ(ek_cloud_verify_presented(&other_parsed, tpm2b,
+						    tpm2b_len, vname, &vlen),
+			  -EKEYREJECTED);
+	}
 
 	EVP_PKEY_free(other);
 	EVP_PKEY_free(pkey);
@@ -154,7 +165,7 @@ static void ecc_p256_vectors_and_tamper_rejection(void)
 	__u8 tpm2b[2 + TPM_PUBLIC_MAX], bad_tpm2b[2 + TPM_PUBLIC_MAX];
 	__u8 name_l1[TPM_NAME_MAX], name_l2[TPM_NAME_MAX], vname[TPM_NAME_MAX];
 	size_t len_l1 = 0, len_l2 = 0, tpm2b_len, bad_len = 0, vlen = 0;
-	struct ek_cloud_key parsed, other_parsed;
+	struct ek_cloud_key parsed, other_parsed, tpm2b_parsed;
 	struct tpm_public pub_l1, pub_l2, bad_pub;
 	struct spki_blobs spki, other_spki;
 	char b64_l2[1024];
@@ -179,16 +190,17 @@ static void ecc_p256_vectors_and_tamper_rejection(void)
 
 	tpm2b_len = tpm_put2b(tpm2b, tpmt_l2, len_l2);
 	ASSERT_EQ(base64_encode(tpm2b, tpm2b_len, b64_l2, sizeof(b64_l2)), 0);
-	ASSERT_EQ(ek_cloud_name(b64_l2, strlen(b64_l2), EK_TEMPLATE_POLICY_A,
+	ASSERT_EQ(ek_cloud_parse(b64_l2, strlen(b64_l2), &tpm2b_parsed), 0);
+	ASSERT_EQ(ek_cloud_name(&tpm2b_parsed, EK_TEMPLATE_POLICY_A,
 				false, NULL, &used_tmpl, vname), 0);
 	EXPECT_EQ(used_tmpl, EK_TEMPLATE_POLICY_B);
 	EXPECT_EQ(memcmp(vname, name_l2, TPM_NAME_LEN), 0);
 
 	/* Cloud TPM2B_PUBLIC pins the exact template as well as the point. */
-	EXPECT_EQ(ek_cloud_verify_presented(b64_l2, strlen(b64_l2),
+	EXPECT_EQ(ek_cloud_verify_presented(&tpm2b_parsed,
 					    tpmt_l1, len_l1, vname, &vlen),
 		  -EKEYREJECTED);
-	ASSERT_EQ(ek_cloud_verify_presented(b64_l2, strlen(b64_l2),
+	ASSERT_EQ(ek_cloud_verify_presented(&tpm2b_parsed,
 					    tpmt_l2, len_l2, vname, &vlen), 0);
 
 	/* Different valid P-256 point is rejected. */
@@ -198,7 +210,7 @@ static void ecc_p256_vectors_and_tamper_rejection(void)
 	ASSERT_EQ(tpm_public_marshal(&bad_pub, bad_tpm2b + 2, TPM_PUBLIC_MAX,
 				     &bad_len), 0);
 	put_be16(bad_tpm2b, (__u16)bad_len);
-	EXPECT_EQ(ek_cloud_verify_presented(spki.pem, spki.pem_len,
+	EXPECT_EQ(ek_cloud_verify_presented(&parsed,
 					    bad_tpm2b, 2 + bad_len, vname,
 					    &vlen), -EKEYREJECTED);
 
@@ -208,9 +220,9 @@ static void ecc_p256_vectors_and_tamper_rejection(void)
 	ASSERT_EQ(tpm_public_marshal(&bad_pub, bad_tpm2b + 2, TPM_PUBLIC_MAX,
 				     &bad_len), 0);
 	put_be16(bad_tpm2b, (__u16)bad_len);
-	EXPECT_EQ(ek_cloud_parse(bad_tpm2b, 2 + bad_len, &parsed),
+	EXPECT_EQ(ek_cloud_parse(bad_tpm2b, 2 + bad_len, &tpm2b_parsed),
 		  -EKEYREJECTED);
-	EXPECT_EQ(ek_cloud_verify_presented(spki.pem, spki.pem_len,
+	EXPECT_EQ(ek_cloud_verify_presented(&parsed,
 					    bad_tpm2b, 2 + bad_len, vname,
 					    &vlen), -EKEYREJECTED);
 
@@ -220,7 +232,7 @@ static void ecc_p256_vectors_and_tamper_rejection(void)
 	ASSERT_EQ(tpm_public_marshal(&bad_pub, bad_tpm2b + 2, TPM_PUBLIC_MAX,
 				     &bad_len), 0);
 	put_be16(bad_tpm2b, (__u16)bad_len);
-	EXPECT_EQ(ek_cloud_parse(bad_tpm2b, 2 + bad_len, &parsed),
+	EXPECT_EQ(ek_cloud_parse(bad_tpm2b, 2 + bad_len, &tpm2b_parsed),
 		  -EKEYREJECTED);
 
 	/* Null symmetric protector (not AES-128-CFB) is rejected. */
@@ -229,7 +241,7 @@ static void ecc_p256_vectors_and_tamper_rejection(void)
 	ASSERT_EQ(tpm_public_marshal(&bad_pub, bad_tpm2b + 2, TPM_PUBLIC_MAX,
 				     &bad_len), 0);
 	put_be16(bad_tpm2b, (__u16)bad_len);
-	EXPECT_EQ(ek_cloud_parse(bad_tpm2b, 2 + bad_len, &parsed),
+	EXPECT_EQ(ek_cloud_parse(bad_tpm2b, 2 + bad_len, &tpm2b_parsed),
 		  -EKEYREJECTED);
 
 	/* Unapproved authPolicy is rejected. */
@@ -238,7 +250,7 @@ static void ecc_p256_vectors_and_tamper_rejection(void)
 	ASSERT_EQ(tpm_public_marshal(&bad_pub, bad_tpm2b + 2, TPM_PUBLIC_MAX,
 				     &bad_len), 0);
 	put_be16(bad_tpm2b, (__u16)bad_len);
-	EXPECT_EQ(ek_cloud_parse(bad_tpm2b, 2 + bad_len, &parsed),
+	EXPECT_EQ(ek_cloud_parse(bad_tpm2b, 2 + bad_len, &tpm2b_parsed),
 		  -EKEYREJECTED);
 
 	/* PolicyB (L-2) without userWithAuth, or PolicyA (L-1) with it, is rejected. */
@@ -248,9 +260,9 @@ static void ecc_p256_vectors_and_tamper_rejection(void)
 	ASSERT_EQ(tpm_public_marshal(&bad_pub, bad_tpm2b + 2, TPM_PUBLIC_MAX,
 				     &bad_len), 0);
 	put_be16(bad_tpm2b, (__u16)bad_len);
-	EXPECT_EQ(ek_cloud_parse(bad_tpm2b, 2 + bad_len, &parsed),
+	EXPECT_EQ(ek_cloud_parse(bad_tpm2b, 2 + bad_len, &tpm2b_parsed),
 		  -EKEYREJECTED);
-	EXPECT_EQ(ek_cloud_verify_presented(spki.pem, spki.pem_len,
+	EXPECT_EQ(ek_cloud_verify_presented(&parsed,
 					    bad_tpm2b, 2 + bad_len, vname,
 					    &vlen), -EKEYREJECTED);
 
@@ -326,11 +338,13 @@ static void name_of_a_real_vtpm_key_and_the_tcg_policies(void)
 {
 	__u8 name[TPM_NAME_MAX], derived_policy_b[TPM_DIGEST_LEN];
 	enum ek_template tmpl = EK_TEMPLATE_POLICY_B;
+	struct ek_cloud_key azure_key;
 	bool rsa = false;
 
-	ASSERT_EQ(ek_cloud_name(azure_ek_pem, sizeof(azure_ek_pem) - 1,
-				EK_TEMPLATE_POLICY_A, false, &rsa, &tmpl,
-				name), 0);
+	ASSERT_EQ(ek_cloud_parse(azure_ek_pem, sizeof(azure_ek_pem) - 1,
+				 &azure_key), 0);
+	ASSERT_EQ(ek_cloud_name(&azure_key, EK_TEMPLATE_POLICY_A, false,
+				&rsa, &tmpl, name), 0);
 	EXPECT_TRUE(rsa);
 	EXPECT_EQ(tmpl, EK_TEMPLATE_POLICY_A);
 	EXPECT_EQ(memcmp(name, azure_ek_name, TPM_NAME_LEN), 0);

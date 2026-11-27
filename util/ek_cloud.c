@@ -385,58 +385,49 @@ int ek_cloud_build_public(const struct ek_cloud_key *key,
 	return tpm_object_name(tpmt, *tpmt_len, name);
 }
 
-int ek_cloud_name(const void *cloud_pub, size_t cloud_len,
+int ek_cloud_name(const struct ek_cloud_key *key,
 		  enum ek_template tmpl, bool force_template,
 		  bool *out_rsa, enum ek_template *out_tmpl,
 		  __u8 out_ek_name[TPM_NAME_MAX])
 {
 	__u8 tpmt[TPM_PUBLIC_MAX];
-	struct ek_cloud_key key;
 	struct tpm_public pub;
 	size_t tpmt_len;
-	int ret;
 
-	if (!out_ek_name)
+	if (!key || !out_ek_name)
 		return -EINVAL;
-	ret = ek_cloud_parse(cloud_pub, cloud_len, &key);
-	if (ret)
-		return ret;
 	if (out_rsa)
-		*out_rsa = key.rsa;
-	if (key.format == EK_CLOUD_TPM2B && !force_template) {
+		*out_rsa = key->rsa;
+	if (key->format == EK_CLOUD_TPM2B && !force_template) {
 		if (out_tmpl)
-			*out_tmpl = !memneq_explicit(key.tpm_pub.policy,
+			*out_tmpl = !memneq_explicit(key->tpm_pub.policy,
 						     shirudo_tpm_ek_policy, 32) ?
 				    EK_TEMPLATE_POLICY_A : EK_TEMPLATE_POLICY_B;
-		memcpy(out_ek_name, key.name, TPM_NAME_LEN);
+		memcpy(out_ek_name, key->name, TPM_NAME_LEN);
 		return 0;
 	}
 	if (out_tmpl)
 		*out_tmpl = tmpl;
-	return ek_cloud_build_public(&key, tmpl, &pub, tpmt, &tpmt_len,
+	return ek_cloud_build_public(key, tmpl, &pub, tpmt, &tpmt_len,
 				     out_ek_name);
 }
 
-int ek_cloud_verify_presented(const void *cloud_pub, size_t cloud_len,
+int ek_cloud_verify_presented(const struct ek_cloud_key *ck,
 			      const void *presented_tpm2b,
 			      size_t presented_len,
 			      __u8 out_ek_name[TPM_NAME_MAX],
 			      size_t *out_ek_name_len)
 {
 	const __u8 *p_bytes = presented_tpm2b, *tpmt;
-	struct ek_cloud_key ck;
 	struct tpm_public pres;
 	size_t tpmt_len;
 	int ret;
 
-	if (!presented_tpm2b || !presented_len || !out_ek_name ||
+	if (!ck || !presented_tpm2b || !presented_len || !out_ek_name ||
 	    !out_ek_name_len)
 		return -EINVAL;
 	*out_ek_name_len = 0;
 	memset(out_ek_name, 0, TPM_NAME_MAX);
-	ret = ek_cloud_parse(cloud_pub, cloud_len, &ck);
-	if (ret)
-		return ret;
 	if (presented_len >= 2 && get_be16(p_bytes) == presented_len - 2) {
 		ret = tpm_public_unmarshal(p_bytes, presented_len, &pres);
 		tpmt = p_bytes + 2;
@@ -452,25 +443,25 @@ int ek_cloud_verify_presented(const void *cloud_pub, size_t cloud_len,
 	}
 	if (!ek_cloud_template_valid(&pres))
 		return -EKEYREJECTED;
-	if (ck.format == EK_CLOUD_TPM2B) {
-		if (tpmt_len != ck.tpmt_len ||
-		    memneq_explicit(tpmt, ck.tpmt, tpmt_len))
+	if (ck->format == EK_CLOUD_TPM2B) {
+		if (tpmt_len != ck->tpmt_len ||
+		    memneq_explicit(tpmt, ck->tpmt, tpmt_len))
 			return -EKEYREJECTED;
 	} else {
 		bool pres_rsa = pres.type == TPM_ALG_RSA;
 
-		if (pres_rsa != ck.rsa)
+		if (pres_rsa != ck->rsa)
 			return -EKEYREJECTED;
-		if (ck.rsa) {
+		if (ck->rsa) {
 			__u32 exp = pres.rsa_exponent ? pres.rsa_exponent :
 				    65537;
 
 			if (pres.n_len != 256 || exp != 65537 ||
-			    memneq_explicit(pres.n, ck.n, 256))
+			    memneq_explicit(pres.n, ck->n, 256))
 				return -EKEYREJECTED;
 		} else {
-			if (memneq_explicit(pres.x, ck.x, 32) ||
-			    memneq_explicit(pres.y, ck.y, 32))
+			if (memneq_explicit(pres.x, ck->x, 32) ||
+			    memneq_explicit(pres.y, ck->y, 32))
 				return -EKEYREJECTED;
 		}
 	}

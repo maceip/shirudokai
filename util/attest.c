@@ -1158,7 +1158,7 @@ static int verify_ek(struct verify *v)
 		    !tpm_object_name(ek_public, ek_public_len, computed) &&
 		    !memneq_explicit(computed, ek_name, TPM_NAME_LEN),
 		    "endorsement key: name matches its public area");
-		say(rep, parsed && (expect->have_ek_pub ?
+		say(rep, parsed && (expect->ek_key ?
 				    ek_cloud_template_valid(&ek_pub) :
 				    ek_low_range_template_valid(&ek_pub)),
 		    "endorsement key: TCG default template under the "
@@ -1174,7 +1174,7 @@ static int verify_ek(struct verify *v)
 		    !memneq_explicit(ek_name, expect->ek_name, TPM_NAME_LEN),
 		    "endorsement key: the pinned key");
 	}
-	if (expect->have_ek_pub) {
+	if (expect->ek_key) {
 		__u8 cloud_name[TPM_NAME_MAX], ek_public[TPM_PUBLIC_MAX];
 		__u8 ek_name[TPM_NAME_LEN];
 		size_t cloud_name_len = 0, ek_public_len = 0;
@@ -1184,8 +1184,7 @@ static int verify_ek(struct verify *v)
 		    !hex_decode_max(p->ek_public_hex, ek_public,
 				    sizeof(ek_public), &ek_public_len) &&
 		    !hex_decode(p->ek_name_hex, ek_name, TPM_NAME_LEN) &&
-		    !ek_cloud_verify_presented(expect->ek_pub,
-					       expect->ek_pub_len,
+		    !ek_cloud_verify_presented(expect->ek_key,
 					       ek_public, ek_public_len,
 					       cloud_name, &cloud_name_len) &&
 		    cloud_name_len == TPM_NAME_LEN &&
@@ -1775,7 +1774,7 @@ int attest_challenge_make(const char *evidence, size_t len,
 			  char *report, size_t report_cap)
 {
 	const char *ek_ca = pol->ek_ca;
-	bool vouched = pol->ek_name || pol->ek_pub || pol->trust_presented;
+	bool vouched = pol->ek_name || pol->ek_key || pol->trust_presented;
 	struct reporter rep = { .buf = report, .cap = report_cap };
 	char ek_public_hex[2 * TPM_PUBLIC_MAX + 1], hex[2 * 256 + 1];
 	char ak_hex[2 * TPM_NAME_LEN + 1], ek_type[8];
@@ -1854,12 +1853,12 @@ int attest_challenge_make(const char *evidence, size_t len,
 	if (pol->ek_name)
 		say(&rep, !memneq_explicit(ek_name, pol->ek_name, TPM_NAME_LEN),
 		    "endorsement key: the pinned key");
-	if (pol->ek_pub) {
+	if (pol->ek_key) {
 		__u8 cloud_name[TPM_NAME_MAX];
 		size_t cloud_name_len = 0;
 		bool ok;
 
-		ok = !ek_cloud_verify_presented(pol->ek_pub, pol->ek_pub_len,
+		ok = !ek_cloud_verify_presented(pol->ek_key,
 						ek_public, ek_public_len,
 						cloud_name, &cloud_name_len) &&
 		     cloud_name_len == TPM_NAME_LEN &&
@@ -1871,7 +1870,7 @@ int attest_challenge_make(const char *evidence, size_t len,
 	say(&rep, !tpm_object_name(ek_public, ek_public_len, computed) &&
 	    !memneq_explicit(computed, ek_name, TPM_NAME_LEN),
 	    "endorsement key: name matches its public area");
-	say(&rep, pol->ek_pub ? ek_cloud_template_valid(&pub) :
+	say(&rep, pol->ek_key ? ek_cloud_template_valid(&pub) :
 		  ek_low_range_template_valid(&pub),
 	    "endorsement key: TCG default template under the endorsement "
 	    "policy");
@@ -1916,7 +1915,7 @@ int attest_challenge_make(const char *evidence, size_t len,
 				    "--trust-presented-ek");
 			}
 		}
-	} else if (pol->ek_pub) {
+	} else if (pol->ek_key) {
 		note(&rep, "no endorsement certificate: verified against "
 		     "cloud public key");
 	} else if (vouched) {

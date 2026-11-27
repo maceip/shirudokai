@@ -39,19 +39,19 @@ int LLVMFuzzerTestOneInput(const __u8 *data, size_t size)
 			abort();
 		if (key.format == EK_CLOUD_SPKI) {
 			tpm_put2b(tpm2b, tpmt1, len1);
-			if (ek_cloud_verify_presented(data, size, tpm2b,
+			if (ek_cloud_verify_presented(&key, tpm2b,
 						      2 + len1, vname, &vlen) ||
 			    vlen != TPM_NAME_LEN ||
 			    memcmp(vname, name1, TPM_NAME_LEN))
 				abort();
 			memcpy(tampered, tpm2b, 2 + len1);
 			tampered[2 + len1 - 1] ^= 0x01;
-			if (!ek_cloud_verify_presented(data, size, tampered,
+			if (!ek_cloud_verify_presented(&key, tampered,
 						       2 + len1, vname, &vlen))
 				abort();
 		} else {
 			tpm_put2b(tpm2b, key.tpmt, key.tpmt_len);
-			if (ek_cloud_verify_presented(data, size, tpm2b,
+			if (ek_cloud_verify_presented(&key, tpm2b,
 						      2 + key.tpmt_len, vname,
 						      &vlen) ||
 			    vlen != TPM_NAME_LEN ||
@@ -61,8 +61,11 @@ int LLVMFuzzerTestOneInput(const __u8 *data, size_t size)
 	}
 
 	if (size >= 4) {
+		struct ek_cloud_key half_key;
+
 		half = size / 2;
-		if (!ek_cloud_verify_presented(data, half, data + half,
+		if (!ek_cloud_parse(data, half, &half_key) &&
+		    !ek_cloud_verify_presented(&half_key, data + half,
 					       size - half, vname, &vlen) &&
 		    (vlen != TPM_NAME_LEN || vname[0] != 0x00 ||
 		     vname[1] != 0x0b))

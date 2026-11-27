@@ -215,6 +215,7 @@ static void cloud_ek_pub_vouches_challenge_and_verify(void)
 	};
 	size_t len, pem_len, wrong_len, ek_len = 0, out_len = 0, out_cap = 0;
 	char *ek_obj, *pub_key, *pub_end, *ek_cert, *cert_end, *chal = NULL;
+	struct ek_cloud_key ek_key, wrong_key;
 	struct tpm_public pub;
 	const char *full;
 	EVP_PKEY *wrong;
@@ -272,8 +273,9 @@ static void cloud_ek_pub_vouches_challenge_and_verify(void)
 		  -EKEYREJECTED);
 
 	/* Matching --ek-pub vouches for the EK without --trust-presented-ek. */
-	pol.ek_pub = pem;
-	pol.ek_pub_len = pem_len;
+	ASSERT_EQ(ek_cloud_parse(pem, pem_len, &ek_key), 0);
+	ASSERT_EQ(ek_cloud_parse(wrong_pem, wrong_len, &wrong_key), 0);
+	pol.ek_key = &ek_key;
 	ASSERT_EQ(attest_challenge_make(doc, len, &pol, cred, &chal, &out_len,
 					&out_cap, report, sizeof(report)), 0);
 	EXPECT_TRUE(span_find(report, strlen(report),
@@ -282,8 +284,7 @@ static void cloud_ek_pub_vouches_challenge_and_verify(void)
 	chal = NULL;
 
 	/* Wrong --ek-pub fails challenge. */
-	pol.ek_pub = wrong_pem;
-	pol.ek_pub_len = wrong_len;
+	pol.ek_key = &wrong_key;
 	EXPECT_EQ(attest_challenge_make(doc, len, &pol, cred, &chal, &out_len,
 					&out_cap, report, sizeof(report)),
 		  -EKEYREJECTED);
@@ -291,16 +292,13 @@ static void cloud_ek_pub_vouches_challenge_and_verify(void)
 			      "  FAIL  endorsement key: matches cloud public key\n") != NULL);
 
 	/* attest_verify checks --ek-pub and reports OK vs FAIL. */
-	expect.have_ek_pub = true;
-	expect.ek_pub = pem;
-	expect.ek_pub_len = pem_len;
+	expect.ek_key = &ek_key;
 	EXPECT_EQ(attest_verify(doc, len, &expect, report, sizeof(report)),
 		  -EKEYREJECTED);
 	EXPECT_TRUE(span_find(report, strlen(report),
 			      "  OK    endorsement key: matches cloud public key\n") != NULL);
 
-	expect.ek_pub = wrong_pem;
-	expect.ek_pub_len = wrong_len;
+	expect.ek_key = &wrong_key;
 	EXPECT_EQ(attest_verify(doc, len, &expect, report, sizeof(report)),
 		  -EKEYREJECTED);
 	EXPECT_TRUE(span_find(report, strlen(report),

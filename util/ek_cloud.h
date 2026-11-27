@@ -55,12 +55,12 @@ int ek_cloud_build_public(const struct ek_cloud_key *key,
 			  size_t *tpmt_len,
 			  __u8 name[TPM_NAME_MAX]) __must_check;
 
-int ek_cloud_name(const void *cloud_pub, size_t cloud_len,
+int ek_cloud_name(const struct ek_cloud_key *key,
 		  enum ek_template tmpl, bool force_template,
 		  bool *out_rsa, enum ek_template *out_tmpl,
 		  __u8 out_ek_name[TPM_NAME_MAX]) __must_check;
 
-int ek_cloud_verify_presented(const void *cloud_pub, size_t cloud_len,
+int ek_cloud_verify_presented(const struct ek_cloud_key *ck,
 			      const void *presented_tpm2b,
 			      size_t presented_len,
 			      __u8 out_ek_name[TPM_NAME_MAX],
