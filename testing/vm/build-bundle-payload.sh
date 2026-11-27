@@ -791,6 +791,60 @@ build_copyfail_detector_fixture()
 	)
 }
 
+build_netem_detector_fixture()
+{
+	local source_dir="$REPO_ROOT/upatches/kernel-cve/sources/cve-2026-31675-net-sched-sch-netem-oob-access-packet-corruption"
+	local keys_dir="$1"
+
+	(
+		cd "$REPO_ROOT"
+		"$REPO_ROOT/tools/shirudo-build/shirudo-build" \
+			"$source_dir/observability/cve-2026-31675-netem-detector.bpf.c" \
+			-o "$TMP_DIR/fixtures/cve-2026-31675-netem-detector.upatch" \
+			--name cve-2026-31675-netem-detector \
+			--vmlinux "$REPO_ROOT/vendor/linux/vmlinux.h" \
+			--extra-cflags "-I$REPO_ROOT/vendor/libbpf" \
+			--key "$keys_dir/signing_key.pem" \
+			--cert "$keys_dir/cert.der"
+	)
+}
+
+build_rpl_detector_fixture()
+{
+	local source_dir="$REPO_ROOT/upatches/kernel-cve/sources/cve-2026-63984-ipv6-rpl-hdrlen-overflow-ipv6-rpl-srh-decompress"
+	local keys_dir="$1"
+
+	(
+		cd "$REPO_ROOT"
+		"$REPO_ROOT/tools/shirudo-build/shirudo-build" \
+			"$source_dir/observability/cve-2026-63984-rpl-detector.bpf.c" \
+			-o "$TMP_DIR/fixtures/cve-2026-63984-rpl-detector.upatch" \
+			--name cve-2026-63984-rpl-detector \
+			--vmlinux "$REPO_ROOT/vendor/linux/vmlinux.h" \
+			--extra-cflags "-I$REPO_ROOT/vendor/libbpf" \
+			--key "$keys_dir/signing_key.pem" \
+			--cert "$keys_dir/cert.der"
+	)
+}
+
+build_e1000_tbi_detector_fixture()
+{
+	local source_dir="$REPO_ROOT/upatches/kernel-cve/sources/cve-2025-71093-e1000-oob-e1000-tbi-should-accept"
+	local keys_dir="$1"
+
+	(
+		cd "$REPO_ROOT"
+		"$REPO_ROOT/tools/shirudo-build/shirudo-build" \
+			"$source_dir/observability/cve-2025-71093-e1000-tbi-detector.bpf.c" \
+			-o "$TMP_DIR/fixtures/cve-2025-71093-e1000-tbi-detector.upatch" \
+			--name cve-2025-71093-e1000-tbi-detector \
+			--vmlinux "$REPO_ROOT/vendor/linux/vmlinux.h" \
+			--extra-cflags "-I$REPO_ROOT/vendor/libbpf" \
+			--key "$keys_dir/signing_key.pem" \
+			--cert "$keys_dir/cert.der"
+	)
+}
+
 build_policy_labels_fixture()
 {
 	local source_dir="$FIXTURE_WORK/policy-labels"
@@ -900,6 +954,9 @@ queue_fixture build_obs_fixture "$FIXTURE_WORK/trusted"
 queue_fixture build_af_alg_block_fixture "$FIXTURE_WORK/trusted"
 queue_fixture build_alg_splice_block_fixture "$FIXTURE_WORK/trusted"
 queue_fixture build_copyfail_detector_fixture "$FIXTURE_WORK/trusted"
+queue_fixture build_netem_detector_fixture "$FIXTURE_WORK/trusted"
+queue_fixture build_rpl_detector_fixture "$FIXTURE_WORK/trusted"
+queue_fixture build_e1000_tbi_detector_fixture "$FIXTURE_WORK/trusted"
 queue_fixture build_java_fixture
 wait_fixture_jobs
 

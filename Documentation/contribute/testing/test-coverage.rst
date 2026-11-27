@@ -417,6 +417,12 @@ signed config image.
        call. The ``fmod_ret.s`` program fails the one call it is written
        for, the caller gets its error, the other two programs see that
        call, another call runs, and the unload detaches all three
+   * - ``t3121-kernel-cve-detectors``
+     - The ``netem``, ``rpl`` and ``e1000`` kprobe detectors of
+       ``upatches/kernel-cve``, built from their shipped sources: each
+       loads, appears in ``status`` and unloads cleanly when its target
+       symbol is present in ``/proc/kallsyms``, and skips with a
+       diagnostic when the symbol is absent or inlined
 
 ``tpm`` (4)
 ~~~~~~~~~~~
