@@ -90,11 +90,13 @@ setup() {
 		echo '::warning::no checkpatch.pl fetched; t0003 skips'
 
 	if [ "${VM:-1}" != 0 ]; then
-		# /dev/kvm belongs to root on the runner.
-		echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
-			sudo tee /etc/udev/rules.d/99-kvm.rules >/dev/null
-		sudo udevadm control --reload-rules
-		sudo udevadm trigger --name-match=kvm
+		if [ -e /dev/kvm ]; then
+			# /dev/kvm belongs to root on the runner.
+			echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+				sudo tee /etc/udev/rules.d/99-kvm.rules >/dev/null
+			sudo udevadm control --reload-rules
+			sudo udevadm trigger --name-match=kvm
+		fi
 
 		# Ubuntu's dracut 060 looks for systemd-pcrphase, which systemd 255
 		# calls systemd-pcrextend, and so leaves out the PCR phase

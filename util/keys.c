@@ -448,20 +448,8 @@ int keys_verify_vouch(const struct trusted_set *set,
 		      const __u8 *sig, size_t sig_sz,
 		      __u8 voucher[32])
 {
-	size_t payload_sz = 0;
-	__u8 *payload = NULL;
-	int ret;
-
-	if (vouch_is_v2_prefix(sig, sig_sz))
-		return keys_verify_vouch_at(set, der, der_sz, sig, sig_sz,
-					    (__s64)time(NULL), voucher);
-	ret = keys_vouch_payload(der, der_sz, &payload, &payload_sz);
-	if (ret)
-		return ret;
-	ret = keys_verify_signature(set, payload, payload_sz, sig, sig_sz,
-				    voucher);
-	xfree(payload, payload_sz);
-	return ret;
+	return keys_verify_vouch_at(set, der, der_sz, sig, sig_sz,
+				    (__s64)time(NULL), voucher);
 }
 
 static int cert_cmp(const void *a, const void *b)
@@ -554,6 +542,18 @@ static int vouch_path_for(const char *der_path, char *out, size_t cap)
 	return 0;
 }
 
+static bool cert_der_valid_at(const __u8 *der, size_t der_sz, __s64 unix_sec)
+{
+	struct cert cert = {};
+	int ret;
+
+	if (cert_read_der(der, der_sz, &cert))
+		return false;
+	ret = cert_valid_at(&cert, unix_sec);
+	cert_free(&cert);
+	return ret == 0;
+}
+
 /*
  * Admit the candidates whose vouch verifies under a member, in rounds,
  * so a certificate vouched for by one admitted later still joins.
@@ -561,6 +561,7 @@ static int vouch_path_for(const char *der_path, char *out, size_t cap)
 static int admit_vouched(struct trusted_set *set,
 			 struct keys_candidate *cand, size_t n_cand)
 {
+	__s64 now = (__s64)time(NULL);
 	bool progress = true;
 	size_t i;
 
@@ -580,14 +581,16 @@ static int admit_vouched(struct trusted_set *set,
 				c->done = true;
 				continue;
 			}
+			if (!cert_der_valid_at(c->der, c->der_sz, now))
+				continue;
 			if (vouch_path_for(c->dirfd >= 0 ? c->name : c->path,
 					   vouch, sizeof(vouch)) ||
 			    (c->dirfd >= 0 ?
 			     keys_read_der_at(c->dirfd, vouch, &sig, &sig_sz) :
 			     keys_read_der(vouch, &sig, &sig_sz)))
 				continue;
-			ret = keys_verify_vouch(set, c->der, c->der_sz,
-						sig, sig_sz, voucher);
+			ret = keys_verify_vouch_at(set, c->der, c->der_sz,
+						   sig, sig_sz, now, voucher);
 			xfree(sig, sig_sz);
 			if (ret)
 				continue;

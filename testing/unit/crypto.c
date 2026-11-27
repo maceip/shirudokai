@@ -17,8 +17,11 @@ static void fips_mode_init_is_fail_closed_and_consistent(void)
 	if (ret == 0) {
 		EXPECT_TRUE(crypto_fips_enabled());
 		EXPECT_EQ(crypto_fips_init(), 0);
+		EXPECT_EQ(crypto_fips_init(), 0);
 	} else {
 		EXPECT_EQ(ret, -ENOPKG);
+		EXPECT_EQ(crypto_fips_enabled(), before);
+		EXPECT_EQ(crypto_fips_init(), -ENOPKG);
 		EXPECT_EQ(crypto_fips_enabled(), before);
 	}
 }

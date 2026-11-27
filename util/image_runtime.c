@@ -740,7 +740,8 @@ static int prepare_config(struct image_context *current,
 
 		ret = image_config_read_epoch(current->candidate_fd, &epoch);
 		if (!ret)
-			ret = freshness_verify(FRESHNESS_EPOCH_PATH, epoch);
+			ret = freshness_verify_at(current->update.dir_fd,
+						  epoch);
 	}
 	if (!ret && !trusted_boot)
 		ret = candidate_keys(current->candidate_fd, purpose);
@@ -789,8 +790,8 @@ static int activate_config(struct image_context *current, bool boot)
 		struct config active_cfg __cleanup(config_clear) = {};
 
 		if (image_config_get(&active_cfg))
-			ret = freshness_advance(FRESHNESS_EPOCH_PATH,
-						active_cfg.security_epoch);
+			ret = freshness_advance_at(current->update.dir_fd,
+						   active_cfg.security_epoch);
 	}
 	return ret;
 }
@@ -840,17 +841,50 @@ static const struct config_update_ops boot_ops = {
 
 static int open_update(void)
 {
-	int ret;
+	struct stat expected = {}, opened = {};
+	int active, state_fd, child_fd, ret;
 
 	if (image.update.lock_fd >= 0)
 		return 0;
-	ret = mkdir_owned(CONFIG_UPDATE_DIR);
-	if (!ret)
+	active = enforcement_active();
+	if (active < 0)
+		return active;
+	if (active > 0) {
+		state_fd = state_root_open();
+		if (state_fd < 0)
+			return state_fd;
+		child_fd = seal_mkdir_child(state_fd, "config-update", 0700,
+					    false);
+		close(state_fd);
+		if (child_fd < 0)
+			return child_fd;
+		ret = fstat(child_fd, &expected) ? -errno : 0;
+		close(child_fd);
+		if (ret)
+			return ret;
+	} else {
+		ret = mkdir_owned(CONFIG_UPDATE_DIR);
+		if (ret)
+			return ret;
+	}
+	if (!image.tpm) {
 		ret = tpm_open(&image.tpm);
-	if (!ret)
-		ret = config_update_open(CONFIG_UPDATE_DIR,
-					 &update_ops, &image,
-					 &image.update);
+		if (ret)
+			return ret;
+	}
+	ret = config_update_open(CONFIG_UPDATE_DIR, &update_ops, &image,
+				 &image.update);
+	if (ret)
+		return ret;
+	if (active > 0) {
+		if (fstat(image.update.dir_fd, &opened))
+			ret = -errno;
+		else if (opened.st_dev != expected.st_dev ||
+			 opened.st_ino != expected.st_ino)
+			ret = -EXDEV;
+		if (ret)
+			config_update_close(&image.update);
+	}
 	return ret;
 }
 
@@ -1088,8 +1122,8 @@ static int config_mount_check(const struct config_update_record *record)
 		struct config active_cfg __cleanup(config_clear) = {};
 
 		if (image_config_get(&active_cfg))
-			ret = freshness_verify(FRESHNESS_EPOCH_PATH,
-					       active_cfg.security_epoch);
+			ret = freshness_verify_at(image.update.dir_fd,
+						  active_cfg.security_epoch);
 	}
 out:
 	dm_verity_close(&device);

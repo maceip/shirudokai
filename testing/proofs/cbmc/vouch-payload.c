@@ -35,6 +35,21 @@ void cert_free(struct cert *cert)
 {
 }
 
+int cert_validity_window(const struct cert *cert, __s64 *not_before,
+			 __s64 *not_after)
+{
+	*not_before = 0;
+	*not_after = 2000;
+	return 0;
+}
+
+time_t time(time_t *out)
+{
+	if (out)
+		*out = 1000;
+	return 1000;
+}
+
 int verify_detached(const __u8 *payload, size_t payload_len,
 		    const __u8 *signature, size_t signature_len,
 		    const struct cert *cert)

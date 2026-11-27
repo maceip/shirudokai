@@ -119,8 +119,8 @@ int cmd_config(int argc, const char **argv)
 	       cfg.tls_classical_hosts);
 
 	printf("# Periodic `shirudo upatch map --all` export. Empty JSON and\n"
-	       "# OTLP destinations leave the installed timer idle. Every emitted\n"
-	       "# map must carry a signed Lua decoder declaring log or metric.\n"
+	       "# OTLP destinations leave the installed timer idle. Maps export\n"
+	       "# through their signed Lua decoder or automatic BTF classification.\n"
 	       "# OTEL headers, TLS material, and AWS credentials belong in\n"
 	       "# /etc/shirudo/map-export.env for the systemd service.\n");
 	printf("map_export.json_path = %s\n", cfg.map_export_json_path);

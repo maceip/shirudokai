@@ -778,7 +778,7 @@ out:
 	return ret;
 }
 
-static void *fips_provider;
+static struct ossl_provider_st *fips_provider, *base_provider;
 
 /*
  * The fips provider holds the algorithms and nothing that reads a key
@@ -788,32 +788,36 @@ static void *fips_provider;
  */
 int crypto_fips_init(void)
 {
-	void *fips, *base;
+	struct ossl_provider_st *fips, *base;
 
-	if (fips_provider && crypto_fips_enabled())
+	if (fips_provider && base_provider && crypto_fips_enabled())
 		return 0;
-	fips = OSSL_PROVIDER_load(NULL, "fips");
+	fips = fips_provider ? fips_provider : OSSL_PROVIDER_load(NULL, "fips");
 	if (!fips) {
 		openssl_complain("OSSL_PROVIDER_load(fips)");
 		ERR_clear_error();
 		return -ENOPKG;
 	}
-	base = OSSL_PROVIDER_load(NULL, "base");
+	base = base_provider ? base_provider : OSSL_PROVIDER_load(NULL, "base");
 	if (!base) {
 		openssl_complain("OSSL_PROVIDER_load(base)");
 		ERR_clear_error();
-		OSSL_PROVIDER_unload(fips);
+		if (fips != fips_provider)
+			OSSL_PROVIDER_unload(fips);
 		return -ENOPKG;
 	}
 	if (EVP_default_properties_enable_fips(NULL, 1) != 1 ||
 	    EVP_default_properties_is_fips_enabled(NULL) != 1) {
 		openssl_complain("EVP_default_properties_enable_fips");
 		ERR_clear_error();
-		OSSL_PROVIDER_unload(base);
-		OSSL_PROVIDER_unload(fips);
+		if (base != base_provider)
+			OSSL_PROVIDER_unload(base);
+		if (fips != fips_provider)
+			OSSL_PROVIDER_unload(fips);
 		return -ENOPKG;
 	}
 	fips_provider = fips;
+	base_provider = base;
 	return 0;
 }
 

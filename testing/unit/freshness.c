@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <shirudo/string.h>
@@ -58,15 +59,22 @@ static void missing_floor_reads_as_zero_and_allows_initial_epoch(void)
 static void advance_persists_floor_and_rejects_rollback(void)
 {
 	char tmpl[] = "/tmp/shirudo-unit-freshness-XXXXXX";
+	struct stat st = {};
 	char path[512];
 	__u64 floor = 0;
+	mode_t old_mask;
 	char *dir;
 
 	dir = mkdtemp(tmpl);
 	ASSERT_TRUE(dir);
 	ASSERT_TRUE(strsprintf(path, sizeof(path), "%s/epoch", dir) > 0);
 
+	old_mask = umask(0077);
+	umask(0);
 	ASSERT_EQ(freshness_advance(path, 10), 0);
+	umask(old_mask);
+	ASSERT_EQ(stat(path, &st), 0);
+	EXPECT_EQ(st.st_mode & 0777, 0600u);
 	ASSERT_EQ(freshness_read_floor(path, &floor), 0);
 	EXPECT_EQ(floor, 10u);
 
@@ -84,6 +92,51 @@ static void advance_persists_floor_and_rejects_rollback(void)
 	EXPECT_EQ(freshness_verify(path, UINT64_MAX - 1), -ESTALE);
 	EXPECT_EQ(freshness_verify(path, UINT64_MAX), 0);
 
+	rm_rf(dir);
+}
+
+static void descriptor_floor_helpers_persist_and_reject_rollback(void)
+{
+	char tmpl[] = "/tmp/shirudo-unit-freshness-at-XXXXXX";
+	char path[512];
+	__u64 floor = 99;
+	int dir_fd;
+	char *dir;
+
+	dir = mkdtemp(tmpl);
+	ASSERT_TRUE(dir);
+	ASSERT_TRUE(strsprintf(path, sizeof(path), "%s/epoch", dir) > 0);
+	dir_fd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	ASSERT_TRUE(dir_fd >= 0);
+
+	EXPECT_EQ(freshness_read_floor_at(-1, &floor), -EINVAL);
+	EXPECT_EQ(freshness_read_floor_at(dir_fd, NULL), -EINVAL);
+	EXPECT_EQ(freshness_read_floor_at(dir_fd, &floor), 0);
+	EXPECT_EQ(floor, 0u);
+	EXPECT_EQ(freshness_verify_at(dir_fd, 0), 0);
+	EXPECT_EQ(freshness_verify_at(dir_fd, 7), 0);
+	EXPECT_EQ(freshness_advance_at(dir_fd, 0), 0);
+	EXPECT_NE(access(path, F_OK), 0);
+
+	ASSERT_EQ(freshness_advance_at(dir_fd, 7), 0);
+	ASSERT_EQ(freshness_read_floor_at(dir_fd, &floor), 0);
+	EXPECT_EQ(floor, 7u);
+	EXPECT_EQ(freshness_verify_at(dir_fd, 7), 0);
+	EXPECT_EQ(freshness_verify_at(dir_fd, 8), 0);
+	EXPECT_EQ(freshness_verify_at(dir_fd, 6), -ESTALE);
+	EXPECT_EQ(freshness_advance_at(dir_fd, 6), -ESTALE);
+	EXPECT_EQ(freshness_advance_at(dir_fd, 7), 0);
+	ASSERT_EQ(freshness_advance_at(dir_fd, UINT64_MAX), 0);
+	ASSERT_EQ(freshness_read_floor_at(dir_fd, &floor), 0);
+	EXPECT_EQ(floor, UINT64_MAX);
+	EXPECT_EQ(freshness_verify_at(dir_fd, UINT64_MAX - 1), -ESTALE);
+
+	ASSERT_EQ(write_raw(path, "bad\n", strlen("bad\n")), 0);
+	EXPECT_EQ(freshness_read_floor_at(dir_fd, &floor), -EUCLEAN);
+	EXPECT_EQ(freshness_verify_at(dir_fd, UINT64_MAX), -EUCLEAN);
+	EXPECT_EQ(freshness_advance_at(dir_fd, UINT64_MAX), -EUCLEAN);
+
+	close(dir_fd);
 	rm_rf(dir);
 }
 
@@ -145,6 +198,7 @@ static void config_parses_security_epoch_and_flags_bad_values(void)
 static const struct unit_case cases[] = {
 	UNIT_CASE(missing_floor_reads_as_zero_and_allows_initial_epoch),
 	UNIT_CASE(advance_persists_floor_and_rejects_rollback),
+	UNIT_CASE(descriptor_floor_helpers_persist_and_reject_rollback),
 	UNIT_CASE(corrupt_floor_fails_closed_with_euclean),
 	UNIT_CASE(config_parses_security_epoch_and_flags_bad_values),
 	{}
