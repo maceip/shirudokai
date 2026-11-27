@@ -173,7 +173,7 @@ the operator verifies off the target is proof
 rollout orchestration or remote response; those stay with the
 infrastructure that already runs the fleet. Its own limits are in
 :doc:`/security/threat-model`: root can run every command of the
-runtime binary (R2), and telemetry has no proof of origin (R17).
+runtime binary (R2), and telemetry is the target's own account (R17).
 
 Summary
 -------

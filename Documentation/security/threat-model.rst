@@ -2042,30 +2042,27 @@ R17 Telemetry is the target's own account
    Map snapshots are unsigned unless ``map_export.tpm_sign = true`` is
    set in the signed config image. With ``map_export.tpm_sign = true``,
    each OTLP export quotes the domain-separated digest
-   ``otel_origin_digest(boot_id, seq, body_sha256)`` with the attestation
-   key of ``attest`` over no PCR and attaches ``X-Shirudo-TPM-AK-Name``,
-   ``X-Shirudo-TPM-Attest``, ``X-Shirudo-TPM-Signature``,
-   ``X-Shirudo-Boot-ID`` and ``X-Shirudo-Export-Seq`` for offline
-   verification by ``shirudo-quote-check --otel``, where
-   ``body_sha256`` covers the raw HTTP request body on the wire
-   (compressed when ``gzip`` is on). A keepalive likewise
+   ``otel_origin_digest(body_sha256)`` with the attestation key of
+   ``attest`` over no PCR and attaches ``shirudo.tpm.ak_name``,
+   ``shirudo.tpm.ak``, ``shirudo.tpm.attest`` and
+   ``shirudo.tpm.signature`` (all hex) as OTLP ``resource.attributes``
+   for offline verification by ``shirudo-quote-check --otel`` (and
+   ClickHouse ``tpm_otel_check``). A keepalive likewise
    carries a quote of the SHA-256 of its body by the attestation key of
    ``attest``, created for each keepalive, over no PCR, and
    ``shirudo-quote-check`` verifies it without a TPM. A quote that
-   checks proves that the body (and, for signed OTLP exports, the boot
-   identity and export sequence) is unchanged since that key signed it,
-   and its clock orders the quotes of one key. The export sequence
-   orders nothing across runs: it counts the exports of one invocation
-   and starts again at 1 in the next, and the boot identity is a string
-   the target reads from ``/proc``. What orders two exports is the
-   clock, the reset count and the restart count inside the quote, which
-   the TPM signs. The proof travels in HTTP headers, so it reaches a
-   backend only through a collector that forwards them and leaves the
-   body as sent; the example collector of :src:`tools/backend` does
-   neither. A quote sent
-   again checks as it did the first time: a backend has to take a
-   record's age from when its clock first arrived, as the example
-   backend's check 2 does, or a silent node reads as alive. It does not prove
+   checks proves that the body is unchanged since that key signed it,
+   and ``(reset_count, restart_count, clock)`` inside the TPM-signed
+   ``TPMS_ATTEST`` orders the quotes of one key. The example collector
+   of :src:`tools/backend` forwards ``ResourceAttributes`` to
+   ``otel.otel_logs`` and declares ``tpm_otel_check``, while
+   :src:`tools/backend/sql/10-ingest.sql` wires ``tpm_quote_check`` for
+   keepalives. A quote sent
+   again checks as it did the first time: a verifier must reject
+   non-increasing ``(reset_count, restart_count, clock)`` per
+   ``ak_name`` and take a record's age from when its clock first arrived,
+   as the example backend's check 2 does, or a silent node reads as
+   alive. It does not prove
    that the key lives in a genuine TPM: only ``attest challenge`` ties
    the key to an endorsement key, and a backend treats every node as
    ``untrusted`` until enrollment records that. Nor does it vouch
