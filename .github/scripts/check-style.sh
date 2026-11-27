@@ -119,12 +119,10 @@ ignored_types() {
 	EOT
 }
 
-# The C the project writes: not the vendored libbpf, not the BTF dump the
-# kernel-cve package carries and not the headers make -C
-# upatches/kernel-obs lists generates. A git command limited to it.
+# The C the project writes: not the vendored libbpf and not the headers
+# make -C upatches/kernel-obs lists generates. A git command limited to it.
 git_c() {
 	git "$@" -- '*.c' '*.h' ':(exclude)vendor/' \
-		':(exclude)upatches/kernel-cve/vmlinux.h' \
 		':(exclude)*_generated.h'
 }
 

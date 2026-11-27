@@ -1,111 +1,60 @@
 {
-  "artifacts": {
-    "builder_inputs_only": false,
-    "per_record_metadata_included": false,
-    "signing_certificates_included": true,
-    "upatches_included": false
-  },
+  "schema": 1,
   "collateral": {
     "beefiles": [
       "kernel-cve/cve-2025-71093-e1000-tbi-detector.bee",
+      "kernel-cve/cve-2026-31431-aead-detector.bee",
+      "kernel-cve/cve-2026-31431-af-alg-block.bee",
+      "kernel-cve/cve-2026-31431-alg-splice-block.bee",
       "kernel-cve/cve-2026-31675-netem-detector.bee",
       "kernel-cve/cve-2026-63984-rpl-detector.bee"
     ],
     "manifest": "kernel-cve/manifest.json",
     "per_entry_source_dirs": "kernel-cve/sources/"
   },
-  "count": 3,
-  "generated_at": "2026-09-18T20:24:50Z",
+  "count": 6,
   "records": [
     {
-      "archive_path": null,
-      "archive_slug": "cve-2025-71093-e1000-oob-e1000-tbi-should-accept",
-      "artifact_sha256": "53533dea753c3e78c006d81367a5c4b2b673b8fa325f6003880ecbab73d85623",
+      "beefile": "cve-2025-71093-e1000-tbi-detector.bee",
       "cve": "CVE-2025-71093",
-      "health_status": "passed",
-      "kernel_branch": "7.2",
-      "kernel_release": "7.2.0-shirudo-7.2",
-      "metadata_path": null,
-      "metadata_upatch_sha256": "53533dea753c3e78c006d81367a5c4b2b673b8fa325f6003880ecbab73d85623",
-      "payload_sha256": "6faac10afd0efbe96837934e94d4eeb9c126da90bc3ff92308aa07fa9a9f33fb",
-      "predicate_materialization_status": "materialized_source_fix_detector",
-      "predicate_status": "source_derived_unvalidated",
-      "rebuild_manifest": null,
-      "signer": {
-        "certificate_archive_path": null,
-        "certificate_sha256": null,
-        "certificate_source": null
-      },
-      "slug": "cve-2025-71093-e1000-oob-e1000-tbi-should-accept",
-      "source_archive_path": "sources/cve-2025-71093-e1000-oob-e1000-tbi-should-accept/observability/cve-2025-71093-e1000-tbi-detector.bpf.c",
-      "source_metadata": "2026-09-08-restart/cve-2025-71093-e1000-oob-e1000-tbi-should-accept/observability/observability.json",
-      "status": "loaded_health_passed",
-      "upatch_included": false,
-      "upatch_name": "cve-2025-71093-candidate-bpf-obs"
+      "id": "cve-2025-71093-e1000-tbi-detector",
+      "role": "detector",
+      "source_archive_path": "sources/cve-2025-71093-e1000-oob-e1000-tbi-should-accept/observability/cve-2025-71093-e1000-tbi-detector.bpf.c"
     },
     {
-      "archive_path": null,
-      "archive_slug": "cve-2026-31675-net-sched-sch-netem-oob-access-packet-corruption",
-      "artifact_sha256": "f075c4d5eb34acc18a36f3f9232b971209d0d2d9f817fb70340571e7a0418e13",
+      "beefile": "cve-2026-31431-aead-detector.bee",
+      "cve": "CVE-2026-31431",
+      "id": "cve-2026-31431-aead-detector",
+      "role": "detector",
+      "source_archive_path": "sources/cve-2026-31431-crypto-algif-aead-copy-fail/observability/cve-2026-31431-copyfail-detector.bpf.c"
+    },
+    {
+      "beefile": "cve-2026-31431-af-alg-block.bee",
+      "cve": "CVE-2026-31431",
+      "id": "cve-2026-31431-af-alg-block",
+      "role": "mitigation",
+      "source_archive_path": "sources/cve-2026-31431-crypto-algif-aead-copy-fail/mitigation/cve-2026-31431-af-alg-block.bpf.c"
+    },
+    {
+      "beefile": "cve-2026-31431-alg-splice-block.bee",
+      "cve": "CVE-2026-31431",
+      "id": "cve-2026-31431-alg-splice-block",
+      "role": "mitigation",
+      "source_archive_path": "sources/cve-2026-31431-crypto-algif-aead-copy-fail/mitigation/cve-2026-31431-alg-splice-block.bpf.c"
+    },
+    {
+      "beefile": "cve-2026-31675-netem-detector.bee",
       "cve": "CVE-2026-31675",
-      "health_status": "passed",
-      "kernel_branch": "7.2",
-      "kernel_release": "7.2.0-shirudo-7.2",
-      "metadata_path": null,
-      "metadata_upatch_sha256": "f075c4d5eb34acc18a36f3f9232b971209d0d2d9f817fb70340571e7a0418e13",
-      "payload_sha256": "9c57b4f1981fbe4c91097f87b2970c7d24d4faefcb2ab21da39751d49201ec49",
-      "predicate_materialization_status": "materialized_source_fix_detector",
-      "predicate_status": "source_derived_unvalidated",
-      "rebuild_manifest": null,
-      "signer": {
-        "certificate_archive_path": null,
-        "certificate_sha256": null,
-        "certificate_source": null
-      },
-      "slug": "cve-2026-31675-net-sched-sch-netem-oob-access-packet-corruption",
-      "source_archive_path": "sources/cve-2026-31675-net-sched-sch-netem-oob-access-packet-corruption/observability/cve-2026-31675-netem-detector.bpf.c",
-      "source_metadata": "2026-09-08-restart/cve-2026-31675-net-sched-sch-netem-oob-access-packet-corruption/observability/observability.json",
-      "status": "loaded_health_passed",
-      "upatch_included": false,
-      "upatch_name": "cve-2026-31675-candidate-bpf-obs"
+      "id": "cve-2026-31675-netem-detector",
+      "role": "detector",
+      "source_archive_path": "sources/cve-2026-31675-net-sched-sch-netem-oob-access-packet-corruption/observability/cve-2026-31675-netem-detector.bpf.c"
     },
     {
-      "archive_path": null,
-      "archive_slug": "cve-2026-63984-ipv6-rpl-hdrlen-overflow-ipv6-rpl-srh-decompress",
-      "artifact_sha256": "101bfba4493c1f94315409623c715f50c016a803d56db1d82bb63f3d4c481ed2",
+      "beefile": "cve-2026-63984-rpl-detector.bee",
       "cve": "CVE-2026-63984",
-      "health_status": "passed",
-      "kernel_branch": "7.2",
-      "kernel_release": "7.2.0-shirudo-7.2",
-      "metadata_path": null,
-      "metadata_upatch_sha256": "101bfba4493c1f94315409623c715f50c016a803d56db1d82bb63f3d4c481ed2",
-      "payload_sha256": "076d0834261f46dddd4d8d1f9a2085a588e99a205ea33874084551678c1689f2",
-      "predicate_materialization_status": "materialized_source_fix_detector",
-      "predicate_status": "source_derived_unvalidated",
-      "rebuild_manifest": null,
-      "signer": {
-        "certificate_archive_path": null,
-        "certificate_sha256": null,
-        "certificate_source": null
-      },
-      "slug": "cve-2026-63984-ipv6-rpl-hdrlen-overflow-ipv6-rpl-srh-decompress",
-      "source_archive_path": "sources/cve-2026-63984-ipv6-rpl-hdrlen-overflow-ipv6-rpl-srh-decompress/observability/cve-2026-63984-rpl-detector.bpf.c",
-      "source_metadata": "2026-09-08-restart/cve-2026-63984-ipv6-rpl-hdrlen-overflow-ipv6-rpl-srh-decompress/observability/observability.json",
-      "status": "loaded_health_passed",
-      "upatch_included": false,
-      "upatch_name": "cve-2026-63984-candidate-bpf-obs"
+      "id": "cve-2026-63984-rpl-detector",
+      "role": "detector",
+      "source_archive_path": "sources/cve-2026-63984-ipv6-rpl-hdrlen-overflow-ipv6-rpl-srh-decompress/observability/cve-2026-63984-rpl-detector.bpf.c"
     }
-  ],
-  "schema": 1,
-  "selection": {
-    "deduplicate_cve": true,
-    "include_all": false,
-    "predicate_only": true,
-    "status_prefixes": [
-      "loaded_health"
-    ],
-    "statuses": []
-  },
-  "signing_certificates": [],
-  "source_root": "/home/john/git/shirudo-bees/build/kernel-cve-reproducers"
+  ]
 }

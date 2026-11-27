@@ -145,7 +145,6 @@ Why the change is made." &&
 
 test_expect_success 'vendored and generated sources are left alone' '
 	put vendor/libx/x.c "int x; // vendored" &&
-	put upatches/kernel-cve/vmlinux.h "struct a { int b; }; // dumped" &&
 	put upatches/kernel-obs/watch_generated.h "// generated" &&
 	commit "a: vendor
 
