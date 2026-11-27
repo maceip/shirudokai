@@ -45,14 +45,13 @@ def catalog_selector_of(table):
     return out
 
 
-def role_of(upatch, tree):
-    role = tree.get("role")
+def role_of(upatch, tree, path):
+    role = tree.get("role") or upatch.get("role")
     if role in ("mitigation", "detector"):
         return role
-    source = upatch.get("source", "")
-    if "detector" in tree.get("id", "") or "/observability/" in source:
-        return "detector"
-    return "mitigation"
+    print("put-shields: missing or invalid role in %s "
+          "(expected 'mitigation' or 'detector')" % path, file=sys.stderr)
+    return None
 
 
 def main():
@@ -82,6 +81,9 @@ def main():
             cves = sorted(c for c in tree.get("fixes", []) if CVE_RE.match(c))
             if not cves:
                 continue
+            role = role_of(upatch, tree, path)
+            if role is None:
+                return 1
             entry = {
                 "id": tree["id"],
                 "cves": cves,
@@ -89,10 +91,14 @@ def main():
                 "version": version,
                 "reference": reference,
                 "manifest_digest": digest,
-                "role": role_of(upatch, tree),
+                "role": role,
                 "selector": selector_of(tree.get("selector", {})),
                 "description": package.get("description", ""),
             }
+            if "affected" in tree:
+                entry["affected"] = tree["affected"]
+            if "fixed_in" in tree:
+                entry["fixed_in"] = tree["fixed_in"]
             print(json.dumps(entry, ensure_ascii=False, separators=(",", ":")))
         else:
             print(json.dumps({

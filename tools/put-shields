@@ -80,13 +80,13 @@ write_catalog()
 	} >"$catalog" || die "cannot write $catalog"
 }
 
-# Canonical curated CVE shield feed JSON for --feed.
+# Canonical curated CVE shield feed JSON and ML-DSA-87 signature for --feed.
 write_feed()
 {
 	[ -n "$feed" ] && [ -s "$work/pushed" ] || return 0
 	feed_id=${namespace#oci://*/}
 	generated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	python3 - "$feed_id" "$generated_at" "$work/feed_entries" "$feed" <<-'PY' || die "cannot write $feed"
+	python3 - "$feed_id" "$generated_at" "$work/feed_entries" "$work/feed.json" <<-'PY' || die "cannot write $feed"
 	import json, pathlib, sys
 
 	feed_id, generated_at, entries_path, out_path = sys.argv[1:]
@@ -102,13 +102,18 @@ write_feed()
 	    json.dumps(doc, ensure_ascii=False, separators=(",", ":")) + "\n"
 	)
 	PY
+	"$shirudo" bpm feed sign --feed "$work/feed.json" \
+		--out "$work/feed.json.p7s" --keys-dir "$keys" ||
+		die "cannot sign $feed"
+	mv "$work/feed.json" "$feed" || die "cannot write $feed"
+	mv "$work/feed.json.p7s" "$feed.p7s" || die "cannot write $feed.p7s"
 }
 
-# A build or a push failed: what is pushed stays pushed, so it is listed.
+# A build or a push failed: what is pushed stays pushed in --catalog,
+# while --feed writes nothing on failure.
 fail()
 {
 	write_catalog
-	write_feed
 	die "$1"
 }
 

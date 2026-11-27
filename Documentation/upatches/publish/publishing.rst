@@ -213,11 +213,12 @@ the registry can point the tag at another package your key signed, and
 
 ``--catalog <file>`` also writes the shields it pushed, with their fixes
 and selectors, for the keepalive backend to list as available
-(:doc:`/operate/backend/shields-put`). ``--feed <file>`` writes and
-signs a curated CVE shield feed (``<file>`` and ``<file>.p7s``) for
-``shirudo bpm feed``. When a build or a push fails, the
-file holds the shields pushed before it: load it, and push the rest
-under the same version, naming their Beefiles.
+(:doc:`/operate/backend/shields-put`); when a build or a push fails,
+``--catalog`` holds the shields pushed before it: load it, and push the
+rest under the same version, naming their Beefiles. ``--feed <file>``
+writes and signs a curated CVE shield feed (``<file>`` and
+``<file>.p7s``) with ``shirudo bpm feed sign`` once every build and push
+succeeds, and writes nothing on failure.
 
 Segments and registry retention
 -------------------------------
