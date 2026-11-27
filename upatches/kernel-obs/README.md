@@ -243,11 +243,14 @@ and pending-table counters in user space and in BPF:
 - [x] reject IPv6 packets that carry extension headers;
 - [x] bound every compression pointer skipped or matched, against loops,
       header offsets and out-of-packet targets;
-- [x] count a full pending table, LRU displacement, stale responses and
-      answers past its cap of 75, instead of dropping them silently;
+- [x] count LRU displacement (`DNS_DBG_REQ_LRU_EVICT` when `obs_i_dns_req`
+      reaches `DNS_REQ_MAP_ENTRIES`), stale responses, and answers past
+      its cap of 75, instead of dropping them silently; `obs_i_dns_req`
+      is a `BPF_MAP_TYPE_LRU_HASH`, so `DNS_DBG_REQ_TABLE_FULL` is only
+      incremented if an update unexpectedly fails;
 - [ ] cover malformed packets on the target, which needs a live packet
       injection harness in the test VM. The host unit suite
       `testing/unit/dns_obs.c` covers them against the shared wire
-      parser `obs_dns_parse.h` and a simulation of the matcher; the
-      matcher the BPF program runs, in `obs_dns.bpf.c`, is a separate
-      copy that no test exercises.
+      parser and QNAME matcher in `obs_dns_parse.h` (called by
+      `obs_dns.bpf.c` as well) and a simulation of the pending-query
+      LRU table.

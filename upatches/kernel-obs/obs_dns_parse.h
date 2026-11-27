@@ -11,7 +11,8 @@
 #define KERNEL_OBS_DNS_PARSE_H
 
 #ifdef __bpf__
-#define DNS_INLINE	static __always_inline
+#define DNS_INLINE		static __always_inline
+#define dns_for_range(var, end)	bpf_for(var, 0, end)
 #else
 #include <errno.h>
 #include <stdbool.h>
@@ -19,7 +20,8 @@
 #include <string.h>
 #include <shirudo/misc.h>
 
-#define DNS_INLINE	static inline
+#define DNS_INLINE		static inline
+#define dns_for_range(var, end)	for (var = 0; var < (end); (var)++)
 
 #ifndef AF_INET
 #define AF_INET		2
@@ -545,6 +547,89 @@ DNS_INLINE int dns_parse_label_into(const __u8 *data, const __u8 *data_end,
 	return ((int)len + 1) | replaced;
 }
 
+struct dns_name_walk {
+	__u32	dns_off;
+	__u32	dns_end;
+	__u32	cur;
+	__u32	after_first;
+	__u32	wire_bytes;
+	__u32	jumps;
+	__u32	name_pos;
+	__u32	next_off;
+	bool	jumped;
+	bool	done;
+	int	err;
+};
+
+DNS_INLINE int dns_skip_name_step(const __u8 *data, const __u8 *data_end,
+				  struct dns_name_walk *w)
+{
+	__u32 label_len, ptr_rel, target, cur, dns_off, dns_end;
+	const __u8 *src;
+	__u8 len;
+
+	if (!w)
+		return -EINVAL;
+	dns_off = w->dns_off;
+	dns_end = w->dns_end;
+	cur = w->cur;
+	barrier_var(dns_off);
+	barrier_var(dns_end);
+	barrier_var(cur);
+	if (dns_end > DNS_MAX_PACKET_BYTES ||
+	    dns_off > DNS_MAX_PACKET_BYTES - sizeof(struct dns_hdr) ||
+	    cur < dns_off + sizeof(struct dns_hdr) || cur >= dns_end)
+		return -EINVAL;
+	if (w->wire_bytes >= DNS_MAX_WIRE_NAME_BYTES)
+		return -EINVAL;
+	src = data + cur;
+	if (src + 1 > data_end)
+		return -EINVAL;
+	len = *src;
+
+	if ((len & DNS_COMPRESSED_MASK) == DNS_COMPRESSED_MASK) {
+		if (cur > dns_end - 2 || src + 2 > data_end)
+			return -EINVAL;
+		if (w->jumps >= DNS_MAX_JUMPS)
+			return -EINVAL;
+		ptr_rel = (((__u32)(len & 0x3f)) << 8) | (__u32)src[1];
+		if (ptr_rel < sizeof(struct dns_hdr))
+			return -EINVAL;
+		target = dns_off + ptr_rel;
+		if (target >= cur || target >= dns_end)
+			return -EINVAL;
+		if (!w->jumped) {
+			w->after_first = cur + 2;
+			w->jumped = true;
+		}
+		w->jumps++;
+		w->cur = target;
+		return 0;
+	}
+	if (len & DNS_COMPRESSED_MASK)
+		return -EINVAL;
+	if (len == 0) {
+		if (w->wire_bytes + 1 > DNS_MAX_WIRE_NAME_BYTES)
+			return -EINVAL;
+		w->next_off = w->jumped ? w->after_first : cur + 1;
+		w->done = true;
+		return 1;
+	}
+	if (len > DNS_MAX_LABEL_BYTES)
+		return -EINVAL;
+
+	label_len = (__u32)len;
+	if (w->wire_bytes + 1 + label_len >= DNS_MAX_WIRE_NAME_BYTES)
+		return -EINVAL;
+	if (label_len > dns_end - cur - 1)
+		return -EINVAL;
+	if (src + 1 + label_len > data_end)
+		return -EINVAL;
+	w->wire_bytes += 1 + label_len;
+	w->cur = cur + 1 + label_len;
+	return 0;
+}
+
 /*
  * Walk a DNS domain name starting at off within [dns_off + 12, dns_end),
  * validating every compression pointer target (strictly backward, inside the
@@ -555,74 +640,26 @@ DNS_INLINE int dns_skip_name_bounded(const __u8 *data, const __u8 *data_end,
 				     __u32 dns_off, __u32 dns_end, __u32 off,
 				     __u32 *next_off)
 {
-	__u32 cur = off, after_first = 0, wire_bytes = 0, jumps = 0;
-	bool jumped = false;
-	int step;
+	struct dns_name_walk w = {
+		.dns_off = dns_off,
+		.dns_end = dns_end,
+		.cur = off,
+	};
+	int step, rc;
 
-	barrier_var(dns_off);
-	barrier_var(dns_end);
 	if (!next_off || dns_end > DNS_MAX_PACKET_BYTES ||
 	    dns_off > DNS_MAX_PACKET_BYTES - sizeof(struct dns_hdr) ||
 	    dns_off + sizeof(struct dns_hdr) > dns_end)
 		return -EINVAL;
 
-#ifdef __clang__
-#pragma clang loop unroll(disable)
-#endif
 	for (step = 0; step < DNS_MAX_NAME_STEPS; step++) {
-		__u32 label_len, ptr_rel, target;
-		const __u8 *src;
-		__u8 len;
-
-		barrier_var(cur);
-		if (cur < dns_off + sizeof(struct dns_hdr) || cur >= dns_end)
-			return -EINVAL;
-		if (wire_bytes >= DNS_MAX_WIRE_NAME_BYTES)
-			return -EINVAL;
-		src = data + cur;
-		if (src + 1 > data_end)
-			return -EINVAL;
-		len = *src;
-
-		if ((len & DNS_COMPRESSED_MASK) == DNS_COMPRESSED_MASK) {
-			if (cur > dns_end - 2 || src + 2 > data_end)
-				return -EINVAL;
-			if (jumps >= DNS_MAX_JUMPS)
-				return -EINVAL;
-			ptr_rel = (((__u32)(len & 0x3f)) << 8) | (__u32)src[1];
-			if (ptr_rel < sizeof(struct dns_hdr))
-				return -EINVAL;
-			target = dns_off + ptr_rel;
-			if (target >= cur || target >= dns_end)
-				return -EINVAL;
-			if (!jumped) {
-				after_first = cur + 2;
-				jumped = true;
-			}
-			jumps++;
-			cur = target;
-			continue;
-		}
-		if (len & DNS_COMPRESSED_MASK)
-			return -EINVAL;
-		if (len == 0) {
-			if (wire_bytes + 1 > DNS_MAX_WIRE_NAME_BYTES)
-				return -EINVAL;
-			*next_off = jumped ? after_first : cur + 1;
+		rc = dns_skip_name_step(data, data_end, &w);
+		if (rc < 0)
+			return rc;
+		if (rc > 0) {
+			*next_off = w.next_off;
 			return 0;
 		}
-		if (len > DNS_MAX_LABEL_BYTES)
-			return -EINVAL;
-
-		label_len = (__u32)len;
-		if (wire_bytes + 1 + label_len >= DNS_MAX_WIRE_NAME_BYTES)
-			return -EINVAL;
-		if (label_len > dns_end - cur - 1)
-			return -EINVAL;
-		if (src + 1 + label_len > data_end)
-			return -EINVAL;
-		wire_bytes += 1 + label_len;
-		cur += 1 + label_len;
 	}
 	return -EINVAL;
 }
@@ -639,7 +676,7 @@ DNS_INLINE int dns_match_label_chars(const __u8 *data, const __u8 *data_end,
 				     __u32 name_pos)
 {
 	const __u8 *src;
-	__u32 i;
+	int i;
 
 	barrier_var(cur);
 	barrier_var(name_pos);
@@ -660,19 +697,17 @@ DNS_INLINE int dns_match_label_chars(const __u8 *data, const __u8 *data_end,
 	if (name_pos > DNS_MAX_NAME_CHARS || len > DNS_MAX_NAME_CHARS - name_pos)
 		return -EBADMSG;
 
-#ifdef __clang__
-#pragma clang loop unroll(disable)
-#endif
-	for (i = 0; i < len; i++) {
-		__u32 idx = name_pos + i;
+	dns_for_range(i, (int)len) {
+		__u32 idx = name_pos + (__u32)i;
+		const __u8 *p = src + 1 + (__u32)i;
 		__u8 b, eb;
 
-		if (src + 1 + i + 1 > data_end)
+		if (p + 1 > data_end)
 			return -EINVAL;
 		barrier_var(idx);
 		if (idx >= DNS_MAX_NAME_CHARS)
 			return -EBADMSG;
-		b = src[1 + i];
+		b = *p;
 		if (!dns_label_byte_recordable(b))
 			b = '?';
 		eb = (__u8)expected_name[idx];
@@ -680,6 +715,86 @@ DNS_INLINE int dns_match_label_chars(const __u8 *data, const __u8 *data_end,
 			return -EBADMSG;
 	}
 	return (int)(name_pos + len);
+}
+
+DNS_INLINE int dns_match_qname_step(const __u8 *data, const __u8 *data_end,
+				    const char *expected_name,
+				    struct dns_name_walk *w)
+{
+	__u32 label_len, ptr_rel, target, cur, dns_off, dns_end, name_pos;
+	const __u8 *src;
+	int next_pos;
+	__u8 len;
+
+	if (!expected_name || !w)
+		return -EINVAL;
+	dns_off = w->dns_off;
+	dns_end = w->dns_end;
+	cur = w->cur;
+	barrier_var(dns_off);
+	barrier_var(dns_end);
+	barrier_var(cur);
+	if (dns_end > DNS_MAX_PACKET_BYTES ||
+	    dns_off > DNS_MAX_PACKET_BYTES - sizeof(struct dns_hdr) ||
+	    cur < dns_off + sizeof(struct dns_hdr) || cur >= dns_end)
+		return -EINVAL;
+	if (w->wire_bytes >= DNS_MAX_WIRE_NAME_BYTES)
+		return -EINVAL;
+	src = data + cur;
+	if (src + 1 > data_end)
+		return -EINVAL;
+	len = *src;
+
+	if ((len & DNS_COMPRESSED_MASK) == DNS_COMPRESSED_MASK) {
+		if (cur > dns_end - 2 || src + 2 > data_end)
+			return -EINVAL;
+		if (w->jumps >= DNS_MAX_JUMPS)
+			return -EINVAL;
+		ptr_rel = (((__u32)(len & 0x3f)) << 8) | (__u32)src[1];
+		if (ptr_rel < sizeof(struct dns_hdr))
+			return -EINVAL;
+		target = dns_off + ptr_rel;
+		if (target >= cur || target >= dns_end)
+			return -EINVAL;
+		if (!w->jumped) {
+			w->after_first = cur + 2;
+			w->jumped = true;
+		}
+		w->jumps++;
+		w->cur = target;
+		return 0;
+	}
+	if (len & DNS_COMPRESSED_MASK)
+		return -EINVAL;
+	if (len == 0) {
+		if (w->wire_bytes + 1 > DNS_MAX_WIRE_NAME_BYTES)
+			return -EINVAL;
+		name_pos = w->name_pos;
+		barrier_var(name_pos);
+		if (name_pos == 0 || name_pos > DNS_MAX_NAME_CHARS)
+			return -EBADMSG;
+		if (expected_name[name_pos] != '\0')
+			return -EBADMSG;
+		w->next_off = w->jumped ? w->after_first : cur + 1;
+		w->done = true;
+		return 1;
+	}
+	if (len > DNS_MAX_LABEL_BYTES)
+		return -EINVAL;
+
+	label_len = (__u32)len;
+	if (w->wire_bytes + 1 + label_len >= DNS_MAX_WIRE_NAME_BYTES)
+		return -EINVAL;
+	if (label_len > dns_end - cur - 1)
+		return -EINVAL;
+	next_pos = dns_match_label_chars(data, data_end, cur, label_len,
+					 expected_name, w->name_pos);
+	if (next_pos < 0)
+		return next_pos;
+	w->name_pos = (__u32)next_pos;
+	w->wire_bytes += 1 + label_len;
+	w->cur = cur + 1 + label_len;
+	return 0;
 }
 
 /*
@@ -693,85 +808,26 @@ DNS_INLINE int dns_match_qname_bounded(const __u8 *data, const __u8 *data_end,
 				       const char *expected_name,
 				       __u32 *next_off)
 {
-	__u32 cur = off, after_first = 0, wire_bytes = 0, jumps = 0;
-	__u32 name_pos = 0;
-	bool jumped = false;
-	int step;
+	struct dns_name_walk w = {
+		.dns_off = dns_off,
+		.dns_end = dns_end,
+		.cur = off,
+	};
+	int step, rc;
 
-	barrier_var(dns_off);
-	barrier_var(dns_end);
 	if (!expected_name || !next_off || dns_end > DNS_MAX_PACKET_BYTES ||
 	    dns_off > DNS_MAX_PACKET_BYTES - sizeof(struct dns_hdr) ||
 	    dns_off + sizeof(struct dns_hdr) > dns_end)
 		return -EINVAL;
 
-#ifdef __clang__
-#pragma clang loop unroll(disable)
-#endif
 	for (step = 0; step < DNS_MAX_NAME_STEPS; step++) {
-		__u32 label_len, ptr_rel, target;
-		const __u8 *src;
-		int next_pos;
-		__u8 len;
-
-		barrier_var(cur);
-		if (cur < dns_off + sizeof(struct dns_hdr) || cur >= dns_end)
-			return -EINVAL;
-		if (wire_bytes >= DNS_MAX_WIRE_NAME_BYTES)
-			return -EINVAL;
-		src = data + cur;
-		if (src + 1 > data_end)
-			return -EINVAL;
-		len = *src;
-
-		if ((len & DNS_COMPRESSED_MASK) == DNS_COMPRESSED_MASK) {
-			if (cur > dns_end - 2 || src + 2 > data_end)
-				return -EINVAL;
-			if (jumps >= DNS_MAX_JUMPS)
-				return -EINVAL;
-			ptr_rel = (((__u32)(len & 0x3f)) << 8) | (__u32)src[1];
-			if (ptr_rel < sizeof(struct dns_hdr))
-				return -EINVAL;
-			target = dns_off + ptr_rel;
-			if (target >= cur || target >= dns_end)
-				return -EINVAL;
-			if (!jumped) {
-				after_first = cur + 2;
-				jumped = true;
-			}
-			jumps++;
-			cur = target;
-			continue;
-		}
-		if (len & DNS_COMPRESSED_MASK)
-			return -EINVAL;
-		if (len == 0) {
-			if (wire_bytes + 1 > DNS_MAX_WIRE_NAME_BYTES)
-				return -EINVAL;
-			barrier_var(name_pos);
-			if (name_pos == 0 || name_pos > DNS_MAX_NAME_CHARS)
-				return -EBADMSG;
-			if (expected_name[name_pos] != '\0')
-				return -EBADMSG;
-			*next_off = jumped ? after_first : cur + 1;
+		rc = dns_match_qname_step(data, data_end, expected_name, &w);
+		if (rc < 0)
+			return rc;
+		if (rc > 0) {
+			*next_off = w.next_off;
 			return 0;
 		}
-		if (len > DNS_MAX_LABEL_BYTES)
-			return -EINVAL;
-
-		label_len = (__u32)len;
-		if (wire_bytes + 1 + label_len >= DNS_MAX_WIRE_NAME_BYTES)
-			return -EINVAL;
-		if (label_len > dns_end - cur - 1)
-			return -EINVAL;
-		next_pos = dns_match_label_chars(data, data_end, cur,
-						 label_len, expected_name,
-						 name_pos);
-		if (next_pos < 0)
-			return next_pos;
-		name_pos = (__u32)next_pos;
-		wire_bytes += 1 + label_len;
-		cur += 1 + label_len;
 	}
 	return -EINVAL;
 }

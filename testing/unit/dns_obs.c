@@ -213,7 +213,17 @@ static void sim_insert_req(struct sim_dns_state *st,
 			return;
 		}
 	}
-	st->dbg[DNS_DBG_REQ_TABLE_FULL]++;
+	/* Simulate BPF_MAP_TYPE_LRU_HASH displacing the oldest entry. */
+	idx = 0;
+	for (i = 1; i < st->capacity; i++) {
+		if (st->slots[i].order < st->slots[idx].order)
+			idx = (int)i;
+	}
+	st->slots[idx].order = ++st->clock_seq;
+	st->slots[idx].key = *key;
+	st->slots[idx].req = *req;
+	st->dbg[DNS_DBG_REQ_LRU_EVICT]++;
+	st->dbg[DNS_DBG_QUERY_STORED]++;
 }
 
 static void sim_process_packet(struct sim_dns_state *st, __u16 ethertype,
@@ -754,8 +764,10 @@ static void compression_pointers_ttl_lru_and_answer_cap(void)
 
 	/*
 	 * Duplicate in-flight query (same tuple/txid) is ignored without
-	 * incrementing DNS_DBG_REQ_TABLE_FULL; stale duplicate replaces the
-	 * entry; third distinct query on a 2-slot table increments TABLE_FULL.
+	 * incrementing DNS_DBG_REQ_TABLE_FULL or DNS_DBG_REQ_LRU_EVICT;
+	 * stale duplicate replaces the entry; third distinct query on a
+	 * 2-slot LRU table displaces the oldest entry (0x5000) and counts
+	 * DNS_DBG_REQ_LRU_EVICT.
 	 */
 	EXPECT_UEQ(DNS_MAX_NAME_STEPS, 144);
 	dns_len = make_dns_query(dns, 0x5000, 0x0100, "dup.example",
@@ -765,6 +777,7 @@ static void compression_pointers_ttl_lru_and_answer_cap(void)
 	sim_process_packet(&st, ETH_P_IP, raw, pkt_len, true, 5000);
 	sim_process_packet(&st, ETH_P_IP, raw, pkt_len, true, 5500);
 	EXPECT_UEQ(st.dbg[DNS_DBG_REQ_TABLE_FULL], 0u);
+	EXPECT_UEQ(st.dbg[DNS_DBG_REQ_LRU_EVICT], 0u);
 	EXPECT_UEQ(st.dbg[DNS_DBG_REQ_LIVE], 1u);
 
 	sim_process_packet(&st, ETH_P_IP, raw, pkt_len, true,
@@ -781,7 +794,30 @@ static void compression_pointers_ttl_lru_and_answer_cap(void)
 		sim_process_packet(&st, ETH_P_IP, raw, pkt_len, true, 6000);
 	}
 	EXPECT_UEQ(st.dbg[DNS_DBG_REQ_LIVE], 2u);
-	EXPECT_UEQ(st.dbg[DNS_DBG_REQ_TABLE_FULL], 1u);
+	EXPECT_UEQ(st.dbg[DNS_DBG_REQ_LRU_EVICT], 1u);
+	EXPECT_UEQ(st.dbg[DNS_DBG_REQ_TABLE_FULL], 0u);
+
+	/* Evicted 0x5000 misses; live 0x5002 resolves and decrements LIVE. */
+	dns_len = make_dns_query(dns, 0x5000, 0x8180, "dup.example",
+				 DNS_TYPE_A, DNS_CLASS_IN);
+	put_be16_at(dns + 6, 1);
+	dns_len = append_rr(dns, dns_len, ptr_qname, 2, DNS_TYPE_A,
+			    DNS_CLASS_IN, v4_addr, 4);
+	pkt_len = build_ipv4_udp(raw, dns, dns_len, 53, 44000, 0,
+				 IPPROTO_UDP, -1, -1);
+	sim_process_packet(&st, ETH_P_IP, raw, pkt_len, false, 6050);
+	EXPECT_UEQ(st.dbg[DNS_DBG_RESP_REQ_MISS], 1u);
+
+	dns_len = make_dns_query(dns, 0x5002, 0x8180, "full.example",
+				 DNS_TYPE_A, DNS_CLASS_IN);
+	put_be16_at(dns + 6, 1);
+	dns_len = append_rr(dns, dns_len, ptr_qname, 2, DNS_TYPE_A,
+			    DNS_CLASS_IN, v4_addr, 4);
+	pkt_len = build_ipv4_udp(raw, dns, dns_len, 53, 44000, 0,
+				 IPPROTO_UDP, -1, -1);
+	sim_process_packet(&st, ETH_P_IP, raw, pkt_len, false, 6050);
+	EXPECT_UEQ(st.dbg[DNS_DBG_REQ_LIVE], 1u);
+	EXPECT_UEQ(st.recorded, 1u);
 
 	/* Answers past DNS_MAX_ANSWERS (75): 75 parsed, cap counter incremented. */
 	memset(&st, 0, sizeof(st));

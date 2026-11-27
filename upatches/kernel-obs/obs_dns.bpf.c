@@ -16,7 +16,7 @@ BUILD_BUG_ON_MSG(sizeof(struct dns_request) != 296,
 		 "dns request value layout must remain 8-byte aligned");
 
 struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
 	__uint(max_entries, DNS_REQ_MAP_ENTRIES);
 	__type(key, struct dns_request_key);
 	__type(value, struct dns_request);
@@ -62,12 +62,23 @@ static __always_inline void dns_debug_inc(__u32 key)
 
 static __always_inline void dns_req_live_inc(void)
 {
-	__u32 key = DNS_DBG_REQ_LIVE;
+	__u32 key = DNS_DBG_REQ_LIVE, tries;
 	__u64 *live;
 
 	live = bpf_map_lookup_elem(&obs_i_dns_dbg, &key);
-	if (live)
-		__sync_fetch_and_add(live, 1);
+	if (!live)
+		return;
+#pragma clang loop unroll(disable)
+	for (tries = 0; tries < 8; tries++) {
+		__u64 cur = READ_ONCE(*live);
+
+		if (cur >= DNS_REQ_MAP_ENTRIES) {
+			dns_debug_inc(DNS_DBG_REQ_LRU_EVICT);
+			return;
+		}
+		if (__sync_val_compare_and_swap(live, cur, cur + 1) == cur)
+			return;
+	}
 }
 
 static __always_inline bool dns_req_delete(const struct dns_request_key *req_key)
@@ -83,7 +94,7 @@ static __always_inline bool dns_req_delete(const struct dns_request_key *req_key
 	return true;
 }
 
-__attribute__((noinline)) void
+static __noinline void
 obs_dns_emit_name(struct serial_chunk *chunk, __u32 base,
 		  const struct dns_name __arena *stat)
 {
@@ -136,7 +147,7 @@ static int dns_emit_record(struct serial_chunk *chunk, __u32 off,
 	return 0;
 }
 
-__attribute__((noinline)) bool
+static __noinline bool
 obs_dns_name_equal_arena(const char __arena *a, const struct dns_request *req)
 {
 	int i;
@@ -156,7 +167,7 @@ obs_dns_name_equal_arena(const char __arena *a, const struct dns_request *req)
 	return true;
 }
 
-__attribute__((noinline)) void
+static __noinline void
 obs_dns_name_copy_to_arena(char __arena *dst, const struct dns_request *req)
 {
 	int i;
@@ -169,7 +180,7 @@ obs_dns_name_copy_to_arena(char __arena *dst, const struct dns_request *req)
 	dst[DNS_MAX_NAME_CHARS] = 0;
 }
 
-__attribute__((noinline)) void
+static __noinline void
 obs_dns_copy_request(struct dns_request *dst, const struct dns_request *src)
 {
 	int i;
@@ -336,116 +347,88 @@ static __always_inline int dns_parse_name(struct __sk_buff *skb, __u32 off,
 	return -EINVAL;
 }
 
+struct dns_walk_ctx {
+	struct __sk_buff	*skb;
+	const char		*expected_name;
+	struct dns_name_walk	w;
+};
+
+static long obs_dns_skip_step_cb(__u32 idx, void *data)
+{
+	struct dns_walk_ctx *ctx = data;
+	int rc;
+
+	rc = dns_skip_name_step(dns_skb_data(ctx->skb),
+				dns_skb_data_end(ctx->skb), &ctx->w);
+	if (rc < 0) {
+		ctx->w.err = rc;
+		return 1;
+	}
+	return rc > 0 ? 1 : 0;
+}
+
 __attribute__((noinline)) int
 obs_dns_skip_name(struct __sk_buff *skb, __u32 dns_off, __u32 dns_end,
 		  __u32 off)
 {
-	__u32 next_off = 0;
-	int err;
+	struct dns_walk_ctx ctx = {
+		.skb = skb,
+		.w = {
+			.dns_off = dns_off,
+			.dns_end = dns_end,
+			.cur = off,
+			.err = -EINVAL,
+		},
+	};
 
-	err = dns_skip_name_bounded(dns_skb_data(skb), dns_skb_data_end(skb),
-				    dns_off, dns_end, off, &next_off);
-	if (err < 0)
-		return err;
-	return (int)next_off;
-}
-
-__attribute__((noinline)) int
-obs_dns_match_label(struct __sk_buff *skb, __u32 cur, __u32 len,
-		    const struct dns_request *req, __u32 name_pos)
-{
-	if (!req)
-		return -EINVAL;
-	return dns_match_label_chars(dns_skb_data(skb), dns_skb_data_end(skb),
-				     cur, len, req->name, name_pos);
-}
-
-static __always_inline int dns_match_qname(struct __sk_buff *skb,
-					   __u32 dns_off, __u32 dns_end,
-					   __u32 off,
-					   const struct dns_request *req,
-					   __u32 *next_off)
-{
-	const __u8 *data = dns_skb_data(skb);
-	const __u8 *data_end = dns_skb_data_end(skb);
-	__u32 cur = off, after_first = 0, wire_bytes = 0, jumps = 0;
-	__u32 name_pos = 0;
-	bool jumped = false;
-	int step;
-
-	barrier_var(dns_off);
-	barrier_var(dns_end);
-	if (!req || !next_off || dns_end > DNS_MAX_PACKET_BYTES ||
+	if (dns_end > DNS_MAX_PACKET_BYTES ||
 	    dns_off > DNS_MAX_PACKET_BYTES - sizeof(struct dns_hdr) ||
 	    dns_off + sizeof(struct dns_hdr) > dns_end)
 		return -EINVAL;
+	bpf_loop(DNS_MAX_NAME_STEPS, obs_dns_skip_step_cb, &ctx, 0);
+	if (!ctx.w.done)
+		return ctx.w.err;
+	return (int)ctx.w.next_off;
+}
 
-#pragma clang loop unroll(disable)
-	for (step = 0; step < DNS_MAX_NAME_STEPS; step++) {
-		__u32 label_len, ptr_rel, target;
-		const __u8 *src;
-		int next_pos;
-		__u8 len;
+static long obs_dns_match_step_cb(__u32 idx, void *data)
+{
+	struct dns_walk_ctx *ctx = data;
+	int rc;
 
-		barrier_var(cur);
-		if (cur < dns_off + sizeof(struct dns_hdr) || cur >= dns_end)
-			return -EINVAL;
-		if (wire_bytes >= DNS_MAX_WIRE_NAME_BYTES)
-			return -EINVAL;
-		src = data + cur;
-		if (src + 1 > data_end)
-			return -EINVAL;
-		len = *src;
-
-		if ((len & DNS_COMPRESSED_MASK) == DNS_COMPRESSED_MASK) {
-			if (cur > dns_end - 2 || src + 2 > data_end)
-				return -EINVAL;
-			if (jumps >= DNS_MAX_JUMPS)
-				return -EINVAL;
-			ptr_rel = (((__u32)(len & 0x3f)) << 8) | (__u32)src[1];
-			if (ptr_rel < sizeof(struct dns_hdr))
-				return -EINVAL;
-			target = dns_off + ptr_rel;
-			if (target >= cur || target >= dns_end)
-				return -EINVAL;
-			if (!jumped) {
-				after_first = cur + 2;
-				jumped = true;
-			}
-			jumps++;
-			cur = target;
-			continue;
-		}
-		if (len & DNS_COMPRESSED_MASK)
-			return -EINVAL;
-		if (len == 0) {
-			if (wire_bytes + 1 > DNS_MAX_WIRE_NAME_BYTES)
-				return -EINVAL;
-			barrier_var(name_pos);
-			if (name_pos == 0 || name_pos > DNS_MAX_NAME_CHARS)
-				return -EBADMSG;
-			if (req->name[name_pos] != '\0')
-				return -EBADMSG;
-			*next_off = jumped ? after_first : cur + 1;
-			return 0;
-		}
-		if (len > DNS_MAX_LABEL_BYTES)
-			return -EINVAL;
-
-		label_len = (__u32)len;
-		if (wire_bytes + 1 + label_len >= DNS_MAX_WIRE_NAME_BYTES)
-			return -EINVAL;
-		if (label_len > dns_end - cur - 1)
-			return -EINVAL;
-		next_pos = obs_dns_match_label(skb, cur, label_len, req,
-					       name_pos);
-		if (next_pos < 0)
-			return next_pos;
-		name_pos = (__u32)next_pos;
-		wire_bytes += 1 + label_len;
-		cur += 1 + label_len;
+	rc = dns_match_qname_step(dns_skb_data(ctx->skb),
+				  dns_skb_data_end(ctx->skb),
+				  ctx->expected_name, &ctx->w);
+	if (rc < 0) {
+		ctx->w.err = rc;
+		return 1;
 	}
-	return -EINVAL;
+	return rc > 0 ? 1 : 0;
+}
+
+__attribute__((noinline)) int
+obs_dns_match_qname(struct __sk_buff *skb, __u32 dns_off, __u32 dns_end,
+		    __u32 off, const struct dns_request *req)
+{
+	struct dns_walk_ctx ctx = {
+		.skb = skb,
+		.expected_name = req ? req->name : NULL,
+		.w = {
+			.dns_off = dns_off,
+			.dns_end = dns_end,
+			.cur = off,
+			.err = -EINVAL,
+		},
+	};
+
+	if (!req || dns_end > DNS_MAX_PACKET_BYTES ||
+	    dns_off > DNS_MAX_PACKET_BYTES - sizeof(struct dns_hdr) ||
+	    dns_off + sizeof(struct dns_hdr) > dns_end)
+		return -EINVAL;
+	bpf_loop(DNS_MAX_NAME_STEPS, obs_dns_match_step_cb, &ctx, 0);
+	if (!ctx.w.done)
+		return ctx.w.err;
+	return (int)ctx.w.next_off;
 }
 
 /* The querying identity: the socket's owner, else the sending task. */
@@ -579,20 +562,28 @@ static __always_inline void dns_parse_query_payload(struct __sk_buff *skb,
 	dns_store_pending_query(req_key, &scratch->req, now_ns);
 }
 
+struct dns_answer_ctx {
+	__u64	now;
+	__u32	dns_off;
+	__u32	dns_end;
+	__u32	off;
+};
+
 __attribute__((noinline)) int
 obs_dns_parse_answer(struct __sk_buff *skb, const struct dns_request *req,
-		     __u32 dns_off, __u32 dns_end, __u32 off, __u64 now)
+		     const struct dns_answer_ctx *ctx)
 {
 	const __u8 *data, *data_end;
 	struct dns_key key = {};
 	__u16 rtype, rclass, rdlen;
-	__u32 next, rdata_off;
+	__u32 next, rdata_off, dns_end;
 	int skip_rc, addr_rc;
 
-	if (!req)
+	if (!req || !ctx)
 		return -EINVAL;
+	dns_end = ctx->dns_end;
 	dns_debug_inc(DNS_DBG_RESP_ANSWER_SEEN);
-	skip_rc = obs_dns_skip_name(skb, dns_off, dns_end, off);
+	skip_rc = obs_dns_skip_name(skb, ctx->dns_off, dns_end, ctx->off);
 	if (skip_rc < 0) {
 		dns_debug_inc(DNS_DBG_RESP_ANSWER_SKIP_FAIL);
 		return -EINVAL;
@@ -630,7 +621,7 @@ obs_dns_parse_answer(struct __sk_buff *skb, const struct dns_request *req,
 	} else {
 		dns_debug_inc(DNS_DBG_RESP_ADDR_PARSED);
 		dns_debug_inc(DNS_DBG_RESP_TOUCH);
-		dns_table_touch(req, &key, now);
+		dns_table_touch(req, &key, ctx->now);
 	}
 	return (int)(rdata_off + rdlen);
 }
@@ -645,8 +636,8 @@ static __always_inline void dns_parse_response_payload(struct __sk_buff *skb,
 	__u64 now = obs_now(), now_ns = bpf_ktime_get_ns();
 	struct dns_scratch *scratch;
 	struct dns_request *req;
-	__u32 one = 1, off, next = 0;
-	bool bad_flags = false;
+	__u32 one = 1, next = 0;
+	bool bad_flags = false, answer_cap = false;
 	int qrc, answer_off, i;
 
 	dns_debug_inc(DNS_DBG_RESP_PACKET);
@@ -700,9 +691,9 @@ static __always_inline void dns_parse_response_payload(struct __sk_buff *skb,
 		return;
 	}
 
-	qrc = dns_match_qname(skb, dns_off, dns_end,
-			      dns_off + sizeof(struct dns_hdr), &scratch->req,
-			      &next);
+	qrc = obs_dns_match_qname(skb, dns_off, dns_end,
+				  dns_off + sizeof(struct dns_hdr),
+				  &scratch->req);
 	if (qrc < 0) {
 		if (qrc == -EBADMSG)
 			dns_debug_inc(DNS_DBG_RESP_QNAME_MISMATCH);
@@ -710,6 +701,7 @@ static __always_inline void dns_parse_response_payload(struct __sk_buff *skb,
 			dns_debug_inc(DNS_DBG_RESP_QNAME_SKIP_FAIL);
 		return;
 	}
+	next = (__u32)qrc;
 	data = dns_skb_data(skb);
 	data_end = dns_skb_data_end(skb);
 	if (!dns_read_u16_bounded(data, data_end, next, dns_end, &qtype) ||
@@ -742,18 +734,28 @@ static __always_inline void dns_parse_response_payload(struct __sk_buff *skb,
 		return;
 	}
 
-	off = next + 4;
-#pragma clang loop unroll(disable)
-	for (i = 0; i < DNS_MAX_ANSWERS; i++) {
-		if (i >= ancount)
-			break;
-		answer_off = obs_dns_parse_answer(skb, &scratch->req, dns_off,
-						  dns_end, off, now);
-		if (answer_off < 0)
-			break;
-		off = (__u32)answer_off;
+	{
+		struct dns_answer_ctx actx = {
+			.now = now,
+			.dns_off = dns_off,
+			.dns_end = dns_end,
+			.off = next + 4,
+		};
+
+		bpf_for(i, 0, DNS_MAX_ANSWERS) {
+			if (i >= ancount)
+				break;
+			answer_off = obs_dns_parse_answer(skb, &scratch->req,
+							  &actx);
+			if (answer_off < 0)
+				break;
+			actx.off = (__u32)answer_off;
+			if (i == DNS_MAX_ANSWERS - 1 &&
+			    ancount > DNS_MAX_ANSWERS)
+				answer_cap = true;
+		}
 	}
-	if (i == DNS_MAX_ANSWERS && ancount > DNS_MAX_ANSWERS)
+	if (answer_cap)
 		dns_debug_inc(DNS_DBG_RESP_ANSWER_CAP);
 }
 
