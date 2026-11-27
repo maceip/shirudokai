@@ -6,7 +6,6 @@ package com.security.rasp;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -58,15 +57,30 @@ public final class SqlLexer {
         }
     }
 
-    private static final Set<String> SPLIT_GLUE_KEYWORDS = Set.of(
-            "AND", "OR", "WHERE", "UNION", "ORDER", "GROUP", "HAVING",
-            "LIMIT", "VALUES", "SET", "INTO", "FROM", "JOIN", "ON"
-    );
+    public enum Dialect {
+        AUTO,
+        MYSQL,
+        POSTGRES
+    }
+
+    public static final String DIALECT_PROPERTY = "shirudo.sql.dialect";
 
     private static final AtomicLong OBSERVED_COUNT = new AtomicLong();
     private static final AtomicLong ENFORCED_COUNT = new AtomicLong();
 
     private SqlLexer() {}
+
+    public static Dialect currentDialect() {
+        String raw = System.getProperty(DIALECT_PROPERTY, "auto");
+        String norm = raw.trim().toLowerCase(Locale.ROOT);
+        if ("mysql".equals(norm) || "mariadb".equals(norm)) {
+            return Dialect.MYSQL;
+        }
+        if ("postgres".equals(norm) || "postgresql".equals(norm) || "ansi".equals(norm)) {
+            return Dialect.POSTGRES;
+        }
+        return Dialect.AUTO;
+    }
 
     public static long observedCount() {
         return OBSERVED_COUNT.get();
@@ -103,15 +117,27 @@ public final class SqlLexer {
     }
 
     public static List<Token> tokenize(String sql) {
-        return tokenize(sql, true);
+        return tokenize(sql, true, false);
+    }
+
+    public static List<Token> tokenize(String sql, boolean backslashEscape) {
+        return tokenize(sql, backslashEscape, false);
     }
 
     /**
      * MySQL and MariaDB take a backslash in a quoted string as an escape.
      * PostgreSQL with standard_conforming_strings, SQL Server, Oracle and
-     * SQLite take it as a character, so that \' ends the string there.
+     * SQLite take it as a character, so that \' ends the string there
+     * (except PostgreSQL E'...' escape strings when dialect is POSTGRES).
      */
-    public static List<Token> tokenize(String sql, boolean backslashEscape) {
+    public static List<Token> tokenize(String sql, boolean backslashEscape,
+                                       boolean hashCommentAlways) {
+        return tokenize(sql, backslashEscape, hashCommentAlways, false);
+    }
+
+    private static List<Token> tokenize(String sql, boolean backslashEscape,
+                                        boolean hashCommentAlways,
+                                        boolean postgresEscapeStrings) {
         List<Token> out = new ArrayList<>();
         if (sql == null) {
             return out;
@@ -132,6 +158,14 @@ public final class SqlLexer {
             if (condCommentDepth > 0 && c == '*' && i + 1 < n && sql.charAt(i + 1) == '/') {
                 condCommentDepth--;
                 i += 2;
+                continue;
+            }
+
+            // PostgreSQL E'...' / e'...' escape string literal.
+            if (postgresEscapeStrings && (c == 'E' || c == 'e')
+                    && (i == 0 || !isIdentPart(sql.charAt(i - 1)))
+                    && i + 1 < n && sql.charAt(i + 1) == '\'') {
+                i = readQuoted(sql, i + 1, '\'', true, TokenType.STRING, out);
                 continue;
             }
 
@@ -180,8 +214,11 @@ public final class SqlLexer {
                 continue;
             }
 
-            // MySQL # line comment.
-            if (c == '#') {
+            // MySQL # line comment. In PostgreSQL, #> and #>> are JSON operators;
+            // in AUTO mode only treat # as a comment when not followed by '>'.
+            if (c == '#' && (hashCommentAlways
+                    || (currentDialect() != Dialect.POSTGRES
+                        && !(i + 1 < n && sql.charAt(i + 1) == '>')))) {
                 int start = i;
                 i++;
                 while (i < n && sql.charAt(i) != '\n' && sql.charAt(i) != '\r') {
@@ -293,7 +330,8 @@ public final class SqlLexer {
                 String two = sql.substring(i, i + 2);
                 if ("!=".equals(two) || "<>".equals(two) || "<=".equals(two)
                         || ">=".equals(two) || "||".equals(two)
-                        || "&&".equals(two) || ":=".equals(two)) {
+                        || "&&".equals(two) || ":=".equals(two)
+                        || "#>".equals(two)) {
                     out.add(new Token(TokenType.OPERATOR, two));
                     i += 2;
                     continue;
@@ -362,104 +400,31 @@ public final class SqlLexer {
     }
 
     /**
-     * The agent does not know which database reads the statement, so a
-     * statement with a backslash is read both ways and refused when
-     * either reading is an injection. A single string that MySQL ends
-     * properly is unterminated in the other reading ('it\'s'), whereas
-     * a two-parameter \' split swallows SQL glue up to the second
-     * parameter's opening quote and injects SQL tokens after it.
+     * In AUTO dialect, the agent does not know which database reads the
+     * statement, so a statement with a backslash is read both ways and
+     * refused when either reading is malicious or when the two readings
+     * disagree on termination (one unterminated, the other not).
      */
     public static Analysis analyze(String sql) {
-        Analysis escaped = analyze(tokenize(sql, true));
+        return analyze(sql, currentDialect());
+    }
+
+    public static Analysis analyze(String sql, Dialect dialect) {
+        if (dialect == Dialect.MYSQL) {
+            return analyze(tokenize(sql, true, true, false));
+        }
+        if (dialect == Dialect.POSTGRES) {
+            return analyze(tokenize(sql, false, false, true));
+        }
+        Analysis escaped = analyze(tokenize(sql, true, false, false));
         if (escaped.malicious || sql == null || sql.indexOf('\\') < 0) {
             return escaped;
         }
-        Analysis literal = analyze(tokenize(sql, false));
+        Analysis literal = analyze(tokenize(sql, false, false, false));
         if (literal.malicious) {
-            if (!"unterminated_quote_or_comment".equals(literal.reason)) {
-                return literal;
-            }
-            if (hasBackslashQuoteSplit(sql)) {
-                return new Analysis(true, "backslash_quote_smuggling", escaped.tokens);
-            }
+            return literal;
         }
         return escaped;
-    }
-
-    private static boolean hasBackslashQuoteSplit(String sql) {
-        final int n = sql.length();
-        int i = 0;
-        while (i < n) {
-            char c = sql.charAt(i);
-            if (c == '\'' || c == '"') {
-                char quote = c;
-                int j = i + 1;
-                int firstEscapedQuoteAfter = -1;
-                int closeIdx = -1;
-                while (j < n) {
-                    char ch = sql.charAt(j);
-                    if (ch == '\\' && j + 1 < n) {
-                        if (sql.charAt(j + 1) == quote && firstEscapedQuoteAfter < 0) {
-                            firstEscapedQuoteAfter = j + 2;
-                        }
-                        j += 2;
-                        continue;
-                    }
-                    if (ch == quote) {
-                        if (j + 1 < n && sql.charAt(j + 1) == quote) {
-                            j += 2;
-                            continue;
-                        }
-                        closeIdx = j;
-                        break;
-                    }
-                    j++;
-                }
-                if (closeIdx > 0 && firstEscapedQuoteAfter > 0
-                        && firstEscapedQuoteAfter <= closeIdx
-                        && hasTokensAfterClose(sql, closeIdx + 1)
-                        && looksLikeSwallowedSqlGlue(sql, firstEscapedQuoteAfter, closeIdx)) {
-                    return true;
-                }
-                i = (closeIdx > 0) ? closeIdx + 1 : n;
-                continue;
-            }
-            i++;
-        }
-        return false;
-    }
-
-    private static boolean hasTokensAfterClose(String sql, int from) {
-        final int n = sql.length();
-        int i = from;
-        while (i < n && (Character.isWhitespace(sql.charAt(i)) || sql.charAt(i) == ';')) {
-            i++;
-        }
-        return i < n;
-    }
-
-    private static boolean looksLikeSwallowedSqlGlue(String sql, int start, int end) {
-        int p = start;
-        while (p < end && Character.isWhitespace(sql.charAt(p))) {
-            p++;
-        }
-        if (p >= end) {
-            return false;
-        }
-        char ch = sql.charAt(p);
-        if (ch == ',' || ch == ')' || ch == ';' || ch == '='
-                || ch == '!' || ch == '<' || ch == '>' || ch == '|' || ch == '&') {
-            return true;
-        }
-        if (Character.isLetter(ch)) {
-            int wEnd = p + 1;
-            while (wEnd < end && isIdentPart(sql.charAt(wEnd))) {
-                wEnd++;
-            }
-            String word = sql.substring(p, wEnd).toUpperCase(Locale.ROOT);
-            return SPLIT_GLUE_KEYWORDS.contains(word);
-        }
-        return false;
     }
 
     private static Analysis analyze(List<Token> raw) {

@@ -15,14 +15,24 @@ MariaDB `/*M! ... */` conditional comments, stacked statements (`;`),
 numeric, `IS [NOT] NULL` or `LIKE '%'` tautologies (`OR 1=1`,
 `OR -1=-1`, `'a'!='b'`, `OR NULL IS NULL`, `OR 'a' LIKE '%'`).
 
-The agent does not know which database reads a statement. MySQL and
-MariaDB take `\'` in a string as an escaped quote; PostgreSQL with
-`standard_conforming_strings`, SQL Server, Oracle and SQLite end the
-string there. A statement with a backslash is read both ways and refused
-when either reading is an injection.
+The agent does not know which database reads a statement by default.
+MySQL and MariaDB take `\'` in a string as an escaped quote; PostgreSQL
+with `standard_conforming_strings`, SQL Server, Oracle and SQLite end
+the string there. In the default `auto` dialect (`-Dshirudo.sql.dialect=auto`),
+a statement with a backslash is read both ways and refused when either
+reading is an injection or when the two readings disagree on
+termination. Set `-Dshirudo.sql.dialect=mysql` if an application passes
+MySQL `\'`-escaped strings, or `-Dshirudo.sql.dialect=postgres` for
+PostgreSQL (`E'...'` escape strings and `#` / `#>` / `#>>` operators);
+in `auto` mode, `#>` and `#>>` are treated as operators rather than `#`
+line comments.
 
 It does not detect blind or time-based injection (`SLEEP()`,
-`pg_sleep()`) that changes no SQL token structure.
+`pg_sleep()`) that changes no SQL token structure. Because
+`prepareStatement` and `prepareCall` receive only the runtime `String`,
+the agent cannot distinguish a static SQL literal from a dynamically
+concatenated string, so a static prepared query with `--` or `#` after
+a quoted literal is flagged as `comment_after_literal`.
 
 Set `-Dshirudo.sql.mode=observe` to log and count structural SQL
 injection matches without throwing `SecurityException`; the default mode

@@ -35,8 +35,6 @@ public final class SqlLexerTest {
         // and JDBC '?' / '$1' parameterized prepared/callable statements.
         assertAllowed("SELECT * FROM users WHERE username = 'admin'");
         assertAllowed("SELECT * FROM users WHERE surname = 'O''Reilly'");
-        assertAllowed("SELECT * FROM notes WHERE body = 'it\\'s safe\\\\'");
-        assertAllowed("SELECT * FROM users WHERE first = 'O\\'Brien' AND last = 'Smith'");
         assertAllowed("SELECT `id`, \"user_name\" FROM `users` WHERE `id` = 42;");
         assertAllowed("/* ORM query hint */ SELECT u.id FROM users u WHERE u.active = TRUE AND u.role = 'staff'");
         assertAllowed("INSERT INTO audit_log (actor, msg) VALUES ('svc', 'semi;colon -- inside # literal /* ok */')");
@@ -128,16 +126,40 @@ public final class SqlLexerTest {
         assertBlocked("SELECT id FROM items WHERE id = 1 /*m! OR 1=1 */",
                 "mysql_conditional_comment");
 
-        // Backslash-quote ANSI vs MySQL readings AND MySQL two-parameter \' split smuggling.
+        // Backslash-quote readings in AUTO mode refuse disagreement on termination
+        // as well as two-parameter \' split smuggling and PostgreSQL E'...' bypasses.
         assertBlocked("SELECT * FROM users WHERE name = '\\' UNION SELECT password FROM users --'",
                 "comment_after_literal");
         assertBlocked("SELECT * FROM users WHERE name = '\\' OR 1=1 --'", null);
+        assertBlocked("SELECT * FROM users WHERE name = '\\' IS NOT NULL OR E'\\''<>''",
+                "unterminated_quote_or_comment");
         assertBlocked("SELECT * FROM users WHERE username = '\\' AND password = ' OR role = 'admin'",
-                "backslash_quote_smuggling");
+                "unterminated_quote_or_comment");
         assertBlocked("INSERT INTO admins (u) VALUES ('\\'), ('), ('attacker'), ('x')",
-                "backslash_quote_smuggling");
+                "unterminated_quote_or_comment");
+        assertBlocked("SELECT * FROM users WHERE name = 'O\\'Brien'",
+                "unterminated_quote_or_comment");
         assertAllowed("SELECT * FROM files WHERE path = 'C:\\\\temp\\\\a.txt'");
+
+        // PostgreSQL JSON #> / #>> operators work in AUTO and POSTGRES dialects.
+        assertAllowed("SELECT * FROM items WHERE tag = 'x' AND data #> '{a}' = '\"y\"'");
+        assertAllowed("SELECT * FROM items WHERE tag = 'x' AND data #>> '{a,b}' = 'y'");
+
+        // Dialect-specific checks: MySQL allows \' inside strings and treats # as a comment;
+        // PostgreSQL catches the E'...' bypass as boolean_tautology and allows # / #>>.
+        System.setProperty(SqlLexer.DIALECT_PROPERTY, "mysql");
+        assertAllowed("SELECT * FROM notes WHERE body = 'it\\'s safe\\\\'");
+        assertAllowed("SELECT * FROM users WHERE first = 'O\\'Brien' AND last = 'Smith'");
         assertAllowed("SELECT * FROM users WHERE name = 'O\\'Brien'");
+        assertBlocked("SELECT * FROM users WHERE username = 'admin' # comment",
+                "comment_after_literal");
+
+        System.setProperty(SqlLexer.DIALECT_PROPERTY, "postgres");
+        assertBlocked("SELECT * FROM users WHERE name = '\\' IS NOT NULL OR E'\\''<>''",
+                "boolean_tautology");
+        assertAllowed("SELECT * FROM items WHERE tag = 'x' AND data #>> '{a,b}' = 'y'");
+        assertAllowed("SELECT * FROM items WHERE tag = 'x' AND col # 1 = 0");
+        System.clearProperty(SqlLexer.DIALECT_PROPERTY);
 
         // Stacked statements (including preparedStatement concatenation).
         assertBlocked("SELECT * FROM users WHERE id = 1; DROP TABLE users",
