@@ -107,6 +107,13 @@ signed config image.
      - The prerelease tag, assets, and repository token,
        and rejection of missing source, mismatched source and a bundle
        with the wrong checksum
+   * - ``t0011-main-status``
+     - ``main-status.sh``: the issue a failure on main opens, with its
+       commit, run and failed jobs, the label created once, a later
+       failure added to the open issue once, a pass closing it and a
+       failure that finishes after it changing nothing, cancelled and
+       skipped runs passed over, and the issue of another workflow left
+       alone
 
 ``build`` (1)
 ~~~~~~~~~~~~~
@@ -312,7 +319,8 @@ signed config image.
        ``uprobe`` and ``uretprobe`` loads that run once, report their
        checked ``/proc/self/fd/<n>`` target paths and unload
    * - ``t3108-status-many``
-     - ``status --json`` with eighty loaded upatches lists all of them
+     - In ``functional/upatch-many/``, a VM of its own: ``status --json``
+       with eighty loaded upatches lists all of them
    * - ``t3109-policy-labels``
      - A loaded upatch labels executable and ordinary files, ORing
        multiple policy bits with a preexisting xattr; its signed policy
@@ -1616,13 +1624,13 @@ Platforms
 
 - Real TPMs. Every TPM test uses ``swtpm`` in the VM or the libtpms
   simulator helper.
-- Architectures. CI builds and runs the unit tests on arm64 and on
-  riscv64, under QEMU user emulation, with the BPF objects built from
-  the BTF of the x86-64 bpf-next kernel. The CI suite runs unit,
-  ``ci-checks`` and functional target VM tests on arm64 as well as
-  x86-64, staging the native ``kernel-packages-arm64-ci`` image and
-  ``qemu-system-arm``. End-to-end tests and fuzzing run on x86-64 only.
-  riscv64 has no test VM.
+- Architectures. CI builds and runs the unit tests on arm64, and on
+  riscv64 under QEMU user emulation after each push to ``main``, with
+  the BPF objects built from the BTF of the x86-64 bpf-next kernel. The
+  CI suite runs unit, ``ci-checks`` and functional target VM tests on
+  arm64 as well as x86-64, staging the native
+  ``kernel-packages-arm64-ci`` image and ``qemu-system-arm``. End-to-end
+  tests and fuzzing run on x86-64 only. riscv64 has no test VM.
 - Kernels. CI boots bpf-next only. ``KERNEL=`` boots a release kernel
   by hand.
 

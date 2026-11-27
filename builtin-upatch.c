@@ -4640,7 +4640,11 @@ static int export_one_map(const char *upatch, const char *map,
 	if (json_output) {
 		err = append_one_map_json(json_path, &v);
 		if (err) {
-			if (json_path)
+			if (err == -ENODATA)
+				pr_err("upatch map: %s/%s has no decoder, and "
+				       "--json writes what a decoder returns",
+				       upatch, map);
+			else if (json_path)
 				pr_err("upatch map: append JSON to %s: %s",
 				       json_path, strerror(-err));
 			else

@@ -54,18 +54,19 @@ Before you begin
 
 The ``CI suite`` workflow runs the x86-64 unit and script checks,
 four functional shards, and the end-to-end tests in parallel jobs.
-The functional shards run upatch, tamperproof, the BPM families, and
-the remaining families. The arm64 host job runs unit, script, and host
-functional tests together.
+The functional shards run the two upatch families, tamperproof, the BPM
+families, and the remaining families, each booting two families' VMs at
+a time. The arm64 host job runs unit, script, and host functional tests
+together.
 
 The merge queue tests a pull request again on top of the changes that
 land before it, and runs only what such a change most often breaks: the
 gcc and clang jobs of ``Build`` with their unit tests, ``Build every
 commit``, the documentation, the sign-offs, and the checkpatch, SPDX,
 ShellCheck and unused-function jobs of ``Lint``. The ``CI suite``, the
-arm64, riscv64 and scan-build jobs, sparse, Coccinelle and the packages
-run on the pull request and on every push to ``main``. In the merge queue
-their jobs pass without running.
+arm64 and scan-build jobs, sparse, Coccinelle and the packages run on the
+pull request and on every push to ``main``. In the merge queue their jobs
+pass without running. The riscv64 build runs on pushes to ``main`` alone.
 
 On pull requests and pushes to ``main``, Lint runs the full-tree Coccinelle
 and unused-function checks. The CI suite, coverage, and sanitizer jobs still
@@ -96,6 +97,12 @@ checksums and the run ID in :src:`testing/vm/kernel-artifact.sh` together.
 Land kernel input changes first. After publishing their bundles, update
 the pin in the same change as any shirudo code that requires the new
 kernel.
+
+The merge queue starts the runs on ``main``, so GitHub tells no one when
+one fails. The ``Main status`` workflow opens an issue labelled
+``area/ci/main`` instead, ``main: <workflow> fails``, with the commit,
+the run and the jobs that failed. A later failure on ``main`` adds its run to the
+issue, and the workflow's next pass there closes it.
 
 .. raw:: html
 
@@ -271,9 +278,11 @@ A shell test is named ``t<F><K><NN>-<what>.sh``:
      - ``functional/signing/``
      - Keys, signatures, vouching, revocation and the trusted set
    * - 3
-     - ``functional/upatch/``
+     - ``functional/upatch/``, ``functional/upatch-many/``
      - The ``.upatch`` container, attach metadata, decoders,
-       serializers, signed policy labels, load, unload and ``upatch get``
+       serializers, signed policy labels, load, unload and ``upatch get``;
+       ``upatch-many`` boots a VM of its own for the eighty upatches
+       ``t3108`` loads, which CI boots beside ``upatch``'s
    * - 4
      - ``functional/tpm/``
      - TPM structures, the measurement register, the eventlog,
@@ -414,14 +423,15 @@ Run under the sanitizers
 
 ``SANITIZE`` instruments the host binaries and the test helpers. The BPF
 objects are unaffected. Recovery is off, so every report fails the run.
-CI runs the same with gcc and with clang.
+CI runs the same with gcc on each pull request, and with gcc and with
+clang on each push to ``main``.
 
 ``SANITIZE=thread`` runs the same tests under ThreadSanitizer, which
 reports data races and, in a signal handler, a call that is not
 async-signal-safe or a changed ``errno``. shirudo starts no thread and
 installs no signal handler, so it reports nothing today; the ``TSan``
-leg of the ``Sanitizers`` workflow runs it with clang so that the first
-one added is checked.
+leg of the ``Sanitizers`` workflow runs it with clang on each push to
+``main`` so that the first one added is checked.
 
 These three CI jobs install dependencies with
 :src:`.github/scripts/sanitizer-deps.sh` inside a disposable LVH guest.
@@ -467,8 +477,9 @@ leaves out the decoder's unit tests and fuzz target: LuaJIT's
 interpreter is assembly, which no sanitizer instruments, so the values
 it hands back would read as uninitialized. ASan and UBSan cover those.
 The ``MSan`` job of the ``Sanitizers`` workflow runs the same, the fuzz
-targets for 60 seconds on each push and pull request and for ten
-minutes in a run started by hand.
+targets for 60 seconds on each push to ``main``, for ten seconds on a
+pull request, in which each still runs its seeds, and for ten minutes in
+a run started by hand.
 
 Run the fuzz targets
 --------------------
@@ -549,8 +560,9 @@ and leaves its input in ``testing/fuzz/crash-afl-<target>-<n>``; the
 libFuzzer build of the target reproduces it like any other input.
 
 The ``afl-fuzz`` job of the ``Sanitizers`` workflow runs every target
-under AFL++ when the ``libFuzzer`` job does, for as long, and saves its
-corpus when that job does. Each starts from the newest corpus either
+under AFL++ on each push to ``main`` and in a run started by hand, for
+as long as the ``libFuzzer`` job, and saves its corpus when that job
+does. A pull request leaves it out. Each starts from the newest corpus either
 kept, so that what one finds the other starts from. What crashed is in
 the job's ``afl-fuzz-crashes`` artifact.
 
