@@ -835,8 +835,9 @@ static int attach_guards(struct bpf_object *obj, struct lsm_links *links,
 	 * hooks as bpffs guards, seal's filesystem and exec-identity hooks,
 	 * then the bpf() gates (map fd access, bpf_prog_load admission, then
 	 * lsm/bpf) LAST.
-	 * Pinning a link creates a bpffs inode, gated by neither guard set;
-	 * seal's unsigned load and the identity-map freeze precede the gates.
+	 * Pinning a link creates a bpffs inode, which bootstrap authority
+	 * passes under shared mode's inode_create guard and lsm/bpf; seal's
+	 * unsigned load and the identity-map freeze precede the gates.
 	 */
 	err = attach_gates(gates, early_gates, ARRAY_SIZE(early_gates),
 			   links->gates);
@@ -849,7 +850,10 @@ static int attach_guards(struct bpf_object *obj, struct lsm_links *links,
 	err = attach_mount_guards(obj, links->mounts);
 	if (err)
 		return err;
-	/* Before lsm/bpf opens BPF_OBJ_GET, the private bpffs is closed. */
+	/*
+	 * Before lsm/bpf opens BPF_OBJ_GET and BPF_OBJ_PIN, the private bpffs
+	 * is closed.
+	 */
 	if (enforcement == ENFORCEMENT_SHARED) {
 		err = attach_guard_group(obj, shirudo_shared_guards,
 					 SHARED_HOOK_COUNT, links->shared);

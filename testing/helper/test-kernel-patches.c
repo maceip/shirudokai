@@ -29,6 +29,7 @@
 #include <bpf/btf.h>
 #include <bpf/libbpf.h>
 
+#include <shirudo/byteorder.h>
 #include <shirudo/misc.h>
 #include <shirudo/string.h>
 
@@ -46,23 +47,15 @@ static int fail_errno(const char *step, int err)
 	return 1;
 }
 
+static int fail_unexpected(const char *step)
+{
+	fprintf(stderr, "%s: unexpectedly succeeded\n", step);
+	return 1;
+}
+
 static bool denied_errno(int err)
 {
 	return err == EACCES || err == EPERM;
-}
-
-static void put_be16(__u8 *dst, __u16 val)
-{
-	dst[0] = (__u8)(val >> 8);
-	dst[1] = (__u8)val;
-}
-
-static void put_be32(__u8 *dst, __u32 val)
-{
-	dst[0] = (__u8)(val >> 24);
-	dst[1] = (__u8)(val >> 16);
-	dst[2] = (__u8)(val >> 8);
-	dst[3] = (__u8)val;
 }
 
 static int cmd_status(const char *btf_path)
@@ -73,9 +66,12 @@ static int cmd_status(const char *btf_path)
 	int ret;
 
 	if (btf_path) {
+		long err;
+
 		btf = btf__parse(btf_path, NULL);
-		if (libbpf_get_error(btf))
-			return fail_errno("btf__parse", (int)-libbpf_get_error(btf));
+		err = libbpf_get_error(btf);
+		if (err)
+			return fail_errno("btf__parse", (int)-err);
 		ret = kernel_abi_patch_status_btf(btf, &st);
 		btf__free(btf);
 	} else {
@@ -250,7 +246,26 @@ static int cmd_xattr_unpriv(const char *wonly, const char *wxdir,
 
 static int join_path(char out[PATH_MAX], const char *dir, const char *leaf)
 {
-	return strsprintf(out, PATH_MAX, "%s/%s", dir, leaf) < 0 ? -ENAMETOOLONG : 0;
+	if (strsprintf(out, PATH_MAX, "%s/%s", dir, leaf) < 0)
+		return fail_errno("join_path", ENAMETOOLONG);
+	return 0;
+}
+
+static int expect_entry_denied(int rc, const char *created, bool dir,
+			       const char *hook)
+{
+	int err = errno;
+
+	if (rc == 0) {
+		if (dir)
+			rmdir(created);
+		else
+			unlink(created);
+		return fail_unexpected(hook);
+	}
+	if (!denied_errno(err))
+		return fail_errno(hook, err);
+	return 0;
 }
 
 static int check_acl_hooks(const char *root)
@@ -263,6 +278,7 @@ static int check_acl_hooks(const char *root)
 		0x20, 0x00, 0x04, 0x00, 0xff, 0xff, 0xff, 0xff,
 	};
 	char plain[PATH_MAX], f_set[PATH_MAX], f_rm[PATH_MAX];
+	int rc, err;
 
 	if (join_path(plain, root, "plain_file") ||
 	    join_path(f_set, root, "f_acl_set") ||
@@ -275,64 +291,85 @@ static int check_acl_hooks(const char *root)
 			return fail_errno("plain_acl_probe", errno);
 		if (setxattr(f_set, "system.posix_acl_access", acl_v2,
 			     sizeof(acl_v2), 0) == 0) {
-			fprintf(stderr, "acl_set: unexpectedly allowed\n");
-			return 1;
+			removexattr(f_set, "system.posix_acl_access");
+			return fail_unexpected("inode_set_acl");
 		}
 		return 0;
 	}
-	if (setxattr(f_set, "system.posix_acl_access", acl_v2,
-		     sizeof(acl_v2), 0) == 0 || !denied_errno(errno))
-		return fail_errno("inode_set_acl", errno);
-	if (removexattr(f_rm, "system.posix_acl_access") == 0 ||
-	    !denied_errno(errno))
-		return fail_errno("inode_remove_acl", errno);
+	rc = setxattr(f_set, "system.posix_acl_access", acl_v2,
+		      sizeof(acl_v2), 0);
+	err = errno;
+	if (rc == 0) {
+		removexattr(f_set, "system.posix_acl_access");
+		return fail_unexpected("inode_set_acl");
+	}
+	if (!denied_errno(err))
+		return fail_errno("inode_set_acl", err);
+	rc = removexattr(f_rm, "system.posix_acl_access");
+	err = errno;
+	if (rc == 0)
+		return fail_unexpected("inode_remove_acl");
+	if (!denied_errno(err))
+		return fail_errno("inode_remove_acl", err);
 	return 0;
 }
 
 static int cmd_sleepable_inode(const char *root)
 {
 	char p1[PATH_MAX], p2[PATH_MAX];
-	int fd, flags = 0, err;
+	int fd, flags = 0, rc, err;
 
-	if (join_path(p1, root, "d_mkdir/sub") ||
-	    (mkdir(p1, 0700) == 0 || !denied_errno(errno)))
-		return fail_errno("inode_mkdir", errno);
+	if (join_path(p1, root, "d_mkdir/sub"))
+		return 1;
+	if (expect_entry_denied(mkdir(p1, 0700), p1, true, "inode_mkdir"))
+		return 1;
 
 	if (join_path(p1, root, "d_creat/entry"))
 		return 1;
 	fd = open(p1, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+	err = errno;
 	if (fd >= 0) {
 		close(fd);
-		return fail_errno("inode_create", 0);
+		unlink(p1);
+		return fail_unexpected("inode_create");
 	}
-	if (!denied_errno(errno))
-		return fail_errno("inode_create", errno);
+	if (!denied_errno(err))
+		return fail_errno("inode_create", err);
 
-	if (join_path(p1, root, "d_sym/sym") ||
-	    (symlink("target", p1) == 0 || !denied_errno(errno)))
-		return fail_errno("inode_symlink", errno);
+	if (join_path(p1, root, "d_sym/sym"))
+		return 1;
+	if (expect_entry_denied(symlink("target", p1), p1, false,
+				"inode_symlink"))
+		return 1;
 
-	if (join_path(p1, root, "d_mknod/fifo") ||
-	    (mknod(p1, S_IFIFO | 0600, 0) == 0 || !denied_errno(errno)))
-		return fail_errno("inode_mknod", errno);
+	if (join_path(p1, root, "d_mknod/fifo"))
+		return 1;
+	if (expect_entry_denied(mknod(p1, S_IFIFO | 0600, 0), p1, false,
+				"inode_mknod"))
+		return 1;
 
 	if (join_path(p1, root, "plain_file") ||
-	    join_path(p2, root, "d_link/hard") ||
-	    (link(p1, p2) == 0 || !denied_errno(errno)))
-		return fail_errno("inode_link_dst", errno);
+	    join_path(p2, root, "d_link/hard"))
+		return 1;
+	if (expect_entry_denied(link(p1, p2), p2, false, "inode_link_dst"))
+		return 1;
 
 	if (join_path(p1, root, "f_link") ||
-	    join_path(p2, root, "plain_dir/hard") ||
-	    (link(p1, p2) == 0 || !denied_errno(errno)))
-		return fail_errno("inode_link_src", errno);
+	    join_path(p2, root, "plain_dir/hard"))
+		return 1;
+	if (expect_entry_denied(link(p1, p2), p2, false, "inode_link_src"))
+		return 1;
 
 	if (join_path(p1, root, "f_flags"))
 		return 1;
 	fd = open(p1, O_RDONLY | O_CLOEXEC);
 	if (fd < 0)
 		return fail_errno("inode_file_setattr_open", errno);
-	err = ioctl(fd, FS_IOC_SETFLAGS, &flags) == 0 ? 0 : errno;
+	rc = ioctl(fd, FS_IOC_SETFLAGS, &flags);
+	err = errno;
 	close(fd);
+	if (rc == 0)
+		return fail_unexpected("inode_file_setattr");
 	if (!denied_errno(err))
 		return fail_errno("inode_file_setattr", err);
 

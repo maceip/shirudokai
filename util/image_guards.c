@@ -124,6 +124,8 @@ const struct image_guard
 shirudo_shared_guards[SHARED_HOOK_COUNT] = {
 	{ "shirudo_lsm_inode_permission",
 	  BPFFS_DIR "/bpf2_inode_permission_link" },
+	{ "shirudo_lsm_inode_create",
+	  BPFFS_DIR "/bpf2_inode_create_link" },
 	{ "shirudo_lsm_bpf_map_free", BPFFS_DIR "/bpf2_bpf_map_free_link" },
 	{ "shirudo_lsm_bpf_prog_free", BPFFS_DIR "/bpf2_bpf_prog_free_link" },
 	{ "shirudo_lsm_bpf_map_create",
