@@ -20,15 +20,15 @@
 #define QUOTE_AK_NAME_HEX_LEN	(2 * TPM_NAME_LEN)
 #define QUOTE_ATTEST_HEX_MAX	(2 * TPM_ATTEST_MAX)
 #define QUOTE_SIG_HEX_MAX	(2 * TPM_SIGNATURE_MAX)
+#define QUOTE_AK_HEX_MAX	(2 * TPM_PUBLIC_MAX)
 /* attest, sig, ak and body_sha256 with the three tabs between them. */
 #define QUOTE_ROW_MAX							\
 	(BASE64_LEN(TPM_ATTEST_MAX) + BASE64_LEN(TPM_SIGNATURE_MAX) +	\
 	 BASE64_LEN(TPM_PUBLIC_MAX) + QUOTE_BODY_HEX_LEN + 3)
-/* ak_name, attest, sig, ak, boot_id, seq and body_sha256 with six tabs. */
+/* ak_name, attest, sig, ak and body_sha256 (all hex) with four tabs. */
 #define QUOTE_OTEL_ROW_MAX						\
 	(QUOTE_AK_NAME_HEX_LEN + QUOTE_ATTEST_HEX_MAX +			\
-	 QUOTE_SIG_HEX_MAX + BASE64_LEN(TPM_PUBLIC_MAX) +		\
-	 OTEL_BOOT_ID_MAX + 20 + QUOTE_BODY_HEX_LEN + 6)
+	 QUOTE_SIG_HEX_MAX + QUOTE_AK_HEX_MAX + QUOTE_BODY_HEX_LEN + 4)
 #define QUOTE_LINE_MAX		1024
 
 enum quote_verdict {
@@ -45,19 +45,15 @@ struct quote_result {
 	__u8			ak_public[TPM_PUBLIC_MAX];
 	size_t			ak_public_len;
 	__u32			reset_count;
+	__u32			restart_count;
 	__u64			clock;
-	bool			has_seq;
-	__u64			seq;
 };
 
 struct quote_otel_envelope {
 	const char	*ak_name_hex;
 	const char	*attest_hex;
 	const char	*sig_hex;
-	const __u8	*ak_public;
-	size_t		ak_public_len;
-	const char	*boot_id;
-	const char	*export_seq;
+	const char	*ak_public_hex;
 	const __u8	*body_sha256;
 };
 

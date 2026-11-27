@@ -285,9 +285,9 @@ Settings
    * - ``map_export.tpm_sign``
      - ``true`` quotes the domain-separated origin digest of each OTLP
        export with the target's TPM attestation key and attaches
-       ``X-Shirudo-TPM-AK-Name``, ``X-Shirudo-TPM-Attest``,
-       ``X-Shirudo-TPM-Signature``, ``X-Shirudo-Boot-ID`` and
-       ``X-Shirudo-Export-Seq``.
+       ``shirudo.tpm.ak_name``, ``shirudo.tpm.ak``,
+       ``shirudo.tpm.attest`` and ``shirudo.tpm.signature`` as OTLP
+       resource attributes.
    * - ``map_export.otel_retries``
      - Further attempts after a failed OTLP or S3 request.
    * - ``map_export.s3_uri``

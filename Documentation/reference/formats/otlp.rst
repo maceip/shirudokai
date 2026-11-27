@@ -52,12 +52,11 @@ Transport
      - ``Content-Type: application/json``,
        ``Content-Encoding: gzip`` when compression is on,
        ``User-Agent: shirudo OTel-OTLP-Exporter-C/1``, the configured
-       headers, ``X-Tenant-ID``, and with ``map_export.tpm_sign = true``
-       ``X-Shirudo-TPM-AK-Name``, ``X-Shirudo-TPM-Attest``,
-       ``X-Shirudo-TPM-Signature``, ``X-Shirudo-Boot-ID`` and
-       ``X-Shirudo-Export-Seq`` (where ``body_sha256`` in the signed
-       origin digest covers the raw HTTP request body on the wire,
-       compressed when ``gzip`` is on).
+       headers and ``X-Tenant-ID``. With ``map_export.tpm_sign = true``,
+       the TPM attestation travels in the OTLP ``resource.attributes``
+       (``shirudo.tpm.ak_name``, ``shirudo.tpm.ak``,
+       ``shirudo.tpm.attest`` and ``shirudo.tpm.signature``, all hex)
+       over ``otel_origin_digest(body_sha256)``.
    * - Compression
      - ``none`` (default) or ``gzip``.
    * - TLS

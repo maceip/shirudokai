@@ -113,33 +113,15 @@ static void names(void)
 
 static void otel(void)
 {
-	bool null_boot, null_body, null_out;
-	size_t str_size, boot_len = 0, k;
+	bool null_body, null_out;
 	__u8 *body, *out;
-	char *boot_id;
-	__u64 seq;
 
-	__CPROVER_assume(str_size >= 1 && str_size <= OTEL_BOOT_ID_MAX + 2);
-	boot_id = null_boot ? NULL : any_input(str_size, OTEL_BOOT_ID_MAX + 2);
-	if (boot_id)
-		__CPROVER_assume(!boot_id[str_size - 1]);
 	body = null_body ? NULL : digest();
 	out = null_out ? NULL : digest();
 
-	if (otel_boot_id_valid(boot_id, &boot_len)) {
-		__CPROVER_assert(boot_id && boot_len >= 1 &&
-				 boot_len <= OTEL_BOOT_ID_MAX &&
-				 boot_len < str_size && !boot_id[boot_len],
-				 "a terminated boot_id of 1 to 64 bytes");
-		if (k < boot_len)
-			__CPROVER_assert((__u8)boot_id[k] > 0x20 &&
-					 (__u8)boot_id[k] < 0x7f,
-					 "printable non-blank ASCII");
-	}
-	if (!otel_origin_digest(boot_id, seq, body, out))
-		__CPROVER_assert(body && out &&
-				 otel_boot_id_valid(boot_id, &boot_len),
-				 "origin digest accepts valid boot_id, body and out");
+	if (!otel_origin_digest(body, out))
+		__CPROVER_assert(body && out,
+				 "origin digest accepts valid body and out");
 }
 
 void harness(void)

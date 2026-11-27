@@ -140,81 +140,62 @@ static int software_quote_cb(const __u8 digest[32], struct tpm_key *ak,
 	return 0;
 }
 
-static void origin_digest_binds_domain_boot_seq_and_body(void)
+static void origin_digest_binds_domain_and_body(void)
 {
 	__u8 body1[32] = { 1 }, body2[32] = { 2 };
-	__u8 d1[32], d2[32], manual[32], seq_be[8];
+	__u8 d1[32], d2[32], manual[32];
 	struct sha256_ctx ctx;
 
-	ASSERT_EQ(otel_origin_digest("boot-a", 1, body1, d1), 0);
+	ASSERT_EQ(otel_origin_digest(body1, d1), 0);
 
 	/* Matches exact domain-separated layout "shirudo-otel-origin-v1\0". */
-	put_be32(seq_be, 0);
-	put_be32(seq_be + 4, 1);
 	ASSERT_EQ(sha256_init(&ctx), 0);
 	ASSERT_EQ(sha256_update(&ctx, "shirudo-otel-origin-v1", 23), 0);
-	ASSERT_EQ(sha256_update(&ctx, seq_be, 8), 0);
 	ASSERT_EQ(sha256_update(&ctx, body1, 32), 0);
-	ASSERT_EQ(sha256_update(&ctx, "boot-a", 6), 0);
 	ASSERT_EQ(sha256_final(&ctx, manual), 0);
 	sha256_free(&ctx);
 	EXPECT_MEMEQ(d1, manual, 32);
 
-	/* Changing boot_id, seq or body changes the digest. */
-	ASSERT_EQ(otel_origin_digest("boot-b", 1, body1, d2), 0);
-	EXPECT_TRUE(memcmp(d1, d2, 32) != 0);
-	ASSERT_EQ(otel_origin_digest("boot-a", 2, body1, d2), 0);
-	EXPECT_TRUE(memcmp(d1, d2, 32) != 0);
-	ASSERT_EQ(otel_origin_digest("boot-a", 1, body2, d2), 0);
+	/* Changing body changes the digest. */
+	ASSERT_EQ(otel_origin_digest(body2, d2), 0);
 	EXPECT_TRUE(memcmp(d1, d2, 32) != 0);
 
 	/* Rejects invalid inputs. */
-	EXPECT_EQ(otel_origin_digest(NULL, 1, body1, d2), -EINVAL);
-	EXPECT_EQ(otel_origin_digest("", 1, body1, d2), -EINVAL);
-	EXPECT_EQ(otel_origin_digest("boot with space", 1, body1, d2), -EINVAL);
-	EXPECT_EQ(otel_origin_digest("boot\ttab", 1, body1, d2), -EINVAL);
-	EXPECT_EQ(otel_origin_digest("boot-a", 1, NULL, d2), -EINVAL);
-	EXPECT_EQ(otel_origin_digest("boot-a", 1, body1, NULL), -EINVAL);
+	EXPECT_EQ(otel_origin_digest(NULL, d2), -EINVAL);
+	EXPECT_EQ(otel_origin_digest(body1, NULL), -EINVAL);
 }
 
-static void signed_headers_roundtrip_through_quote_check(void)
+static void signed_attrs_roundtrip_through_quote_check(void)
 {
 	static const char payload[] =
 		"{\"resourceMetrics\":[{\"scopeMetrics\":[]}]}";
 	struct tpm_key ak = {};
 	struct otel_opts opts = {
 		.tpm_sign = true,
-		.boot_id = "boot-9944-uuid",
-		.export_seq = 19,
-		.quote_fn = software_quote_cb,
-		.quote_ctx = &ak,
 	};
-	struct otel_signed_headers hdrs;
+	struct otel_signed_attrs attrs;
 	__u8 body_sha256[32];
 	struct quote_otel_envelope env = {};
 	struct quote_result res;
 
-	ASSERT_EQ(otel_sign_headers(&opts, payload, strlen(payload), &hdrs), 0);
-	EXPECT_STREQ(hdrs.boot_id, "boot-9944-uuid");
-	EXPECT_STREQ(hdrs.export_seq, "19");
-	EXPECT_UEQ(hdrs.seq, 19);
-	EXPECT_UEQ(strlen(hdrs.ak_name), 2 * TPM_NAME_LEN);
+	otel_set_quote_fn_for_test(software_quote_cb, &ak);
+	ASSERT_EQ(otel_sign_body(&opts, payload, strlen(payload), &attrs), 0);
+	otel_set_quote_fn_for_test(NULL, NULL);
+	EXPECT_UEQ(strlen(attrs.ak_name), 2 * TPM_NAME_LEN);
+	EXPECT_TRUE(strlen(attrs.ak) > 0);
 
 	ASSERT_EQ(sha256_buffer(payload, strlen(payload), body_sha256), 0);
-	env.ak_name_hex = hdrs.ak_name;
-	env.attest_hex = hdrs.attest;
-	env.sig_hex = hdrs.signature;
-	env.ak_public = ak.public;
-	env.ak_public_len = ak.public_len;
-	env.boot_id = hdrs.boot_id;
-	env.export_seq = hdrs.export_seq;
+	env.ak_name_hex = attrs.ak_name;
+	env.attest_hex = attrs.attest;
+	env.sig_hex = attrs.signature;
+	env.ak_public_hex = attrs.ak;
 	env.body_sha256 = body_sha256;
 
 	ASSERT_EQ(quote_otel_check(&env, &res), 0);
 	EXPECT_EQ(res.verdict, QUOTE_OK);
 	EXPECT_UEQ(res.reset_count, TEST_RESET_COUNT);
+	EXPECT_UEQ(res.restart_count, 1u);
 	EXPECT_UEQ(res.clock, TEST_CLOCK);
-	EXPECT_UEQ(res.seq, 19);
 
 	/* Tampering with body digest fails verification. */
 	body_sha256[0] ^= 0xff;
@@ -268,12 +249,8 @@ static void shield_metrics_export_and_origin_signature(void)
 	struct tpm_key ak = {};
 	struct otel_opts opts = {
 		.tpm_sign	= true,
-		.boot_id	= "boot-shield-01",
-		.export_seq	= 4,
-		.quote_fn	= software_quote_cb,
-		.quote_ctx	= &ak,
 	};
-	struct otel_signed_headers hdrs = {};
+	struct otel_signed_attrs attrs = {};
 	struct quote_otel_envelope env = {};
 	struct quote_result res = {};
 	__u8 body_sha256[32];
@@ -325,15 +302,14 @@ static void shield_metrics_export_and_origin_signature(void)
 	EXPECT_TRUE(str_contains(payload, "\"shirudo.upatch.payload_sha256\""));
 
 	/* TPM origin signature covers the exact shield metric OTLP body. */
-	ASSERT_EQ(otel_sign_headers(&opts, payload, payload_len, &hdrs), 0);
+	otel_set_quote_fn_for_test(software_quote_cb, &ak);
+	ASSERT_EQ(otel_sign_body(&opts, payload, payload_len, &attrs), 0);
+	otel_set_quote_fn_for_test(NULL, NULL);
 	ASSERT_EQ(sha256_buffer(payload, payload_len, body_sha256), 0);
-	env.ak_name_hex = hdrs.ak_name;
-	env.attest_hex = hdrs.attest;
-	env.sig_hex = hdrs.signature;
-	env.ak_public = ak.public;
-	env.ak_public_len = ak.public_len;
-	env.boot_id = hdrs.boot_id;
-	env.export_seq = hdrs.export_seq;
+	env.ak_name_hex = attrs.ak_name;
+	env.attest_hex = attrs.attest;
+	env.sig_hex = attrs.signature;
+	env.ak_public_hex = attrs.ak;
 	env.body_sha256 = body_sha256;
 	ASSERT_EQ(quote_otel_check(&env, &res), 0);
 	EXPECT_EQ(res.verdict, QUOTE_OK);
@@ -343,14 +319,9 @@ static void shield_metrics_export_and_origin_signature(void)
 }
 
 struct captured_post {
-	char	ak_name[2 * TPM_NAME_LEN + 1];
-	char	attest[2 * TPM_ATTEST_MAX + 1];
-	char	signature[2 * TPM_SIGNATURE_MAX + 1];
-	char	boot_id[OTEL_BOOT_ID_MAX + 1];
-	char	export_seq[32];
 	bool	has_gzip_encoding;
 	size_t	body_len;
-	__u8	body[4096];
+	__u8	body[8192];
 };
 
 static int copy_trimmed_header(char *dst, size_t cap, const char *s, size_t len)
@@ -456,19 +427,6 @@ static int serve_one_otel_post(int listen_fd, int pipe_wr)
 				cap.has_gzip_encoding = true;
 			continue;
 		}
-		if (match_header_value(tok, tok_len, "X-Shirudo-TPM-AK-Name:",
-				       cap.ak_name, sizeof(cap.ak_name)) < 0 ||
-		    match_header_value(tok, tok_len, "X-Shirudo-TPM-Attest:",
-				       cap.attest, sizeof(cap.attest)) < 0 ||
-		    match_header_value(tok, tok_len, "X-Shirudo-TPM-Signature:",
-				       cap.signature,
-				       sizeof(cap.signature)) < 0 ||
-		    match_header_value(tok, tok_len, "X-Shirudo-Boot-ID:",
-				       cap.boot_id, sizeof(cap.boot_id)) < 0 ||
-		    match_header_value(tok, tok_len, "X-Shirudo-Export-Seq:",
-				       cap.export_seq,
-				       sizeof(cap.export_seq)) < 0)
-			goto bad;
 	}
 	cap.body_len = (size_t)content_len;
 	memcpy(cap.body, req + hdr_len + 4, cap.body_len);
@@ -491,6 +449,25 @@ bad:
 	return 1;
 }
 
+static void extract_otlp_attr(const char *json, size_t json_len,
+			      const char *key, char *out, size_t cap)
+{
+	char needle[128];
+	const char *p, *end;
+	size_t n;
+
+	ASSERT_TRUE(strsprintf(needle, sizeof(needle),
+			       "\"key\":\"%s\",\"value\":{\"stringValue\":\"",
+			       key) > 0);
+	p = span_find(json, json_len, needle);
+	ASSERT_TRUE(p);
+	p += strlen(needle);
+	end = memchr(p, '"', json_len - (size_t)(p - json));
+	ASSERT_TRUE(end);
+	n = (size_t)(end - p);
+	ASSERT_EQ(span_to_str(out, cap, p, n), 0);
+}
+
 static void gzip_signed_post_roundtrips_through_quote_check(void)
 {
 	static const char status_body[] = "{\"status\":\"ok\"}";
@@ -506,12 +483,12 @@ static void gzip_signed_post_roundtrips_through_quote_check(void)
 	struct otel_opts opts = {
 		.retries	= 0,
 		.tpm_sign	= true,
-		.boot_id	= "boot-gzip-77",
-		.export_seq	= 23,
-		.quote_fn	= software_quote_cb,
-		.quote_ctx	= &ak,
 	};
-	__u8 body_sha256[32], plain_sha256[32];
+	char ak_name[2 * TPM_NAME_LEN + 1];
+	char ak_hex[2 * TPM_PUBLIC_MAX + 1];
+	char attest_hex[2 * TPM_ATTEST_MAX + 1];
+	char sig_hex[2 * TPM_SIGNATURE_MAX + 1];
+	__u8 body_sha256[32], wrong_sha256[32];
 	int listen_fd, pfd[2], status = 0, send_rc;
 	char plain[8192];
 	char endpoint[64];
@@ -547,10 +524,12 @@ static void gzip_signed_post_roundtrips_through_quote_check(void)
 	close(listen_fd);
 
 	ASSERT_EQ(setenv("OTEL_EXPORTER_OTLP_COMPRESSION", "gzip", 1), 0);
+	otel_set_quote_fn_for_test(software_quote_cb, &ak);
 	send_rc = otel_send_log_string(&opts, "shirudo.status",
 				       "shirudo.status.report", 9, "INFO",
 				       status_body, sizeof(status_body) - 1,
 				       "shirudo.status", "ok");
+	otel_set_quote_fn_for_test(NULL, NULL);
 	unsetenv("OTEL_EXPORTER_OTLP_COMPRESSION");
 	ASSERT_EQ(send_rc, 0);
 
@@ -573,7 +552,7 @@ static void gzip_signed_post_roundtrips_through_quote_check(void)
 	EXPECT_UEQ(cap.body[0], 0x1f);
 	EXPECT_UEQ(cap.body[1], 0x8b);
 
-	/* Wire body inflates cleanly to the OTLP JSON payload. */
+	/* Wire body inflates cleanly to the OTLP JSON payload with TPM attrs. */
 	zs.next_in = cap.body;
 	zs.avail_in = (uInt)cap.body_len;
 	zs.next_out = (__u8 *)plain;
@@ -584,30 +563,37 @@ static void gzip_signed_post_roundtrips_through_quote_check(void)
 	ASSERT_EQ(inflateEnd(&zs), Z_OK);
 	EXPECT_TRUE(str_contains(plain, "\"resourceLogs\""));
 
-	/* Quote verifies against the compressed HTTP wire bytes. */
-	ASSERT_EQ(sha256_buffer(cap.body, cap.body_len, body_sha256), 0);
-	env.ak_name_hex = cap.ak_name;
-	env.attest_hex = cap.attest;
-	env.sig_hex = cap.signature;
-	env.ak_public = ak.public;
-	env.ak_public_len = ak.public_len;
-	env.boot_id = cap.boot_id;
-	env.export_seq = cap.export_seq;
+	extract_otlp_attr(plain, zs.total_out, "shirudo.tpm.ak_name",
+			  ak_name, sizeof(ak_name));
+	extract_otlp_attr(plain, zs.total_out, "shirudo.tpm.ak",
+			  ak_hex, sizeof(ak_hex));
+	extract_otlp_attr(plain, zs.total_out, "shirudo.tpm.attest",
+			  attest_hex, sizeof(attest_hex));
+	extract_otlp_attr(plain, zs.total_out, "shirudo.tpm.signature",
+			  sig_hex, sizeof(sig_hex));
+
+	/* Quote verifies against the log record body string. */
+	ASSERT_EQ(sha256_buffer(status_body, sizeof(status_body) - 1,
+				body_sha256), 0);
+	env.ak_name_hex = ak_name;
+	env.attest_hex = attest_hex;
+	env.sig_hex = sig_hex;
+	env.ak_public_hex = ak_hex;
 	env.body_sha256 = body_sha256;
 	ASSERT_EQ(quote_otel_check(&env, &res), 0);
 	EXPECT_EQ(res.verdict, QUOTE_OK);
-	EXPECT_UEQ(res.seq, 23);
 
-	/* Hashing the uncompressed JSON fails with QUOTE_BODY_MISMATCH. */
-	ASSERT_EQ(sha256_buffer(plain, zs.total_out, plain_sha256), 0);
-	env.body_sha256 = plain_sha256;
+	/* Hashing a different body fails with QUOTE_BODY_MISMATCH. */
+	memcpy(wrong_sha256, body_sha256, sizeof(wrong_sha256));
+	wrong_sha256[0] ^= 0xff;
+	env.body_sha256 = wrong_sha256;
 	ASSERT_EQ(quote_otel_check(&env, &res), 0);
 	EXPECT_EQ(res.verdict, QUOTE_BODY_MISMATCH);
 }
 
 static const struct unit_case cases[] = {
-	UNIT_CASE(origin_digest_binds_domain_boot_seq_and_body),
-	UNIT_CASE(signed_headers_roundtrip_through_quote_check),
+	UNIT_CASE(origin_digest_binds_domain_and_body),
+	UNIT_CASE(signed_attrs_roundtrip_through_quote_check),
 	UNIT_CASE(reserved_shirudo_headers_are_refused),
 	UNIT_CASE(shield_metrics_export_and_origin_signature),
 	UNIT_CASE(gzip_signed_post_roundtrips_through_quote_check),

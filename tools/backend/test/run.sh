@@ -156,9 +156,13 @@ chmod 0755 "$work/shirudo-quote-check"
 	"$container:/var/lib/clickhouse/user_scripts/shirudo-quote-check"
 "$runtime" cp "$repo/clickhouse/tpm_quote_check_function.xml" \
 	"$container:/etc/clickhouse-server/tpm_quote_check_function.xml"
+"$runtime" cp "$repo/clickhouse/tpm_otel_check_function.xml" \
+	"$container:/etc/clickhouse-server/tpm_otel_check_function.xml"
 client --query 'SYSTEM RELOAD FUNCTIONS'
 wait_for "SELECT 1 FROM system.functions WHERE name = 'tpm_quote_check'" \
 	'tpm_quote_check was not loaded'
+wait_for "SELECT 1 FROM system.functions WHERE name = 'tpm_otel_check'" \
+	'tpm_otel_check was not loaded'
 
 failed=0
 for name in "$@"; do

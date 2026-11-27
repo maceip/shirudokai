@@ -34,14 +34,14 @@ static const struct help quote_check_help = {
 	.summary = "Reads TabSeparated rows from standard input until it ends:\n"
 		   "  <attest>\\t<sig>\\t<ak>\\t<body_sha256>\n"
 		   "or with --otel:\n"
-		   "  <ak_name>\\t<attest>\\t<sig>\\t<ak>\\t<boot_id>\\t<seq>\\t<body_sha256>\n"
+		   "  <ak_name>\\t<attest>\\t<sig>\\t<ak>\\t<body_sha256>\n"
 		   "attest, sig and ak are a keepalive quote's TPMS_ATTEST and\n"
 		   "TPMT_SIGNATURE and the signing key's TPMT_PUBLIC, in standard\n"
-		   "base64 (hex for attest, sig and ak_name with --otel).\n"
+		   "base64 (all hex with --otel).\n"
 		   "body_sha256 is the SHA-256 of the record's body, 64\n"
 		   "hex digits. Writes one JSON line per row, in order:\n"
 		   "  {\"ok\":1,\"ak_name\":\"<hex>\",\"ak_public\":\"<base64>\",\n"
-		   "   \"reset_count\":<n>,\"clock\":<n>}\n"
+		   "   \"reset_count\":<n>,\"restart_count\":<n>,\"clock\":<n>}\n"
 		   "  {\"ok\":0,\"reason\":\"bad_signature\"|\"body_mismatch\"|\n"
 		   "   \"malformed\"}",
 	.sections   = quote_check_sections,

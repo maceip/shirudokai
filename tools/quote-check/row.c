@@ -31,8 +31,6 @@ enum {
 	OTEL_FIELD_ATTEST,
 	OTEL_FIELD_SIG,
 	OTEL_FIELD_AK,
-	OTEL_FIELD_BOOT_ID,
-	OTEL_FIELD_SEQ,
 	OTEL_FIELD_BODY_SHA256,
 	OTEL_FIELD_COUNT,
 };
@@ -165,6 +163,7 @@ static int quote_verify_digest(const __u8 *attest, size_t attest_len,
 	}
 	res->verdict = QUOTE_OK;
 	res->reset_count = quote.reset_count;
+	res->restart_count = quote.restart_count;
 	res->clock = quote.clock;
 	return 0;
 }
@@ -195,34 +194,31 @@ int quote_otel_check(const struct quote_otel_envelope *env,
 {
 	__u8 attest[TPM_ATTEST_MAX], sig[TPM_SIGNATURE_MAX];
 	__u8 claimed_name[TPM_NAME_LEN], origin[TPM_DIGEST_LEN];
-	size_t attest_len, sig_len, name_len;
-	__u64 seq;
+	size_t attest_len, sig_len, name_len, ak_len;
 	int ret;
 
 	if (!res)
 		return -EINVAL;
 	memset(res, 0, sizeof(*res));
 	res->verdict = QUOTE_MALFORMED;
-	if (!env || !env->attest_hex || !env->sig_hex || !env->ak_public ||
-	    !env->ak_public_len || env->ak_public_len > sizeof(res->ak_public) ||
-	    !env->boot_id || !env->export_seq || !env->body_sha256)
+	if (!env || !env->attest_hex || !env->sig_hex || !env->ak_public_hex ||
+	    !env->body_sha256)
 		return 0;
 	if (hex_decode_max(env->attest_hex, attest, sizeof(attest),
 			   &attest_len) || !attest_len ||
 	    hex_decode_max(env->sig_hex, sig, sizeof(sig), &sig_len) ||
 	    !sig_len ||
-	    parse_u64(env->export_seq, strlen(env->export_seq), UINT64_MAX,
-		      &seq))
+	    hex_decode_max(env->ak_public_hex, res->ak_public,
+			   sizeof(res->ak_public), &ak_len) || !ak_len)
 		return 0;
 	if (env->ak_name_hex &&
 	    (hex_decode_max(env->ak_name_hex, claimed_name,
 			    sizeof(claimed_name), &name_len) ||
 	     name_len != TPM_NAME_LEN))
 		return 0;
-	if (otel_origin_digest(env->boot_id, seq, env->body_sha256, origin))
+	if (otel_origin_digest(env->body_sha256, origin))
 		return 0;
-	memcpy(res->ak_public, env->ak_public, env->ak_public_len);
-	res->ak_public_len = env->ak_public_len;
+	res->ak_public_len = ak_len;
 	ret = quote_verify_digest(attest, attest_len, sig, sig_len, origin,
 				  res);
 	if (ret)
@@ -232,10 +228,6 @@ int quote_otel_check(const struct quote_otel_envelope *env,
 		res->verdict = QUOTE_BAD_SIGNATURE;
 		return 0;
 	}
-	if (res->verdict == QUOTE_OK) {
-		res->has_seq = true;
-		res->seq = seq;
-	}
 	return 0;
 }
 
@@ -244,12 +236,10 @@ int quote_otel_row_check(const char *row, size_t len, struct quote_result *res)
 	char attest_hex[QUOTE_ATTEST_HEX_MAX + 1];
 	char sig_hex[QUOTE_SIG_HEX_MAX + 1];
 	char ak_name_hex[QUOTE_AK_NAME_HEX_LEN + 1];
-	char boot_id[OTEL_BOOT_ID_MAX + 1];
-	char seq_text[32];
-	__u8 ak_public[TPM_PUBLIC_MAX], body_sha256[TPM_DIGEST_LEN];
+	char ak_hex[QUOTE_AK_HEX_MAX + 1];
+	__u8 body_sha256[TPM_DIGEST_LEN];
 	struct field fields[OTEL_FIELD_COUNT];
 	struct quote_otel_envelope env = {};
-	size_t ak_public_len;
 
 	if (!res)
 		return -EINVAL;
@@ -266,23 +256,15 @@ int quote_otel_row_check(const char *row, size_t len, struct quote_result *res)
 	    span_to_str(sig_hex, sizeof(sig_hex),
 			fields[OTEL_FIELD_SIG].text,
 			fields[OTEL_FIELD_SIG].len) ||
-	    base64_field(&fields[OTEL_FIELD_AK], ak_public, sizeof(ak_public),
-			 &ak_public_len) ||
-	    span_to_str(boot_id, sizeof(boot_id),
-			fields[OTEL_FIELD_BOOT_ID].text,
-			fields[OTEL_FIELD_BOOT_ID].len) ||
-	    span_to_str(seq_text, sizeof(seq_text),
-			fields[OTEL_FIELD_SEQ].text,
-			fields[OTEL_FIELD_SEQ].len) ||
+	    span_to_str(ak_hex, sizeof(ak_hex),
+			fields[OTEL_FIELD_AK].text,
+			fields[OTEL_FIELD_AK].len) ||
 	    body_sha256_field(&fields[OTEL_FIELD_BODY_SHA256], body_sha256))
 		return 0;
 	env.ak_name_hex = ak_name_hex;
 	env.attest_hex = attest_hex;
 	env.sig_hex = sig_hex;
-	env.ak_public = ak_public;
-	env.ak_public_len = ak_public_len;
-	env.boot_id = boot_id;
-	env.export_seq = seq_text;
+	env.ak_public_hex = ak_hex;
 	env.body_sha256 = body_sha256;
 	return quote_otel_check(&env, res);
 }
@@ -308,9 +290,8 @@ static int emit_accept(struct json_emit *e, const struct quote_result *res)
 	json_kv_string(e, "ak_name", ak_name);
 	json_kv_string(e, "ak_public", ak_public);
 	json_kv_int(e, "reset_count", res->reset_count);
+	json_kv_int(e, "restart_count", res->restart_count);
 	json_kv_u64(e, "clock", res->clock);
-	if (res->has_seq)
-		json_kv_u64(e, "seq", res->seq);
 	return 0;
 }
 

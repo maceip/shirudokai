@@ -248,14 +248,12 @@ int tpm_attest_verify(const __u8 *attest, size_t len,
 		      const __u8 x[32], const __u8 y[32]) __must_check;
 
 #define OTEL_ORIGIN_PREFIX	"shirudo-otel-origin-v1"
-#define OTEL_BOOT_ID_MAX	64
 
 /*
- * Domain-separated digest over the boot identity, export sequence number
- * and OTLP body digest that map_export.tpm_sign quotes.
+ * Domain-separated digest over an OTLP payload digest that
+ * map_export.tpm_sign quotes.
  */
-int otel_origin_digest(const char *boot_id, __u64 seq,
-		       const __u8 body_sha256[32],
+int otel_origin_digest(const __u8 body_sha256[32],
 		       __u8 out[32]) __must_check;
 
 #endif /* SHIRUDO_TPM_WIRE_H */

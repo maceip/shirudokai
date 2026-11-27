@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Copyright (c) 2026 Authors of shirudo
 #
-# Collector for shirudo's keepalive: OTLP over HTTPS in, every log
-# record written to ClickHouse's otel.otel_logs, which sql/ creates. Run
-# it with otelcol-contrib, which has the ClickHouse exporter. The
+# Collector for shirudo's keepalive and signed OTLP logs: OTLP over
+# HTTPS in, every log record written to ClickHouse's otel.otel_logs,
+# which sql/ creates. Both shirudo.quote (LogAttributes) and
+# shirudo.tpm.* (ResourceAttributes) pass through to otel.otel_logs.
+# Run it with otelcol-contrib, which has the ClickHouse exporter. The
 # environment may name another certificate, key or ClickHouse server.
 receivers:
   otlp:

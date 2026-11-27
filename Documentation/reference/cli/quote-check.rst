@@ -43,12 +43,10 @@ Input
 -----
 
 One row per line, in the TabSeparated format of ClickHouse: four fields
-with a tab between them, or seven fields with ``--otel``
-(``ak_name``, ``attest``, ``sig``, ``ak``, ``boot_id``, ``seq`` and
-``body_sha256``, where ``ak_name``, ``attest`` and ``sig`` are hex from
-the ``X-Shirudo-TPM-*`` headers and the quote covers
-``otel_origin_digest(boot_id, seq, body_sha256)``; accepted rows add
-``"seq":<n>`` to the output object).
+with a tab between them, or five hex fields with ``--otel``
+(``ak_name``, ``attest``, ``sig``, ``ak`` and ``body_sha256``, from the
+``shirudo.tpm.*`` OTLP resource attributes, where the quote covers
+``otel_origin_digest(body_sha256)``).
 
 .. list-table::
    :header-rows: 1
@@ -68,8 +66,7 @@ the ``X-Shirudo-TPM-*`` headers and the quote covers
        bytes.
    * - ``body_sha256``
      - The SHA-256 of the keepalive body (or, with ``--otel``, of the
-       raw HTTP request body on the wire, compressed when
-       ``Content-Encoding: gzip`` is used), as 64 hex digits of either
+       signed OTLP log body or metrics array), as 64 hex digits of either
        case.
 
 A base64 field is accepted only when it is the encoding of its bytes:
@@ -180,7 +177,7 @@ One JSON object per row, on one line. A row that passes:
 
 .. code-block:: none
 
-   {"ok":1,"ak_name":"<hex>","ak_public":"<base64>","reset_count":<n>,"clock":<n>}
+   {"ok":1,"ak_name":"<hex>","ak_public":"<base64>","reset_count":<n>,"restart_count":<n>,"clock":<n>}
 
 .. list-table::
    :header-rows: 1
@@ -197,11 +194,16 @@ One JSON object per row, on one line. A row that passes:
    * - ``reset_count``
      - ``resetCount`` of the quote's clock information, the number of TPM
        resets.
+   * - ``restart_count``
+     - ``restartCount`` of the quote's clock information, the number of TPM
+       restarts.
    * - ``clock``
      - ``clock`` of the quote's clock information, the TPM's count of
        milliseconds, as an unsigned 64-bit number.
 
-``reset_count`` and ``clock`` order the quotes of one key.
+``(reset_count, restart_count, clock)`` orders the quotes of one key; a
+verifier must reject non-increasing ``(reset_count, restart_count,
+clock)`` per ``ak_name`` to detect replayed quotes.
 
 A row that fails:
 

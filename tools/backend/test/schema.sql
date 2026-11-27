@@ -32,7 +32,7 @@ FROM system.columns
 WHERE database = 'shirudo' AND table = 'node_vulns'
 ORDER BY position;
 
-SELECT name FROM system.functions WHERE name IN ('kver', 'mask_code', 'tpm_quote_check') ORDER BY name;
+SELECT name FROM system.functions WHERE name IN ('kver', 'mask_code', 'tpm_otel_check', 'tpm_quote_check') ORDER BY name;
 
 SELECT * EXCEPT (updated) FROM shirudo.settings FINAL;
 

@@ -293,7 +293,8 @@ static void otlp_array_kvlist_end(struct json_emit *e)
 	json_obj_close(e);
 }
 
-static void emit_resource_attributes(struct json_emit *e)
+static void emit_resource_attributes(struct json_emit *e,
+				     const struct otel_signed_attrs *sig)
 {
 	char hostname[256] = "unknown";
 
@@ -304,6 +305,12 @@ static void emit_resource_attributes(struct json_emit *e)
 	otlp_kv_string(e, "service.name", "shirudo");
 	otlp_kv_string(e, "service.version", shirudo_version);
 	otlp_kv_string(e, "host.name", hostname);
+	if (sig) {
+		otlp_kv_string(e, "shirudo.tpm.ak_name", sig->ak_name);
+		otlp_kv_string(e, "shirudo.tpm.ak", sig->ak);
+		otlp_kv_string(e, "shirudo.tpm.attest", sig->attest);
+		otlp_kv_string(e, "shirudo.tpm.signature", sig->signature);
+	}
 	json_arr_close(e);
 }
 
@@ -322,14 +329,15 @@ static int u64_decimal(__u64 value, char out[32])
 }
 
 /* An OTLP document down to its scope; otlp_close() ends it. */
-static void otlp_open(struct json_emit *e, const char *resource_key,
-		      const char *scope_key, const char *scope_name)
+static void otlp_open_signed(struct json_emit *e, const char *resource_key,
+			     const char *scope_key, const char *scope_name,
+			     const struct otel_signed_attrs *sig)
 {
 	json_obj_open(e);
 	json_arr_open(e, resource_key);
 	json_obj_open(e);
 	json_obj_open_key(e, "resource");
-	emit_resource_attributes(e);
+	emit_resource_attributes(e, sig);
 	json_obj_close(e);
 	json_arr_open(e, scope_key);
 	json_obj_open(e);
@@ -349,14 +357,15 @@ static void otlp_close(struct json_emit *e)
 }
 
 /* A logs document with its one record open; log_close() ends both. */
-static void log_open(struct json_emit *e, const char *scope_name,
-		     int severity_number, const char *severity_text,
-		     const char *event_name)
+static void log_open_signed(struct json_emit *e, const char *scope_name,
+			    int severity_number, const char *severity_text,
+			    const char *event_name,
+			    const struct otel_signed_attrs *sig)
 {
 	char now[32];
 
 	u64_decimal(realtime_ns(), now);
-	otlp_open(e, "resourceLogs", "scopeLogs", scope_name);
+	otlp_open_signed(e, "resourceLogs", "scopeLogs", scope_name, sig);
 	json_arr_open(e, "logRecords");
 	json_obj_open(e);
 	json_kv_string(e, "timeUnixNano", now);
@@ -491,48 +500,77 @@ static void emit_log_map_data(struct json_emit *e,
 }
 
 /* record_max bounds the decoded body, 0 for none. */
-static int build_log_payload(const char *path,
-			     const struct map_view *v,
-			     size_t record_max,
-			     char **out, size_t *out_len)
+static int build_log_payload_signed(const char *path,
+				    const struct map_view *v,
+				    size_t record_max,
+				    const struct otel_opts *opts,
+				    char **out, size_t *out_len)
 {
-	struct json_emit e = {};
-	char *decoded = NULL;
-	size_t decoded_len = 0;
-	char *buf;
-	int decode_rc;
+	struct json_emit e = {}, body_e = {};
+	struct otel_signed_attrs attrs = {};
+	const struct otel_signed_attrs *sig = NULL;
+	char *decoded = NULL, *body_buf = NULL, *buf;
+	const char *body_json;
+	size_t decoded_len = 0, body_len = 0;
+	int decode_rc, ret;
 
-	buf = xmalloc(JSON_MAX_BYTES);
-	if (!buf)
-		return -ENOMEM;
-	e.buf = buf;
-	e.cap = JSON_MAX_BYTES;
-
-	log_open(&e, "shirudo.upatch.maps", 9, "INFO",
-		 "shirudo.bpf.map.snapshot");
 	decode_rc = path ? upatch_decode_map_file_otel(path, v,
-							      &decoded, &decoded_len) :
+							 &decoded, &decoded_len) :
 			upatch_decode_map_otel(v, &decoded, &decoded_len);
 	if (!decode_rc && record_max && decoded_len > record_max) {
 		xfree(decoded, decoded_len + 1);
-		decoded = NULL;
-		decode_rc = -E2BIG;
+		return -E2BIG;
 	}
 	if (decode_rc == 0) {
-		json_kv_raw(&e, "body", decoded, decoded_len);
+		body_json = decoded;
+		body_len = decoded_len;
 	} else if (decode_rc == -ENODATA) {
-		json_obj_open_key(&e, "body");
-		json_obj_open_key(&e, "kvlistValue");
-		json_arr_open(&e, "values");
-		emit_log_map_data(&e, v);
-		json_arr_close(&e);
-		json_obj_close(&e);
-		json_obj_close(&e);
+		body_buf = xmalloc(JSON_MAX_BYTES);
+		if (!body_buf)
+			return -ENOMEM;
+		body_e.buf = body_buf;
+		body_e.cap = JSON_MAX_BYTES;
+		json_obj_open(&body_e);
+		json_obj_open_key(&body_e, "kvlistValue");
+		json_arr_open(&body_e, "values");
+		emit_log_map_data(&body_e, v);
+		json_arr_close(&body_e);
+		json_obj_close(&body_e);
+		json_obj_close(&body_e);
+		if (body_e.err) {
+			xfree(body_buf, JSON_MAX_BYTES);
+			return body_e.err;
+		}
+		body_json = body_e.buf;
+		body_len = body_e.len;
 	} else {
-		xfree(buf, JSON_MAX_BYTES);
 		return decode_rc;
 	}
+
+	if (opts && opts->tpm_sign) {
+		ret = otel_sign_body(opts, body_json, body_len, &attrs);
+		if (ret) {
+			xfree(decoded, decoded_len + 1);
+			xfree(body_buf, JSON_MAX_BYTES);
+			return ret;
+		}
+		sig = &attrs;
+	}
+
+	buf = xmalloc(JSON_MAX_BYTES);
+	if (!buf) {
+		xfree(decoded, decoded_len + 1);
+		xfree(body_buf, JSON_MAX_BYTES);
+		return -ENOMEM;
+	}
+	e.buf = buf;
+	e.cap = JSON_MAX_BYTES;
+
+	log_open_signed(&e, "shirudo.upatch.maps", 9, "INFO",
+			"shirudo.bpf.map.snapshot", sig);
+	json_kv_raw(&e, "body", body_json, body_len);
 	xfree(decoded, decoded_len + 1);
+	xfree(body_buf, JSON_MAX_BYTES);
 	json_arr_open(&e, "attributes");
 	emit_map_attributes(&e, v);
 	json_arr_close(&e);
@@ -545,6 +583,15 @@ static int build_log_payload(const char *path,
 	*out = buf;
 	*out_len = e.len;
 	return 0;
+}
+
+static int build_log_payload(const char *path,
+			     const struct map_view *v,
+			     size_t record_max,
+			     char **out, size_t *out_len)
+{
+	return build_log_payload_signed(path, v, record_max, NULL, out,
+					out_len);
 }
 
 int upatch_maps_otel_build_log_file(const char *path,
@@ -594,13 +641,16 @@ static void emit_shield_counter_metric(struct json_emit *e,
 	json_obj_close(e);
 }
 
-int upatch_maps_otel_build_shield_metrics(const struct map_view *v,
-					  char **out, size_t *out_len)
+static int build_shield_metrics_signed(const struct map_view *v,
+				       const struct otel_opts *opts,
+				       char **out, size_t *out_len)
 {
 	struct shield_hits_summary shield;
-	struct json_emit e = {};
+	struct json_emit e = {}, me = {};
+	struct otel_signed_attrs attrs = {};
+	const struct otel_signed_attrs *sig = NULL;
 	char now_ns[32];
-	char *buf;
+	char *mbuf, *buf;
 	int ret;
 
 	if (!v || !out || !out_len)
@@ -608,22 +658,44 @@ int upatch_maps_otel_build_shield_metrics(const struct map_view *v,
 	ret = upatch_shield_hits_summary(v, &shield);
 	if (ret)
 		return ret;
-	buf = xmalloc(JSON_MAX_BYTES);
-	if (!buf)
+	mbuf = xmalloc(JSON_MAX_BYTES);
+	if (!mbuf)
 		return -ENOMEM;
 	u64_decimal(realtime_ns(), now_ns);
-	e.buf = buf;
-	e.cap = JSON_MAX_BYTES;
-	otlp_open(&e, "resourceMetrics", "scopeMetrics", "shirudo.upatch.maps");
-	json_arr_open(&e, "metrics");
+	me.buf = mbuf;
+	me.cap = JSON_MAX_BYTES;
+	json_arr_open_value(&me);
 	if (shield.has_hits)
-		emit_shield_counter_metric(&e, v, "shirudo.shield.hits",
+		emit_shield_counter_metric(&me, v, "shirudo.shield.hits",
 					   shield.hits, now_ns);
 	if (shield.has_activity)
-		emit_shield_counter_metric(&e, v, "shirudo.shield.activity",
+		emit_shield_counter_metric(&me, v, "shirudo.shield.activity",
 					   shield.activity, now_ns);
-	json_arr_close(&e);
+	json_arr_close(&me);
+	if (me.err) {
+		xfree(mbuf, JSON_MAX_BYTES);
+		return me.err;
+	}
+	if (opts && opts->tpm_sign) {
+		ret = otel_sign_body(opts, me.buf, me.len, &attrs);
+		if (ret) {
+			xfree(mbuf, JSON_MAX_BYTES);
+			return ret;
+		}
+		sig = &attrs;
+	}
+	buf = xmalloc(JSON_MAX_BYTES);
+	if (!buf) {
+		xfree(mbuf, JSON_MAX_BYTES);
+		return -ENOMEM;
+	}
+	e.buf = buf;
+	e.cap = JSON_MAX_BYTES;
+	otlp_open_signed(&e, "resourceMetrics", "scopeMetrics",
+			 "shirudo.upatch.maps", sig);
+	json_kv_raw(&e, "metrics", me.buf, me.len);
 	otlp_close(&e);
+	xfree(mbuf, JSON_MAX_BYTES);
 	if (e.err) {
 		xfree(buf, JSON_MAX_BYTES);
 		return e.err;
@@ -633,11 +705,20 @@ int upatch_maps_otel_build_shield_metrics(const struct map_view *v,
 	return 0;
 }
 
-static int build_metric_decoded_payload(const char *path,
-					const struct map_view *v,
-					char **out, size_t *out_len)
+int upatch_maps_otel_build_shield_metrics(const struct map_view *v,
+					  char **out, size_t *out_len)
+{
+	return build_shield_metrics_signed(v, NULL, out, out_len);
+}
+
+static int build_metric_decoded_payload_signed(const char *path,
+					       const struct map_view *v,
+					       const struct otel_opts *opts,
+					       char **out, size_t *out_len)
 {
 	struct json_emit e = {};
+	struct otel_signed_attrs attrs = {};
+	const struct otel_signed_attrs *sig = NULL;
 	char *decoded = NULL, *decoded_buf, *buf;
 	size_t decoded_len = 0, decoded_alloc_len;
 	int ret;
@@ -649,8 +730,8 @@ static int build_metric_decoded_payload(const char *path,
 		struct shield_hits_summary shield;
 
 		if (upatch_shield_hits_summary(v, &shield) == 0)
-			return upatch_maps_otel_build_shield_metrics(v, out,
-								     out_len);
+			return build_shield_metrics_signed(v, opts, out,
+							   out_len);
 	}
 	if (ret)
 		return ret;
@@ -664,6 +745,14 @@ static int build_metric_decoded_payload(const char *path,
 		xfree(decoded_buf, decoded_alloc_len + 1);
 		return -EINVAL;
 	}
+	if (opts && opts->tpm_sign) {
+		ret = otel_sign_body(opts, decoded, decoded_len, &attrs);
+		if (ret) {
+			xfree(decoded_buf, decoded_alloc_len + 1);
+			return ret;
+		}
+		sig = &attrs;
+	}
 	buf = xmalloc(JSON_MAX_BYTES);
 	if (!buf) {
 		xfree(decoded_buf, decoded_alloc_len + 1);
@@ -671,7 +760,8 @@ static int build_metric_decoded_payload(const char *path,
 	}
 	e.buf = buf;
 	e.cap = JSON_MAX_BYTES;
-	otlp_open(&e, "resourceMetrics", "scopeMetrics", "shirudo.upatch.maps");
+	otlp_open_signed(&e, "resourceMetrics", "scopeMetrics",
+			 "shirudo.upatch.maps", sig);
 	json_kv_raw(&e, "metrics", decoded, decoded_len);
 	otlp_close(&e);
 	if (e.err) {
@@ -683,6 +773,13 @@ static int build_metric_decoded_payload(const char *path,
 	*out = buf;
 	*out_len = e.len;
 	return 0;
+}
+
+static int build_metric_decoded_payload(const char *path,
+					const struct map_view *v,
+					char **out, size_t *out_len)
+{
+	return build_metric_decoded_payload_signed(path, v, NULL, out, out_len);
 }
 
 static const char *signal_name(enum otel_signal signal)
@@ -1313,69 +1410,33 @@ static void retry_wait(__u32 retry, __u64 retry_after,
 		;
 }
 
-static int otel_read_boot_id(char *out, size_t cap)
+static otel_quote_fn test_quote_fn;
+static void *test_quote_ctx;
+
+void otel_set_quote_fn_for_test(otel_quote_fn fn, void *ctx)
 {
-	char raw[OTEL_BOOT_ID_MAX + 4];
-	ssize_t n;
-	size_t len;
-	int fd;
-
-	fd = open("/proc/sys/kernel/random/boot_id", O_RDONLY | O_CLOEXEC);
-	if (fd < 0)
-		return -errno;
-	n = read(fd, raw, sizeof(raw) - 1);
-	close(fd);
-	if (n <= 0)
-		return -ENODATA;
-	len = (size_t)n;
-	while (len && (raw[len - 1] == '\n' || raw[len - 1] == '\r'))
-		len--;
-	if (!len)
-		return -ENODATA;
-	return span_to_str(out, cap, raw, len);
-}
-
-static __u64 otel_next_export_seq(const struct otel_opts *opts)
-{
-	static __u64 otel_export_seq;
-
-	if (opts && opts->export_seq)
-		return opts->export_seq;
-	return __atomic_add_fetch(&otel_export_seq, 1, __ATOMIC_RELAXED);
+	test_quote_fn = fn;
+	test_quote_ctx = ctx;
 }
 
 noinline_for_stack int
-otel_sign_headers(const struct otel_opts *opts, const char *body,
-		  size_t body_len, struct otel_signed_headers *out)
+otel_sign_body(const struct otel_opts *opts, const void *body,
+	       size_t body_len, struct otel_signed_attrs *out)
 {
 	__u8 body_sha256[CRYPTO_SHA256_LEN], origin[CRYPTO_SHA256_LEN];
 	struct tpm_attestation att = {};
 	struct tpm_key ak = {};
-	__u64 seq;
 	int ret;
 
 	if (!opts || !body || !out)
 		return -EINVAL;
 	memset(out, 0, sizeof(*out));
-	if (opts->boot_id && opts->boot_id[0]) {
-		if (strscpy(out->boot_id, opts->boot_id,
-			    sizeof(out->boot_id)) < 0)
-			return -EINVAL;
-	} else {
-		ret = otel_read_boot_id(out->boot_id, sizeof(out->boot_id));
-		if (ret)
-			return ret;
-	}
-	seq = otel_next_export_seq(opts);
-	if (u64_decimal(seq, out->export_seq) < 0)
-		return -E2BIG;
 	ret = sha256_buffer(body, body_len, body_sha256);
 	if (!ret)
-		ret = otel_origin_digest(out->boot_id, seq, body_sha256,
-					 origin);
+		ret = otel_origin_digest(body_sha256, origin);
 	if (!ret)
-		ret = opts->quote_fn ?
-		      opts->quote_fn(origin, &ak, &att, opts->quote_ctx) :
+		ret = test_quote_fn ?
+		      test_quote_fn(origin, &ak, &att, test_quote_ctx) :
 		      (opts->tpm_session && opts->tpm_session->active) ?
 		      tpm_quote_session_quote(opts->tpm_session, origin, &ak,
 					      &att) :
@@ -1383,73 +1444,20 @@ otel_sign_headers(const struct otel_opts *opts, const char *body,
 	if (ret)
 		return ret;
 	if (!ak.name_len || ak.name_len > sizeof(ak.name) ||
+	    !ak.public_len || ak.public_len > sizeof(ak.public) ||
 	    !att.attest_len || att.attest_len > sizeof(att.attest) ||
 	    !att.signature_len || att.signature_len > sizeof(att.signature))
 		return -EBADMSG;
 	hex_encode(ak.name, ak.name_len, out->ak_name);
+	hex_encode(ak.public, ak.public_len, out->ak);
 	hex_encode(att.attest, att.attest_len, out->attest);
 	hex_encode(att.signature, att.signature_len, out->signature);
-	out->seq = seq;
 	return 0;
-}
-
-static int otel_append_list(struct curl_slist **list, const char *line)
-{
-	struct curl_slist *next = curl_slist_append(*list, line);
-
-	if (!next)
-		return -ENOMEM;
-	*list = next;
-	return 0;
-}
-
-static noinline_for_stack int
-otel_build_signed_headers(struct otel_state *st, const char *json,
-			  size_t json_len, struct curl_slist **out)
-{
-	char line[sizeof("X-Shirudo-TPM-Attest: ") + 2 * TPM_ATTEST_MAX];
-	struct otel_signed_headers sig;
-	struct curl_slist *list = NULL;
-	const struct curl_slist *cur;
-	int ret;
-
-	ret = otel_sign_headers(&st->opts, json, json_len, &sig);
-	if (ret)
-		return ret;
-	for (cur = st->headers; cur; cur = cur->next) {
-		ret = otel_append_list(&list, cur->data);
-		if (ret)
-			goto err;
-	}
-	if (strsprintf(line, sizeof(line), "X-Shirudo-TPM-AK-Name: %s",
-		       sig.ak_name) < 0 ||
-	    otel_append_list(&list, line) ||
-	    strsprintf(line, sizeof(line), "X-Shirudo-TPM-Attest: %s",
-		       sig.attest) < 0 ||
-	    otel_append_list(&list, line) ||
-	    strsprintf(line, sizeof(line), "X-Shirudo-TPM-Signature: %s",
-		       sig.signature) < 0 ||
-	    otel_append_list(&list, line) ||
-	    strsprintf(line, sizeof(line), "X-Shirudo-Boot-ID: %s",
-		       sig.boot_id) < 0 ||
-	    otel_append_list(&list, line) ||
-	    strsprintf(line, sizeof(line), "X-Shirudo-Export-Seq: %s",
-		       sig.export_seq) < 0 ||
-	    otel_append_list(&list, line)) {
-		ret = -ENOMEM;
-		goto err;
-	}
-	*out = list;
-	return 0;
-err:
-	curl_slist_free_sensitive(list);
-	return ret;
 }
 
 static noinline_for_stack int otel_post(struct otel_state *st,
 					const char *json, size_t json_len)
 {
-	struct curl_slist *signed_headers = NULL;
 	struct curl_slist *req_headers;
 	__u8 *compressed = NULL;
 	const void *body = json;
@@ -1469,15 +1477,6 @@ static noinline_for_stack int otel_post(struct otel_state *st,
 			return ret;
 		body = compressed;
 		compressed_cap = size_add(compressBound(json_len), 32);
-	}
-	if (st->opts.tpm_sign) {
-		ret = otel_build_signed_headers(st, (const char *)body,
-						body_len, &signed_headers);
-		if (ret) {
-			xfree(compressed, compressed_cap);
-			return ret;
-		}
-		req_headers = signed_headers;
 	}
 	for (attempt = 0; attempt < max_attempts; attempt++) {
 		struct otel_response response = {};
@@ -1553,7 +1552,6 @@ static noinline_for_stack int otel_post(struct otel_state *st,
 		retry_wait(attempt, response.retry_after,
 			   response.retry_after_valid);
 	}
-	curl_slist_free_sensitive(signed_headers);
 	xfree(compressed, compressed_cap);
 	return ret;
 }
@@ -1636,12 +1634,13 @@ static int otel_emit(void *state, const struct map_view *v)
 	if (!st || !v)
 		return -EINVAL;
 	if (st->signal == OTEL_LOG)
-		ret = build_log_payload(st->decoder_path, v,
-					st->opts.log_record_max_bytes,
-					&payload, &len);
+		ret = build_log_payload_signed(st->decoder_path, v,
+					       st->opts.log_record_max_bytes,
+					       &st->opts, &payload, &len);
 	else
-		ret = build_metric_decoded_payload(st->decoder_path, v,
-						   &payload, &len);
+		ret = build_metric_decoded_payload_signed(st->decoder_path, v,
+							  &st->opts, &payload,
+							  &len);
 	if (ret)
 		return ret;
 	ret = otel_post(st, payload, len);
@@ -1674,10 +1673,19 @@ int otel_send_log_string(const struct otel_opts *opts,
 			 const char *attr_key, const char *attr_value)
 {
 	struct json_emit e = { .max = JSON_MAX_BYTES };
+	struct otel_signed_attrs attrs = {};
+	const struct otel_signed_attrs *sig = NULL;
 	void *state = NULL;
 	int ret;
 
-	log_open(&e, scope_name, severity_number, severity_text, event_name);
+	if (opts && opts->tpm_sign) {
+		ret = otel_sign_body(opts, body, body_len, &attrs);
+		if (ret)
+			return ret;
+		sig = &attrs;
+	}
+	log_open_signed(&e, scope_name, severity_number, severity_text,
+			event_name, sig);
 	json_obj_open_key(&e, "body");
 	json_kv_string_n(&e, "stringValue", body, body_len);
 	json_obj_close(&e);
@@ -2318,22 +2326,33 @@ out:
 
 static int build_s3_reference(const struct map_view *v,
 			      const struct s3_snapshot *snapshot,
+			      const struct otel_opts *opts,
 			      const char *uri, char **out, size_t *out_len)
 {
 	struct json_emit e = {};
+	struct otel_signed_attrs attrs = {};
+	const struct otel_signed_attrs *sig = NULL;
 	char description[S3_URL_MAX + 64];
 	char *buf;
+	int ret;
 
 	if (strsprintf(description, sizeof(description),
 		       "BPF map snapshot stored in S3: %s", uri) < 0)
 		return -E2BIG;
+	if (opts && opts->tpm_sign) {
+		ret = otel_sign_body(opts, description, strlen(description),
+				     &attrs);
+		if (ret)
+			return ret;
+		sig = &attrs;
+	}
 	buf = xmalloc(S3_REFERENCE_MAX);
 	if (!buf)
 		return -ENOMEM;
 	e.buf = buf;
 	e.cap = S3_REFERENCE_MAX;
-	log_open(&e, "shirudo.upatch.maps", 9, "INFO",
-		 "shirudo.bpf.map.snapshot.reference");
+	log_open_signed(&e, "shirudo.upatch.maps", 9, "INFO",
+			"shirudo.bpf.map.snapshot.reference", sig);
 	json_obj_open_key(&e, "body");
 	json_kv_string(&e, "stringValue", description);
 	json_obj_close(&e);
@@ -2443,7 +2462,8 @@ static int otel_s3_emit(void *state, const struct map_view *v)
 	fprintf(stderr, "otel.s3: %s %s (%llu bytes)\n",
 		already_present ? "found" : "uploaded", uri,
 		snapshot.object_bytes);
-	ret = build_s3_reference(v, &snapshot, uri, &payload, &payload_len);
+	ret = build_s3_reference(v, &snapshot, &st->opts, uri, &payload,
+				 &payload_len);
 	if (ret)
 		goto out;
 	ret = otel_post(st->otel, payload, payload_len);

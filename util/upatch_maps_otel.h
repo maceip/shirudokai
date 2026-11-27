@@ -34,30 +34,25 @@ struct otel_opts {
 	const char	*endpoint;
 	const char	*tenant_id;
 	const char	*s3_uri;
-	const char	*boot_id;
 	bool		allow_insecure;
 	bool		tpm_sign;
 	__u32		retries;
 	__u32		log_record_max_bytes;
 	__u32		otlp_max_bytes;
 	struct tpm_quote_session *tpm_session;
-	__u64		export_seq;
-	otel_quote_fn	quote_fn;
-	void		*quote_ctx;
 };
 
-struct otel_signed_headers {
+struct otel_signed_attrs {
 	char	ak_name[2 * TPM_NAME_LEN + 1];
+	char	ak[2 * TPM_PUBLIC_MAX + 1];
 	char	attest[2 * TPM_ATTEST_MAX + 1];
 	char	signature[2 * TPM_SIGNATURE_MAX + 1];
-	char	boot_id[OTEL_BOOT_ID_MAX + 1];
-	char	export_seq[32];
-	__u64	seq;
 };
 
-int otel_sign_headers(const struct otel_opts *opts, const char *body,
-		      size_t body_len,
-		      struct otel_signed_headers *out) __must_check;
+int otel_sign_body(const struct otel_opts *opts, const void *body,
+		   size_t body_len,
+		   struct otel_signed_attrs *out) __must_check;
+void otel_set_quote_fn_for_test(otel_quote_fn fn, void *ctx);
 
 int upatch_maps_otel_classify(const struct map_view *v,
 			      enum otel_signal *signal,
