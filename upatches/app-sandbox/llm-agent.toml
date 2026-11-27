@@ -27,6 +27,21 @@ deny_ptrace = true
 
 [sandbox.llm-agent.deny]
 network = ["@cloud_imds"]
+create = [
+	"*.pem",
+	"id_rsa*",
+	"id_ed25519*",
+	"authorized_keys",
+]
+rename = [
+	"*.pem",
+	"id_rsa*",
+	"id_ed25519*",
+	".env*",
+	"*credentials*",
+	"token",
+	"authorized_keys",
+]
 read = [
 	"*.pem",
 	"id_rsa*",

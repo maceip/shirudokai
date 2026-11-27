@@ -38,6 +38,92 @@ test_expect_success 'SqlLexer deterministic state-machine self-tests pass' '
 	java -cp "$WORK/sql-classes" com.security.rasp.SqlLexerTest
 '
 
+test_expect_success 'RaspAgent and SqlInjectionAdvisor compile and guard Statement/Connection SQL' '
+	mkdir -p "$WORK/bb/net/bytebuddy/asm" \
+		"$WORK/bb/net/bytebuddy/matcher" \
+		"$WORK/bb/net/bytebuddy/agent/builder" &&
+	cat >"$WORK/bb/net/bytebuddy/asm/Advice.java" <<-\JAVA &&
+	package net.bytebuddy.asm;
+	import java.lang.annotation.*;
+	public final class Advice {
+	    @Retention(RetentionPolicy.RUNTIME)
+	    public @interface OnMethodEnter { boolean inline() default true; }
+	    @Retention(RetentionPolicy.RUNTIME)
+	    public @interface Argument { int value(); }
+	    public static Advice to(Class<?> cls) { return new Advice(); }
+	}
+	JAVA
+	cat >"$WORK/bb/net/bytebuddy/matcher/ElementMatchers.java" <<-\JAVA &&
+	package net.bytebuddy.matcher;
+	public final class ElementMatchers {
+	    public interface Junction<T> {
+	        default Junction<T> and(Junction<? super T> o) { return this; }
+	        default Junction<T> or(Junction<? super T> o) { return this; }
+	    }
+	    public static <T> Junction<T> isSubTypeOf(Class<?> c) { return new Junction<>() {}; }
+	    public static <T> Junction<T> not(Junction<? super T> m) { return new Junction<>() {}; }
+	    public static <T> Junction<T> isInterface() { return new Junction<>() {}; }
+	    public static <T> Junction<T> nameStartsWith(String p) { return new Junction<>() {}; }
+	    public static <T> Junction<T> named(String n) { return new Junction<>() {}; }
+	    public static <T> Junction<T> namedOneOf(String... n) { return new Junction<>() {}; }
+	    public static <T> Junction<T> takesArgument(int i, Class<?> c) { return new Junction<>() {}; }
+	}
+	JAVA
+	cat >"$WORK/bb/net/bytebuddy/agent/builder/AgentBuilder.java" <<-\JAVA &&
+	package net.bytebuddy.agent.builder;
+	import java.lang.instrument.Instrumentation;
+	import java.security.ProtectionDomain;
+	import net.bytebuddy.asm.Advice;
+	import net.bytebuddy.matcher.ElementMatchers.Junction;
+	public interface AgentBuilder {
+	    interface Builder {
+	        Receiver method(Junction<?> m);
+	        interface Receiver { Builder intercept(Advice a); }
+	    }
+	    interface Transformer {
+	        Builder transform(Builder b, Object td, ClassLoader cl, Object mod, ProtectionDomain pd);
+	    }
+	    interface Identified {
+	        AgentBuilder transform(Transformer t);
+	    }
+	    Identified type(Junction<?> m);
+	    void installOn(Instrumentation inst);
+	    class Default implements AgentBuilder {
+	        public Identified type(Junction<?> m) { return t -> this; }
+	        public void installOn(Instrumentation inst) {}
+	    }
+	}
+	JAVA
+	cat >"$WORK/bb/AdvisorCheck.java" <<-\JAVA &&
+	import com.security.rasp.RaspAgent;
+	import com.security.rasp.SqlInjectionAdvisor;
+	public final class AdvisorCheck {
+	    public static void main(String[] args) {
+	        RaspAgent.premain("", null);
+	        SqlInjectionAdvisor.onEnter("SELECT * FROM users WHERE id = ? AND role = ?");
+	        SqlInjectionAdvisor.onEnter("{call audit_event(?, ?)}");
+	        boolean blocked = false;
+	        try {
+	            SqlInjectionAdvisor.onEnter("SELECT * FROM users WHERE id = ? OR -1 = -1");
+	        } catch (SecurityException expected) {
+	            blocked = true;
+	        }
+	        if (!blocked) {
+	            throw new AssertionError("Expected SqlInjectionAdvisor to block SQLi");
+	        }
+	    }
+	}
+	JAVA
+	javac --release 21 -cp "$WORK/sql-classes" -d "$WORK/sql-classes" \
+		"$WORK/bb/net/bytebuddy/asm/Advice.java" \
+		"$WORK/bb/net/bytebuddy/matcher/ElementMatchers.java" \
+		"$WORK/bb/net/bytebuddy/agent/builder/AgentBuilder.java" \
+		"$REPO/upatches/java-sql-inj/agent/src/main/java/com/security/rasp/SqlInjectionAdvisor.java" \
+		"$REPO/upatches/java-sql-inj/agent/src/main/java/com/security/rasp/RaspAgent.java" \
+		"$WORK/bb/AdvisorCheck.java" &&
+	java -cp "$WORK/sql-classes" AdvisorCheck
+'
+
 test_expect_success 'java-runtime-guard builds signed .bee with pure JDK tools' '
 	cp -R "$REPO/upatches/java-runtime-guard" "$WORK/java-runtime-guard" &&
 	chmod +x "$WORK/java-runtime-guard/build.sh" &&

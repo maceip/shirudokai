@@ -80,15 +80,15 @@ read = ["*.pem", "*credentials*"]
 | `exec` | The task executes anything. | It executes only files labeled with its own policy or with one of the policy IDs listed, each a `[[upatches.policy]]` table of the Beefile. `exec = []` allows its own files alone. |
 | `families` | Socket families are not filtered (except raw/packet when IP/port rules apply). | `socket()` allows only the listed families (`inet`, `inet6`, `unix`, `netlink`, `vsock`). |
 | `network` | The task connects to any IP address not in `deny.network`. | It connects and sends only to the networks listed, IPv4 or IPv6 in CIDR form, or `@<name>` for a list of `[networks]`. An IPv4 network also covers its IPv4-mapped IPv6 form. It creates no raw and no packet socket. `network = []` allows no IP peer. |
-| `ports` | Any TCP/UDP destination port not in `deny.ports` is allowed. | `connect()` and `sendmsg()` allow only the listed ports or ranges (`443`, `"8000-8080"`, `"tcp/443"`, `"udp/53"`). |
+| `ports` | Any TCP/UDP destination port not in `deny.ports` is allowed. | `connect()` and `sendmsg()` allow only the listed ports or ranges (`443`, `"8000-8080"`, `"tcp/443"`, `"udp/53"`), mapping MPTCP to TCP and UDPLite to UDP and refusing other IP protocols. |
 | `deny_ptrace` | `ptrace` keeps normal kernel checks. | When `true`, `lsm/ptrace_access_check` refuses `ptrace` from the sandbox. |
 | `deny.network` | | Refuses `connect()` and `sendmsg()` to matching IPv4/IPv6 CIDRs (takes precedence over `network`) and blocks raw/packet sockets. |
-| `deny.ports` | | Refuses `connect()` and `sendmsg()` to matching TCP/UDP destination ports or ranges (takes precedence over `ports`). |
+| `deny.ports` | | Refuses `connect()` and `sendmsg()` to matching TCP/UDP destination ports or ranges (takes precedence over `ports`), mapping MPTCP to TCP and UDPLite to UDP and refusing other IP protocols. |
 | `deny.unix` | | Refuses `unix_stream_connect` and `unix_may_send` to UNIX sockets matching a basename pattern (no `/`) or full path/abstract `@name` pattern (with `/`). |
 | `deny.create` | | It creates no file, directory, device, symbolic link or hard link with a matching name. |
 | `deny.rename` | | It renames no file from or to a matching name. |
-| `deny.write` | | It opens no file with a matching name for writing and does not truncate one. |
-| `deny.read` | | It opens no file with a matching name for reading (`FMODE_READ`), gated by `read_enforced` so sandboxes without `deny.read` exit immediately on read opens. |
+| `deny.write` | | It opens no file with a matching name for writing, does not truncate one, and creates no hard link to one. |
+| `deny.read` | | It opens no file with a matching name for reading (`FMODE_READ`) and creates no hard link to one, gated by `read_enforced` so sandboxes without `deny.read` exit immediately on read opens. |
 
 A file pattern is matched against the last component of the path. It is
 the name itself, `prefix*suffix` with at most one `*` and up to 32 bytes
@@ -114,8 +114,10 @@ each.
   Identity endpoints (`169.254.170.2/32`, `169.254.170.23/32`,
   `fd00:ec2::23/128`), Alibaba Cloud (`100.100.100.200/32`) and Oracle
   Cloud (`192.0.0.192/32`);
-- denies reading credential and secret files (`*.pem`, `id_rsa*`,
-  `id_ed25519*`, `.env*`, `*credentials*`, `token`);
+- denies reading or renaming credential and secret files (`*.pem`,
+  `id_rsa*`, `id_ed25519*`, `.env*`, `*credentials*`, `token`), and
+  denies creating, renaming or writing key and SSH authorization files
+  (`*.pem`, `id_rsa*`, `id_ed25519*`, `authorized_keys`);
 - denies connecting to container-runtime UNIX sockets (`docker.sock`,
   `*/docker.sock`, `*containerd*`, `crio.sock`);
 - denies `ptrace` (`deny_ptrace = true`).

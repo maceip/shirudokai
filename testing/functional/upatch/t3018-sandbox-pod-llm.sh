@@ -99,11 +99,19 @@ test_expect_success 'llm-agent.toml builds via --rodata-input sandbox=... and ro
 	for rule in sp["net"][:7]:
 	    assert rule["deny_sandboxes"] == 4, rule
 	    assert rule["allow_sandboxes"] == 0, rule
-	read_rules = [r for r in sp["fim"][:sp["nr_fim"]] if r["ops"] & 0x8]
+	fim = sp["fim"][:sp["nr_fim"]]
+	assert sp["nr_fim"] == 11, sp["nr_fim"]
+	create_rules = [r for r in fim if r["ops"] & 0x1]
+	assert len(create_rules) == 4, create_rules
+	rename_rules = [r for r in fim if r["ops"] & 0x2]
+	assert len(rename_rules) == 7, rename_rules
+	write_rules = [r for r in fim if r["ops"] & 0x4]
+	assert len(write_rules) == 4, write_rules
+	read_rules = [r for r in fim if r["ops"] & 0x8]
 	assert len(read_rules) == 6, read_rules
 	contains_rules = [r for r in read_rules if r["wildcard"] == 2]
 	assert len(contains_rules) == 1, contains_rules
-	unix_rules = [r for r in sp["fim"][:sp["nr_fim"]] if r["ops"] & 0x30]
+	unix_rules = [r for r in fim if r["ops"] & 0x30]
 	assert len(unix_rules) == 4, unix_rules
 	PY
 '

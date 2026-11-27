@@ -3,7 +3,7 @@
 
 [package]
 name = "java-runtime-guard"
-description = "A Java agent that blocks remote JNDI lookups, deserialization gadgets and shell injection"
+description = "A Java agent that installs JVM-wide JNDI lookup/factory guards and JEP 415 serial-filter deserialization guards"
 license = "BSD-2-Clause"
 authors = ["Authors of shirudo"]
 

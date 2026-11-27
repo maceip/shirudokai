@@ -6,6 +6,7 @@ package com.security.rasp;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -26,6 +27,7 @@ public final class SqlLexer {
         RPAREN,
         COMMA,
         LINE_COMMENT,
+        BLOCK_COMMENT,
         CONDITIONAL_COMMENT,
         UNTERMINATED
     }
@@ -55,6 +57,11 @@ public final class SqlLexer {
             this.tokens = tokens;
         }
     }
+
+    private static final Set<String> SPLIT_GLUE_KEYWORDS = Set.of(
+            "AND", "OR", "WHERE", "UNION", "ORDER", "GROUP", "HAVING",
+            "LIMIT", "VALUES", "SET", "INTO", "FROM", "JOIN", "ON"
+    );
 
     private static final AtomicLong OBSERVED_COUNT = new AtomicLong();
     private static final AtomicLong ENFORCED_COUNT = new AtomicLong();
@@ -121,7 +128,7 @@ public final class SqlLexer {
                 continue;
             }
 
-            // End of an unwrapped MySQL /*! ... */ conditional comment.
+            // End of an unwrapped MySQL /*! ... */ or MariaDB /*M! ... */ conditional comment.
             if (condCommentDepth > 0 && c == '*' && i + 1 < n && sql.charAt(i + 1) == '/') {
                 condCommentDepth--;
                 i += 2;
@@ -146,6 +153,22 @@ public final class SqlLexer {
                 continue;
             }
 
+            // PostgreSQL / H2 $$...$$ and $tag$...$tag$ dollar-quoted string literal.
+            if (c == '$') {
+                int tagEnd = readDollarTagEnd(sql, i);
+                if (tagEnd > i) {
+                    String delim = sql.substring(i, tagEnd + 1);
+                    int closePos = sql.indexOf(delim, tagEnd + 1);
+                    if (closePos < 0) {
+                        out.add(new Token(TokenType.UNTERMINATED, delim));
+                        return out;
+                    }
+                    out.add(new Token(TokenType.STRING, sql.substring(tagEnd + 1, closePos)));
+                    i = closePos + delim.length();
+                    continue;
+                }
+            }
+
             // -- line comment.
             if (c == '-' && i + 1 < n && sql.charAt(i + 1) == '-') {
                 int start = i;
@@ -168,12 +191,16 @@ public final class SqlLexer {
                 continue;
             }
 
-            // /* ... */ block comment or /*! ... */ MySQL conditional comment.
+            // /* ... */ block comment, /*! ... */ MySQL or /*M! ... */ MariaDB conditional comment.
             if (c == '/' && i + 1 < n && sql.charAt(i + 1) == '*') {
-                if (i + 2 < n && sql.charAt(i + 2) == '!') {
-                    out.add(new Token(TokenType.CONDITIONAL_COMMENT, "/*!"));
-                    i += 3;
-                    // Optional 5-6 digit MySQL version prefix inside /*!50000 ... */
+                boolean mysqlBang = (i + 2 < n && sql.charAt(i + 2) == '!');
+                boolean mariaBang = (i + 3 < n
+                        && (sql.charAt(i + 2) == 'M' || sql.charAt(i + 2) == 'm')
+                        && sql.charAt(i + 3) == '!');
+                if (mysqlBang || mariaBang) {
+                    out.add(new Token(TokenType.CONDITIONAL_COMMENT,
+                            mariaBang ? sql.substring(i, i + 4) : "/*!"));
+                    i += mariaBang ? 4 : 3;
                     int digits = 0;
                     while (i + digits < n && digits < 6
                             && Character.isDigit(sql.charAt(i + digits))) {
@@ -185,6 +212,7 @@ public final class SqlLexer {
                     condCommentDepth++;
                     continue;
                 }
+                int commentStart = i;
                 i += 2;
                 boolean closed = false;
                 while (i + 1 < n) {
@@ -199,6 +227,7 @@ public final class SqlLexer {
                     out.add(new Token(TokenType.UNTERMINATED, "/*"));
                     return out;
                 }
+                out.add(new Token(TokenType.BLOCK_COMMENT, sql.substring(commentStart, i)));
                 continue;
             }
 
@@ -280,6 +309,25 @@ public final class SqlLexer {
         return out;
     }
 
+    private static int readDollarTagEnd(String sql, int start) {
+        final int n = sql.length();
+        if (start + 1 >= n) {
+            return -1;
+        }
+        char first = sql.charAt(start + 1);
+        if (first == '$') {
+            return start + 1;
+        }
+        if (!Character.isLetter(first) && first != '_') {
+            return -1;
+        }
+        int k = start + 2;
+        while (k < n && (Character.isLetterOrDigit(sql.charAt(k)) || sql.charAt(k) == '_')) {
+            k++;
+        }
+        return (k < n && sql.charAt(k) == '$') ? k : -1;
+    }
+
     private static int readQuoted(String sql, int start, char quote,
                                   boolean backslashEscape, TokenType type,
                                   List<Token> out) {
@@ -316,9 +364,10 @@ public final class SqlLexer {
     /**
      * The agent does not know which database reads the statement, so a
      * statement with a backslash is read both ways and refused when
-     * either reading is an injection. A string that MySQL ends properly
-     * is often unterminated in the other reading, 'it\\'s', so that
-     * reading alone does not refuse a statement for an open quote.
+     * either reading is an injection. A single string that MySQL ends
+     * properly is unterminated in the other reading ('it\'s'), whereas
+     * a two-parameter \' split swallows SQL glue up to the second
+     * parameter's opening quote and injects SQL tokens after it.
      */
     public static Analysis analyze(String sql) {
         Analysis escaped = analyze(tokenize(sql, true));
@@ -326,18 +375,101 @@ public final class SqlLexer {
             return escaped;
         }
         Analysis literal = analyze(tokenize(sql, false));
-        if (literal.malicious
-                && !"unterminated_quote_or_comment".equals(literal.reason)) {
-            return literal;
+        if (literal.malicious) {
+            if (!"unterminated_quote_or_comment".equals(literal.reason)) {
+                return literal;
+            }
+            if (hasBackslashQuoteSplit(sql)) {
+                return new Analysis(true, "backslash_quote_smuggling", escaped.tokens);
+            }
         }
         return escaped;
     }
 
-    private static Analysis analyze(List<Token> raw) {
-        List<Token> significant = new ArrayList<>(raw.size());
-        boolean sawLiteral = false;
+    private static boolean hasBackslashQuoteSplit(String sql) {
+        final int n = sql.length();
+        int i = 0;
+        while (i < n) {
+            char c = sql.charAt(i);
+            if (c == '\'' || c == '"') {
+                char quote = c;
+                int j = i + 1;
+                int firstEscapedQuoteAfter = -1;
+                int closeIdx = -1;
+                while (j < n) {
+                    char ch = sql.charAt(j);
+                    if (ch == '\\' && j + 1 < n) {
+                        if (sql.charAt(j + 1) == quote && firstEscapedQuoteAfter < 0) {
+                            firstEscapedQuoteAfter = j + 2;
+                        }
+                        j += 2;
+                        continue;
+                    }
+                    if (ch == quote) {
+                        if (j + 1 < n && sql.charAt(j + 1) == quote) {
+                            j += 2;
+                            continue;
+                        }
+                        closeIdx = j;
+                        break;
+                    }
+                    j++;
+                }
+                if (closeIdx > 0 && firstEscapedQuoteAfter > 0
+                        && firstEscapedQuoteAfter <= closeIdx
+                        && hasTokensAfterClose(sql, closeIdx + 1)
+                        && looksLikeSwallowedSqlGlue(sql, firstEscapedQuoteAfter, closeIdx)) {
+                    return true;
+                }
+                i = (closeIdx > 0) ? closeIdx + 1 : n;
+                continue;
+            }
+            i++;
+        }
+        return false;
+    }
 
-        for (Token t : raw) {
+    private static boolean hasTokensAfterClose(String sql, int from) {
+        final int n = sql.length();
+        int i = from;
+        while (i < n && (Character.isWhitespace(sql.charAt(i)) || sql.charAt(i) == ';')) {
+            i++;
+        }
+        return i < n;
+    }
+
+    private static boolean looksLikeSwallowedSqlGlue(String sql, int start, int end) {
+        int p = start;
+        while (p < end && Character.isWhitespace(sql.charAt(p))) {
+            p++;
+        }
+        if (p >= end) {
+            return false;
+        }
+        char ch = sql.charAt(p);
+        if (ch == ',' || ch == ')' || ch == ';' || ch == '='
+                || ch == '!' || ch == '<' || ch == '>' || ch == '|' || ch == '&') {
+            return true;
+        }
+        if (Character.isLetter(ch)) {
+            int wEnd = p + 1;
+            while (wEnd < end && isIdentPart(sql.charAt(wEnd))) {
+                wEnd++;
+            }
+            String word = sql.substring(p, wEnd).toUpperCase(Locale.ROOT);
+            return SPLIT_GLUE_KEYWORDS.contains(word);
+        }
+        return false;
+    }
+
+    private static Analysis analyze(List<Token> raw) {
+        final int rawSize = raw.size();
+        List<Token> significant = new ArrayList<>(rawSize);
+        boolean sawLiteral = false;
+        boolean suspiciousBlockComment = false;
+
+        for (int idx = 0; idx < rawSize; idx++) {
+            Token t = raw.get(idx);
             if (t.type == TokenType.UNTERMINATED) {
                 return new Analysis(true, "unterminated_quote_or_comment", raw);
             }
@@ -353,6 +485,14 @@ public final class SqlLexer {
                 }
                 continue;
             }
+            if (t.type == TokenType.BLOCK_COMMENT) {
+                if (t.value.indexOf('\'') >= 0) {
+                    suspiciousBlockComment = true;
+                } else if (sawLiteral && followedByInjectionPivot(raw, idx + 1)) {
+                    suspiciousBlockComment = true;
+                }
+                continue;
+            }
             significant.add(t);
         }
 
@@ -365,7 +505,7 @@ public final class SqlLexer {
                 return new Analysis(true, "stacked_statement", raw);
             }
 
-            // UNION [ALL | DISTINCT] [(]* SELECT
+            // UNION [ALL | DISTINCT] [(]* (SELECT | VALUES | TABLE)
             if (cur.type == TokenType.WORD && "UNION".equals(cur.upper)) {
                 int j = i + 1;
                 if (j < m && significant.get(j).type == TokenType.WORD
@@ -377,7 +517,9 @@ public final class SqlLexer {
                     j++;
                 }
                 if (j < m && significant.get(j).type == TokenType.WORD
-                        && "SELECT".equals(significant.get(j).upper)) {
+                        && ("SELECT".equals(significant.get(j).upper)
+                        || "VALUES".equals(significant.get(j).upper)
+                        || "TABLE".equals(significant.get(j).upper))) {
                     return new Analysis(true, "union_select", raw);
                 }
             }
@@ -398,14 +540,79 @@ public final class SqlLexer {
             }
         }
 
+        if (suspiciousBlockComment) {
+            return new Analysis(true, "block_comment_bypass", raw);
+        }
+
         return new Analysis(false, null, raw);
+    }
+
+    private static boolean followedByInjectionPivot(List<Token> raw, int startIdx) {
+        int k = startIdx;
+        while (k < raw.size()
+                && (raw.get(k).type == TokenType.BLOCK_COMMENT
+                || raw.get(k).type == TokenType.LPAREN)) {
+            k++;
+        }
+        if (k >= raw.size()) {
+            return false;
+        }
+        Token next = raw.get(k);
+        if (next.type == TokenType.SEMICOLON) {
+            return true;
+        }
+        if (next.type == TokenType.WORD) {
+            return "OR".equals(next.upper) || "AND".equals(next.upper)
+                    || "UNION".equals(next.upper);
+        }
+        return next.type == TokenType.OPERATOR
+                && ("||".equals(next.value) || "&&".equals(next.value));
+    }
+
+    private static final class SignedNum {
+        final double value;
+        final int nextIdx;
+
+        SignedNum(double value, int nextIdx) {
+            this.value = value;
+            this.nextIdx = nextIdx;
+        }
+    }
+
+    private static SignedNum readSignedNumber(List<Token> toks, int idx) {
+        final int m = toks.size();
+        int sign = 1;
+        int cur = idx;
+        boolean sawSign = false;
+        while (cur < m && toks.get(cur).type == TokenType.OPERATOR
+                && ("+".equals(toks.get(cur).value) || "-".equals(toks.get(cur).value))) {
+            if ("-".equals(toks.get(cur).value)) {
+                sign = -sign;
+            }
+            sawSign = true;
+            cur++;
+        }
+        if (cur < m && toks.get(cur).type == TokenType.NUMBER) {
+            double v = parseDouble(toks.get(cur).value);
+            if (Double.isNaN(v)) {
+                return null;
+            }
+            return new SignedNum(sawSign ? sign * v : v, cur + 1);
+        }
+        return null;
+    }
+
+    private static boolean isBooleanLiteral(Token t) {
+        return t.type == TokenType.WORD
+                && ("TRUE".equals(t.upper) || "FALSE".equals(t.upper));
     }
 
     private static boolean isTautologyAt(List<Token> toks, int pos, boolean fromOr) {
         final int m = toks.size();
         Token left = toks.get(pos);
+        SignedNum leftNum = readSignedNumber(toks, pos);
 
-        // OR TRUE / OR NOT FALSE / OR NOT 0 / OR 1 (at clause boundary)
+        // OR TRUE / OR NOT FALSE / OR NOT 0 / OR +/-1 (at clause boundary)
         if (fromOr) {
             if (left.type == TokenType.WORD && "TRUE".equals(left.upper)
                     && isClauseEnd(toks, pos + 1)) {
@@ -413,46 +620,172 @@ public final class SqlLexer {
             }
             if (left.type == TokenType.WORD && "NOT".equals(left.upper) && pos + 1 < m) {
                 Token arg = toks.get(pos + 1);
-                if (((arg.type == TokenType.WORD && "FALSE".equals(arg.upper))
-                        || (arg.type == TokenType.NUMBER && parseDouble(arg.value) == 0.0))
+                if (arg.type == TokenType.WORD && "FALSE".equals(arg.upper)
                         && isClauseEnd(toks, pos + 2)) {
                     return true;
                 }
+                SignedNum argNum = readSignedNumber(toks, pos + 1);
+                if (argNum != null && argNum.value == 0.0
+                        && isClauseEnd(toks, argNum.nextIdx)) {
+                    return true;
+                }
             }
-            if (left.type == TokenType.NUMBER && parseDouble(left.value) != 0.0
-                    && isClauseEnd(toks, pos + 1)) {
+            if (leftNum != null && leftNum.value != 0.0
+                    && isClauseEnd(toks, leftNum.nextIdx)) {
                 return true;
             }
         }
 
-        if (pos + 2 >= m) {
+        int opIdx = (leftNum != null) ? leftNum.nextIdx : pos + 1;
+        if (opIdx >= m) {
             return false;
         }
-        Token op = toks.get(pos + 1);
-        Token right = toks.get(pos + 2);
+        Token op = toks.get(opIdx);
+
+        // IS [NOT] NULL / IS [NOT] TRUE / IS [NOT] FALSE on literals.
+        if (op.type == TokenType.WORD && "IS".equals(op.upper)) {
+            boolean hasNot = (opIdx + 1 < m && toks.get(opIdx + 1).type == TokenType.WORD
+                    && "NOT".equals(toks.get(opIdx + 1).upper));
+            int rhsIdx = hasNot ? opIdx + 2 : opIdx + 1;
+            if (rhsIdx < m && toks.get(rhsIdx).type == TokenType.WORD) {
+                String rhs = toks.get(rhsIdx).upper;
+                if ("NULL".equals(rhs)) {
+                    boolean leftIsNull = (leftNum == null && left.type == TokenType.WORD
+                            && "NULL".equals(left.upper));
+                    boolean leftIsNonNullLiteral = (leftNum != null
+                            || left.type == TokenType.STRING
+                            || isBooleanLiteral(left));
+                    return (!hasNot && leftIsNull) || (hasNot && leftIsNonNullLiteral);
+                }
+                if ("TRUE".equals(rhs)) {
+                    if (leftNum != null) {
+                        boolean truthy = leftNum.value != 0.0;
+                        return hasNot ? !truthy : truthy;
+                    }
+                    if (isBooleanLiteral(left)) {
+                        boolean truthy = "TRUE".equals(left.upper);
+                        return hasNot ? !truthy : truthy;
+                    }
+                }
+                if ("FALSE".equals(rhs)) {
+                    if (leftNum != null) {
+                        boolean falsy = leftNum.value == 0.0;
+                        return hasNot ? !falsy : falsy;
+                    }
+                    if (isBooleanLiteral(left)) {
+                        boolean falsy = "FALSE".equals(left.upper);
+                        return hasNot ? !falsy : falsy;
+                    }
+                }
+            }
+            return false;
+        }
+
+        // [NOT] LIKE / [NOT] ILIKE on literals (e.g. 'a' LIKE '%').
+        boolean likeNeg = false;
+        int likeIdx = opIdx;
+        if (op.type == TokenType.WORD && "NOT".equals(op.upper) && opIdx + 1 < m) {
+            likeNeg = true;
+            likeIdx = opIdx + 1;
+        }
+        if (likeIdx < m && toks.get(likeIdx).type == TokenType.WORD
+                && ("LIKE".equals(toks.get(likeIdx).upper)
+                || "ILIKE".equals(toks.get(likeIdx).upper))) {
+            int patIdx = likeIdx + 1;
+            if (patIdx < m && toks.get(patIdx).type == TokenType.STRING) {
+                String lhsLiteral = null;
+                if (leftNum == null && left.type == TokenType.STRING) {
+                    lhsLiteral = left.value;
+                } else if (leftNum != null) {
+                    lhsLiteral = toks.get(opIdx - 1).value;
+                }
+                if (lhsLiteral != null) {
+                    boolean ci = "ILIKE".equals(toks.get(likeIdx).upper);
+                    boolean matched = sqlLikeMatch(lhsLiteral, toks.get(patIdx).value, ci);
+                    return likeNeg ? !matched : matched;
+                }
+            }
+            return false;
+        }
+
         if (op.type != TokenType.OPERATOR || !isComparisonOp(op.value)) {
             return false;
         }
 
-        if (left.type == TokenType.NUMBER && right.type == TokenType.NUMBER) {
-            double a = parseDouble(left.value);
-            double b = parseDouble(right.value);
-            return evalCompare(Double.compare(a, b), op.value);
+        int rhsStart = opIdx + 1;
+        if (rhsStart >= m) {
+            return false;
+        }
+        SignedNum rightNum = readSignedNumber(toks, rhsStart);
+
+        if (leftNum != null && rightNum != null) {
+            return evalCompare(Double.compare(leftNum.value, rightNum.value), op.value);
         }
 
-        if ((left.type == TokenType.STRING && right.type == TokenType.STRING)
-                || (left.type == TokenType.DOUBLE_QUOTED
-                && right.type == TokenType.DOUBLE_QUOTED)) {
-            return evalCompare(left.value.compareTo(right.value), op.value);
+        if (leftNum == null && rightNum == null) {
+            Token right = toks.get(rhsStart);
+            if ((left.type == TokenType.STRING && right.type == TokenType.STRING)
+                    || (left.type == TokenType.DOUBLE_QUOTED
+                    && right.type == TokenType.DOUBLE_QUOTED)) {
+                return evalCompare(left.value.compareTo(right.value), op.value);
+            }
+            if (isBooleanLiteral(left) && isBooleanLiteral(right)) {
+                int lv = "TRUE".equals(left.upper) ? 1 : 0;
+                int rv = "TRUE".equals(right.upper) ? 1 : 0;
+                return evalCompare(Integer.compare(lv, rv), op.value);
+            }
+            if (fromOr && isIdentifierToken(left) && isIdentifierToken(right)
+                    && "=".equals(op.value)
+                    && left.value.equalsIgnoreCase(right.value)) {
+                return true;
+            }
+            return false;
         }
 
-        if (fromOr && isIdentifierToken(left) && isIdentifierToken(right)
-                && "=".equals(op.value)
-                && left.value.equalsIgnoreCase(right.value)) {
-            return true;
+        // String literal compared to numeric literal (e.g. '1'=1, 'a'!=1, '1'<>2).
+        if (leftNum == null && left.type == TokenType.STRING && rightNum != null) {
+            double lv = parseDouble(left.value.trim());
+            if (!Double.isNaN(lv)) {
+                return evalCompare(Double.compare(lv, rightNum.value), op.value);
+            }
+            return ("!=".equals(op.value) || "<>".equals(op.value)) && rightNum.value != 0.0;
+        }
+        if (leftNum != null && toks.get(rhsStart).type == TokenType.STRING) {
+            double rv = parseDouble(toks.get(rhsStart).value.trim());
+            if (!Double.isNaN(rv)) {
+                return evalCompare(Double.compare(leftNum.value, rv), op.value);
+            }
+            return ("!=".equals(op.value) || "<>".equals(op.value)) && leftNum.value != 0.0;
         }
 
         return false;
+    }
+
+    private static boolean sqlLikeMatch(String text, String pattern, boolean ignoreCase) {
+        String s = ignoreCase ? text.toLowerCase(Locale.ROOT) : text;
+        String p = ignoreCase ? pattern.toLowerCase(Locale.ROOT) : pattern;
+        int ti = 0;
+        int pi = 0;
+        int starIdx = -1;
+        int matchIdx = 0;
+        while (ti < s.length()) {
+            if (pi < p.length() && (p.charAt(pi) == '_' || p.charAt(pi) == s.charAt(ti))) {
+                ti++;
+                pi++;
+            } else if (pi < p.length() && p.charAt(pi) == '%') {
+                starIdx = pi++;
+                matchIdx = ti;
+            } else if (starIdx >= 0) {
+                pi = starIdx + 1;
+                ti = ++matchIdx;
+            } else {
+                return false;
+            }
+        }
+        while (pi < p.length() && p.charAt(pi) == '%') {
+            pi++;
+        }
+        return pi == p.length();
     }
 
     private static boolean isClauseEnd(List<Token> toks, int idx) {
