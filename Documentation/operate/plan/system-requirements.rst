@@ -401,7 +401,8 @@ Pre-flight checks
      - ``/proc/cmdline`` has neither ``resume=`` nor ``resumewait``, and
        the kernel BTF has no hibernation functions
        (``CONFIG_HIBERNATION=n``) or ``/proc/cmdline`` carries
-       ``noresume``, ``nohibernate`` or ``hibernate=no``.
+       ``nohibernate``, ``hibernate=no``, ``lockdown=integrity`` or
+       ``lockdown=confidentiality``.
    * - ``bdev_write_mounted``
      - Resolves the state directory's ``st_dev`` to
        ``/dev/block/<major>:<minor>`` and opens it ``O_WRONLY`` without

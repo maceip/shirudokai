@@ -234,8 +234,8 @@ without the protection.
      - The boot resumes from no hibernation image: the command line has
        no ``resume=``, ``CONFIG_PM_STD_PARTITION`` is empty and the
        initrd names no resume device, or hibernation is off from boot
-       (``CONFIG_HIBERNATION=n``, ``noresume``, ``nohibernate`` or
-       ``hibernate=no``).
+       (``CONFIG_HIBERNATION=n``, ``nohibernate``, ``hibernate=no``,
+       ``lockdown=integrity`` or ``lockdown=confidentiality``).
      - A hibernation image is kernel memory on disk, and a resume runs
        in the initrd before ``init``, from an image root can write to
        swap. ``bpf2`` refuses hibernation once ``init`` runs, and the
@@ -245,13 +245,15 @@ without the protection.
        left.
        The behavior of the register across hibernation is not analyzed
        here.
-     - Yes, on the kernel side. The pre-flight check
-       ``hibernation_disabled`` refuses a command line with ``resume=``
-       or ``resumewait``, and refuses a kernel whose BTF shows
-       hibernation (``hibernation_set_ops`` or ``software_resume``)
-       unless ``noresume``, ``nohibernate`` or ``hibernate=no`` disables
-       resume on ``/proc/cmdline``. An initrd tool that resumes without
-       those parameters is not checked.
+     - Partly. The pre-flight check ``hibernation_disabled`` refuses a
+       command line with ``resume=`` or ``resumewait``, and refuses a
+       kernel whose BTF shows hibernation (``hibernation_set_ops`` or
+       ``software_resume``) unless ``nohibernate``, ``hibernate=no``,
+       ``lockdown=integrity`` or ``lockdown=confidentiality`` disables
+       hibernation on ``/proc/cmdline`` (``noresume`` alone is not
+       accepted because writing ``/sys/power/resume`` can still trigger
+       a resume). An initrd tool that resumes without those parameters
+       is not checked (U10).
    * - A10
      - No process writes to the block device under a mounted file
        system: ``CONFIG_BLK_DEV_WRITE_MOUNTED=n`` and no
@@ -2357,12 +2359,14 @@ U9 init can rebind the register after hiding this boot's record
 
 U10 The hibernation check relies on command-line heuristics
    :Affects: A9.
-   :Consequence: The hibernation check takes ``noresume`` for a disabled
-      resume even though writing ``/sys/power/resume`` can still
-      trigger a resume, and does not look at an initrd tool that resumes
-      on its own. The 32-bit compatibility check (A5) reads BTF, which
-      shows whether compatibility is built, and ``bdev_write_mounted``
-      (A10) actively probes the state directory's block device.
+   :Consequence: ``hibernation_disabled`` checks BTF and
+      ``/proc/cmdline``, and does not look at an initrd tool that
+      resumes on its own when ``CONFIG_HIBERNATION`` is built in without
+      ``nohibernate``, ``hibernate=no``, ``lockdown=integrity`` or
+      ``lockdown=confidentiality``. The 32-bit compatibility check (A5)
+      reads BTF, which shows whether compatibility is built, and
+      ``bdev_write_mounted`` (A10) actively probes the state
+      directory's block device.
    :Status: Confirmed in code.
    :Meanwhile: Build the kernel with ``CONFIG_HIBERNATION=n`` or pass
       ``nohibernate`` / ``lockdown=integrity`` on the UKI command line

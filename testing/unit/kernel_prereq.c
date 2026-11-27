@@ -129,10 +129,10 @@ static void hibernation_detected_and_gated_by_cmdline(void)
 		"hibernation_set_ops",
 		"software_resume",
 	};
-	const char *res1 = "noresume resume=/dev/vda2";
-	const char *res2 = "nohibernate resumewait";
-	const char *sep_res = "noresume -- resume=/dev/vda2";
-	const char *res_uuid = "noresume resume=UUID=1234";
+	const char *res1 = "nohibernate resume=/dev/vda2";
+	const char *res2 = "lockdown=integrity resumewait";
+	const char *sep_res = "nohibernate -- resume=/dev/vda2";
+	const char *res_uuid = "nohibernate resume=UUID=1234";
 	struct kernel_options with_hib = { .hibernation = true };
 	struct kernel_options no_hib = { .hibernation = false };
 	struct kernel_options opts;
@@ -146,24 +146,28 @@ static void hibernation_detected_and_gated_by_cmdline(void)
 	EXPECT_TRUE(kernel_cmdline_allows_hibernation(NULL));
 	EXPECT_TRUE(kernel_cmdline_allows_hibernation(""));
 	EXPECT_TRUE(kernel_cmdline_allows_hibernation("console=ttyS0 quiet"));
-	EXPECT_FALSE(kernel_cmdline_allows_hibernation("quiet noresume"));
+	EXPECT_TRUE(kernel_cmdline_allows_hibernation("quiet noresume"));
 	EXPECT_FALSE(kernel_cmdline_allows_hibernation("nohibernate quiet"));
 	EXPECT_FALSE(kernel_cmdline_allows_hibernation("hibernate=no"));
+	EXPECT_FALSE(kernel_cmdline_allows_hibernation("lockdown=integrity"));
+	EXPECT_FALSE(kernel_cmdline_allows_hibernation("lockdown=confidentiality"));
 	EXPECT_TRUE(kernel_cmdline_allows_hibernation(res1));
 	EXPECT_TRUE(kernel_cmdline_allows_hibernation(res2));
 	/* Init arguments after "--" do not count as kernel parameters. */
-	EXPECT_TRUE(kernel_cmdline_allows_hibernation("quiet -- noresume"));
+	EXPECT_TRUE(kernel_cmdline_allows_hibernation("quiet -- nohibernate"));
 	EXPECT_FALSE(kernel_cmdline_allows_hibernation(sep_res));
 
-	EXPECT_TRUE(kernel_hibernation_allowed(NULL, "noresume"));
+	EXPECT_TRUE(kernel_hibernation_allowed(NULL, "nohibernate"));
 	EXPECT_FALSE(kernel_hibernation_allowed(&no_hib, "console=ttyS0"));
 	EXPECT_TRUE(kernel_hibernation_allowed(&no_hib, "resume=/dev/sda2"));
 	EXPECT_TRUE(kernel_hibernation_allowed(&no_hib, "resumewait"));
 	EXPECT_TRUE(kernel_hibernation_allowed(&with_hib, "console=ttyS0"));
 	EXPECT_TRUE(kernel_hibernation_allowed(&with_hib, NULL));
-	EXPECT_FALSE(kernel_hibernation_allowed(&with_hib, "console=ttyS0 noresume"));
+	EXPECT_TRUE(kernel_hibernation_allowed(&with_hib, "console=ttyS0 noresume"));
 	EXPECT_FALSE(kernel_hibernation_allowed(&with_hib, "nohibernate"));
 	EXPECT_FALSE(kernel_hibernation_allowed(&with_hib, "hibernate=no"));
+	EXPECT_FALSE(kernel_hibernation_allowed(&with_hib, "lockdown=integrity"));
+	EXPECT_FALSE(kernel_hibernation_allowed(&with_hib, "lockdown=confidentiality"));
 	EXPECT_TRUE(kernel_hibernation_allowed(&with_hib, res_uuid));
 }
 

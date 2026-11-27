@@ -29,8 +29,9 @@ void kernel_prereq_options(const struct btf *btf, struct kernel_options *out);
 
 /*
  * Whether cmdline permits hibernation resume: true when NULL, when
- * resume= or resumewait is set before "--", or when none of noresume,
- * nohibernate and hibernate=no is present.
+ * resume= or resumewait is set before "--", or when none of
+ * nohibernate, hibernate=no, lockdown=integrity and
+ * lockdown=confidentiality is present.
  */
 bool kernel_cmdline_allows_hibernation(const char *cmdline);
 

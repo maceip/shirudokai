@@ -76,8 +76,9 @@ Kernel configuration
        has no block device (for example ``tmpfs`` or ``overlayfs``)
    * - No resume device: no ``resume=`` or ``resumewait`` on the command
        line, an empty ``CONFIG_PM_STD_PARTITION`` and none named in the
-       initrd, or no hibernation (``CONFIG_HIBERNATION=n``, ``noresume``,
-       ``nohibernate`` or ``hibernate=no``)
+       initrd, or no hibernation (``CONFIG_HIBERNATION=n``, ``nohibernate``,
+       ``hibernate=no``, ``lockdown=integrity`` or
+       ``lockdown=confidentiality``)
      - Resuming from a hibernation image replaces kernel memory with
        what the image holds, and the initrd resumes before ``init``,
        from an image root can write to swap.

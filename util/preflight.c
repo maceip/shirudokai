@@ -272,8 +272,9 @@ static void check_hibernation_disabled(struct preflight_result *r,
 		pass(c);
 	else
 		fail(r, c, "hibernation resume is not disabled "
-		     "(needs CONFIG_HIBERNATION=n or noresume, without "
-		     "resume= or resumewait)");
+		     "(needs CONFIG_HIBERNATION=n, nohibernate, hibernate=no, "
+		     "or lockdown=integrity/confidentiality, without resume= "
+		     "or resumewait)");
 }
 
 static void check_bdev_write_mounted(struct preflight_result *r)

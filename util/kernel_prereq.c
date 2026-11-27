@@ -98,9 +98,10 @@ bool kernel_cmdline_allows_hibernation(const char *cmdline)
 	for_each_token(tok, len, cmdline, strlen(cmdline), " \t\r\n") {
 		if (is_arg_end(tok, len))
 			break;
-		if (span_equals(tok, len, "noresume") ||
-		    span_equals(tok, len, "nohibernate") ||
-		    span_equals(tok, len, "hibernate=no"))
+		if (span_equals(tok, len, "nohibernate") ||
+		    span_equals(tok, len, "hibernate=no") ||
+		    span_equals(tok, len, "lockdown=integrity") ||
+		    span_equals(tok, len, "lockdown=confidentiality"))
 			disabled = true;
 	}
 	return !disabled;
