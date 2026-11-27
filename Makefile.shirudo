@@ -840,6 +840,7 @@ TEST_HELPERS := $(VERITY_TEST_HELPERS) \
 		testing/helper/test-config \
 		testing/helper/test-bpm-source \
                 testing/helper/test-bpf-load \
+                testing/helper/test-bpf-verify \
                 testing/helper/test-bpf-cmd \
                 testing/helper/test-shared-bpf \
                 testing/helper/test-exec-fail \
@@ -979,6 +980,10 @@ testing/helper/test-bpm-source: testing/helper/test-bpm-source.c util/bpm_source
 testing/helper/test-bpf-load: testing/helper/test-bpf-load.c
 	@printf '  CC      $@\n'
 	$(Q)$(CC) $(CFLAGS) -o $@ $^
+
+testing/helper/test-bpf-verify: testing/helper/test-bpf-verify.c $(LIBBPF_A)
+	@printf '  CC      $@\n'
+	$(Q)$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ -lelf -lz
 
 testing/helper/test-bpf-cmd: testing/helper/test-bpf-cmd.c
 	@printf '  CC      $@\n'
