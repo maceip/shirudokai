@@ -303,6 +303,8 @@ static void bdev_write_mounted_files_cmdline_and_full_passing_kernel(void)
 							"bdev_allow_write_mounted=0"));
 	EXPECT_FALSE(kernel_bdev_write_mounted_protected(&opts, 0,
 							 "bdev_allow_write_mounted=1"));
+	EXPECT_FALSE(kernel_bdev_write_mounted_protected(&opts, 0, NULL));
+	EXPECT_FALSE(kernel_bdev_write_mounted_protected(&opts, -ENOENT, NULL));
 	EXPECT_FALSE(kernel_bdev_write_mounted_protected(NULL, 0, "quiet"));
 	opts.bdev_write_guard = false;
 	EXPECT_FALSE(kernel_bdev_write_mounted_protected(&opts, 0, "quiet"));

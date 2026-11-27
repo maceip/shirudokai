@@ -280,7 +280,7 @@ bool kernel_bdev_write_mounted_protected(const struct kernel_options *opts,
 {
 	int cmd;
 
-	if (!opts || !opts->bdev_write_guard)
+	if (!opts || !opts->bdev_write_guard || !cmdline)
 		return false;
 	cmd = kernel_cmdline_write_mounted(cmdline);
 	if (cmd == 1)

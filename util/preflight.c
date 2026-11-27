@@ -286,6 +286,8 @@ static void check_bdev_write_mounted(struct preflight_result *r,
 
 	if (!opts)
 		fail(r, c, "cannot read the kernel BTF");
+	else if (!cmdline)
+		fail(r, c, "cannot read /proc/cmdline");
 	else if (kernel_bdev_write_mounted_protected(opts, kconfig_allow,
 						     cmdline))
 		pass(c);
@@ -297,17 +299,31 @@ static void check_bdev_write_mounted(struct preflight_result *r,
 
 static bool read_proc_cmdline(char *buf, size_t cap)
 {
-	ssize_t n;
+	size_t total = 0;
 	int fd;
 
+	if (!cap)
+		return false;
 	fd = open("/proc/cmdline", O_RDONLY | O_CLOEXEC);
 	if (fd < 0)
 		return false;
-	n = read(fd, buf, cap - 1);
+	while (total < cap) {
+		ssize_t n = read(fd, buf + total, cap - total);
+
+		if (n < 0) {
+			if (errno == EINTR)
+				continue;
+			close(fd);
+			return false;
+		}
+		if (n == 0) {
+			close(fd);
+			return span_to_str(buf, cap, buf, total) == 0;
+		}
+		total += (size_t)n;
+	}
 	close(fd);
-	if (n < 0)
-		return false;
-	return span_to_str(buf, cap, buf, (size_t)n) == 0;
+	return false;
 }
 
 static int probe_write_mounted_kconfig(void)

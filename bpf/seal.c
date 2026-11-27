@@ -275,7 +275,7 @@ int BPF_PROG(shirudo_seal_ptrace_access_check,
 
 /*
  * mm_access() grants a read-mode access to CAP_PERFMON after the check
- * above refused it, and asks here first (carried patch 0005): the
+ * above refused it, and asks here first (carried patch 0024): the
  * environment, memory map and page map of a marked task stay its own,
  * refused as uncounted as any read mode.
  */

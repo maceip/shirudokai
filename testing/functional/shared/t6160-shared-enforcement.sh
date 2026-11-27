@@ -19,6 +19,13 @@ C=helper/test-bpf-cmd
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
+counter() {
+	"$SHIRUDO_BIN" status --json | python3 -c '
+import json, sys
+print(json.load(sys.stdin)["tamper_attempts"]["counters"][sys.argv[1]])
+' "$1"
+}
+
 test_expect_success 'status reports shared enforcement' '
 	"$SHIRUDO_BIN" status --json | report_field enforcement >"$WORK/mode" &&
 	grep -qx shared "$WORK/mode" &&
@@ -42,6 +49,13 @@ test_expect_success 'the private bpffs lists, but its pins do not open' '
 	ls /run/shirudo/bpffs | grep -qx lsm_link &&
 	! cat /run/shirudo/bpffs/lsm_link >/dev/null 2>"$WORK/err" &&
 	grep -q "Permission denied" "$WORK/err"
+'
+
+test_expect_success 'root cannot pin into the private bpffs' '
+	before=$(counter ObjPin) &&
+	[ "$(./$H pin /run/shirudo/bpffs/t6160-pin)" = "obj_pin errno=13" ] &&
+	! [ -e /run/shirudo/bpffs/t6160-pin ] &&
+	[ "$(counter ObjPin)" -eq "$((before + 1))" ]
 '
 
 test_expect_success 'no map or program named shirudo_ opens' '
