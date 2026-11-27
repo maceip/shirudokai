@@ -185,7 +185,7 @@ PY
 test_expect_success 'a challenge requires the correct pinned endorsement and attestation keys' '
 	! "$SHIRUDO_BIN" attest challenge --evidence="$W/evidence.json" \
 		--output="$W/challenge-none.json" >"$W/challenge-none.out" &&
-	grep -q "^  FAIL  no endorsement certificate: pin the key" "$W/challenge-none.out" &&
+	grep -q "^  FAIL  no endorsement certificate: pass --ek-pub," "$W/challenge-none.out" &&
 	[ ! -e "$W/challenge-none.json" ] &&
 	! "$SHIRUDO_BIN" attest challenge --evidence="$W/evidence.json" \
 		--ek-name=000b$(printf "%064d" 0) --output="$W/challenge-wrong.json" \

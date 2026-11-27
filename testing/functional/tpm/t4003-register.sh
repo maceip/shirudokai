@@ -246,7 +246,7 @@ test_expect_success 'a tree operation records its digest as the target writes it
 test_expect_success 'a challenge needs a vouched-for endorsement key' '
 	! $S attest challenge --evidence="$WORK/evidence.json" \
 		--output="$WORK/challenge-none.json" >"$WORK/challenge-none.out" &&
-	grep -q "^  FAIL  no endorsement certificate: pin the key" "$WORK/challenge-none.out" &&
+	grep -q "^  FAIL  no endorsement certificate: pass --ek-pub," "$WORK/challenge-none.out" &&
 	[ ! -e "$WORK/challenge-none.json" ] &&
 	! $S attest challenge --evidence="$WORK/evidence.json" \
 		--ek-name="000b$(py "print(\"00\"*32)")" \
