@@ -40,7 +40,6 @@
 
 #define VOUCH_SIG_MAX			(64u * 1024u)
 #define VOUCH_EXPIRES_DAYS_MAX		36500ULL
-#define ROTATE_DEFAULT_EXPIRES_DAYS	90ULL
 #define CERT_CN				"shirudo"
 #define CERT_NO_EXPIRY			"99991231235959Z"
 #define GENKEY_ALG			"ML-DSA-87"
@@ -95,7 +94,7 @@ static const struct opt_spec rotate_opts[] = {
 	[ROTATE_KEYS_DIR] = { "--keys-dir", 0, 0, "<dir>",
 		"new directory for the replacement keypair and vouch" },
 	[ROTATE_EXPIRES_DAYS] = { "--expires-days", 0, 0, "<n>",
-		"vouch expiration window in days (default 90)" },
+		"bound the vouch to expire <n> days from now (default: no expiry)" },
 };
 
 static const struct help_section rotate_sections[] = {
@@ -453,10 +452,11 @@ out:
 
 int build_keys_rotate(int argc, const char **argv)
 {
-	__u64 expires_days = ROTATE_DEFAULT_EXPIRES_DAYS;
+	__u64 expires_days = 0;
 	const char *old_dir = NULL, *new_dir = NULL;
 	char old_pkey[PATH_MAX], old_cert[PATH_MAX], old_revoked[PATH_MAX];
-	char new_pkey[PATH_MAX], new_cert[PATH_MAX], vouch_path[PATH_MAX];
+	char new_pkey[PATH_MAX], new_cert[PATH_MAX];
+	char fp_der_path[PATH_MAX], fp_vouch_path[PATH_MAX];
 	__u8 *old_der = NULL, *new_der = NULL;
 	size_t old_sz = 0, new_sz = 0;
 	__u8 sha[32], old_fp[32], new_fp[32];
@@ -503,16 +503,13 @@ int build_keys_rotate(int argc, const char **argv)
 	    strsprintf(old_revoked, sizeof(old_revoked), "%s/revoked",
 		       old_dir) < 0 ||
 	    key_paths(new_dir, new_pkey, sizeof(new_pkey), new_cert,
-		      sizeof(new_cert)) ||
-	    strsprintf(vouch_path, sizeof(vouch_path), "%s.vouch",
-		       new_cert) < 0) {
+		      sizeof(new_cert))) {
 		pr_err("keys rotate: keys directory path too long");
 		return EXIT_USAGE;
 	}
 	if (build_check_keys(old_pkey, old_cert))
 		return 1;
-	if (path_exists(new_pkey) || path_exists(new_cert) ||
-	    path_exists(vouch_path)) {
+	if (path_exists(new_pkey) || path_exists(new_cert)) {
 		pr_err("keys rotate: %s already holds key material", new_dir);
 		return 1;
 	}
@@ -569,9 +566,19 @@ int build_keys_rotate(int argc, const char **argv)
 	ret = keys_read_der(new_cert, &new_der, &new_sz);
 	if (!ret)
 		ret = keys_digest_der(new_der, new_sz, sha, new_fp);
+	if (!ret) {
+		hex_encode(new_fp, 32, new_hex);
+		if (strsprintf(fp_der_path, sizeof(fp_der_path), "%s/%s.der",
+			       new_dir, new_hex) < 0 ||
+		    strsprintf(fp_vouch_path, sizeof(fp_vouch_path),
+			       "%s/%s.vouch", new_dir, new_hex) < 0)
+			ret = -ENAMETOOLONG;
+	}
+	if (!ret)
+		ret = seal_write_file_mode(fp_der_path, new_der, new_sz, 0644);
 	if (!ret)
 		ret = sign_and_write_vouch(old_pkey, old_cert, new_der, new_sz,
-					   expires_days, now, vouch_path);
+					   expires_days, now, fp_vouch_path);
 	if (!ret && fsync(dfd) != 0) {
 		ret = -errno;
 		pr_err("keys rotate: fsync %s: %s", new_dir, strerror(-ret));
@@ -579,10 +586,10 @@ int build_keys_rotate(int argc, const char **argv)
 	if (ret) {
 		unlink(new_pkey);
 		unlink(new_cert);
-		unlink(vouch_path);
+		unlink(fp_der_path);
+		unlink(fp_vouch_path);
 		goto out;
 	}
-	hex_encode(new_fp, 32, new_hex);
 	pr_audit("keys rotate: new_fingerprint=%s vouched_by=%s expires_days=%llu",
 		 new_hex, old_hex, expires_days);
 	printf("%s\n", new_hex);

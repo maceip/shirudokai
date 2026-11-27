@@ -254,11 +254,12 @@ that config on an existing target and reboot when appropriate.
    .. code-block:: console
 
       operator$ shirudo keys vouch <standby-keys-dir>/cert.der \
-          -o standby.vouch --keys-dir=<primary-keys-dir> \
-          --expires-days 90
+          -o standby.vouch --keys-dir=<primary-keys-dir>
 
    The command prints the fingerprint of the certificate it vouched for.
    It refuses to vouch for the signing key's own certificate.
+   (``shirudo keys rotate`` writes ``<standby-keys-dir>/<fingerprint>.der``
+   and ``<standby-keys-dir>/<fingerprint>.vouch`` directly.)
 
 3. Put the certificate and the vouch into the config source tree under
    one name:
@@ -471,11 +472,13 @@ Limits
   vouched for stays admitted where a config lists it, which is what lets
   you revoke the primary and keep the standby. After a compromise, also
   revoke every key the compromised signer vouched for (U13).
-- A vouch made with ``--expires-days`` stops admitting its key on that
-  day by the target's clock, and ``shirudo keys rotate`` makes one of 90
-  days unless told otherwise. A target whose only remaining signer
-  depends on an expired vouch refuses its config at the next boot:
-  renew the vouch, or vouch without an expiry, before that day.
+- A vouch made with ``--expires-days`` is refused at ``image stage``,
+  ``image update``, ``config update`` and ``keys add`` once the target's
+  clock passes its signed ``not_after`` date, and ``shirudo keys``
+  reports its remaining days. ``init`` does not check the wall clock at
+  boot, so a standby key that outlives its primary stays usable across
+  reboots, and ``shirudo keys rotate`` defaults to no expiry unless
+  ``--expires-days`` is given.
 - Userspace verifiers check X.509 ``notBefore`` and ``notAfter`` windows
   on vouch, vouched, curated feed, repository and Java upatch
   certificates and enforce the signed expiration of bounded v2 vouches,

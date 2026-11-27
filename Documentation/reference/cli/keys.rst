@@ -102,12 +102,14 @@ keys rotate
 
 ``keys rotate`` executes the ``shirudo-build`` helper to generate a
 replacement ML-DSA-87 signing keypair and X.509 certificate under
-``--keys-dir <new-dir>`` and sign a bounded v2 vouch
-(``<new-dir>/cert.der.vouch``) with the retiring key in
-``--old-keys-dir <dir>``. It refuses on an enforced target, when
-``<new-dir>`` already holds key material, or when the retiring
-certificate is revoked or outside its validity window, and prints the new
-certificate's fingerprint.
+``--keys-dir <new-dir>`` and sign a vouch for it with the retiring key in
+``--old-keys-dir <dir>``, writing ``<new-dir>/<fingerprint>.der`` and
+``<new-dir>/<fingerprint>.vouch`` ready for ``keys/trusted/``. With
+``--expires-days <n>``, it writes a bounded v2 vouch
+(``shirudo-key-vouch-v2``); otherwise the vouch has no expiry. It
+refuses on an enforced target, when ``<new-dir>`` already holds key
+material, or when the retiring certificate is revoked or outside its
+validity window, and prints the new certificate's fingerprint.
 
 keys revoke
 -----------
@@ -148,7 +150,7 @@ Options
        ``cert.der``.
    * - ``--expires-days``
      - ``<n>``, 1 to 36500
-     - unbounded for ``vouch``; ``90`` for ``rotate``
+     - unbounded
      - ``vouch`` and ``rotate``: bound the vouch to expire ``<n>`` days
        after signing.
    * - ``--json``
