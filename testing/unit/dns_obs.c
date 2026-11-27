@@ -23,7 +23,6 @@ struct sim_dns_slot {
 struct sim_dns_state {
 	struct sim_dns_slot	slots[16];
 	__u32			capacity;
-	bool			pin_full;
 	__u64			clock_seq;
 	__u64			dbg[DNS_DBG_MAX];
 	__u32			recorded;
@@ -198,13 +197,10 @@ static void sim_insert_req(struct sim_dns_state *st,
 	__u32 i;
 
 	if (idx >= 0) {
-		if (dns_is_req_stale(&st->slots[idx].req, now_ns)) {
-			st->dbg[DNS_DBG_RESP_STALE]++;
-			sim_delete_slot(st, key);
-		} else {
-			st->dbg[DNS_DBG_REQ_TABLE_FULL]++;
+		if (!dns_is_req_stale(&st->slots[idx].req, now_ns))
 			return;
-		}
+		st->dbg[DNS_DBG_RESP_STALE]++;
+		sim_delete_slot(st, key);
 	}
 	for (i = 0; i < st->capacity; i++) {
 		if (!st->slots[i].used) {
@@ -217,21 +213,7 @@ static void sim_insert_req(struct sim_dns_state *st,
 			return;
 		}
 	}
-	if (st->pin_full) {
-		st->dbg[DNS_DBG_REQ_TABLE_FULL]++;
-		return;
-	}
-	/* Simulate BPF_MAP_TYPE_LRU_HASH displacing the oldest entry. */
-	idx = 0;
-	for (i = 1; i < st->capacity; i++) {
-		if (st->slots[i].order < st->slots[idx].order)
-			idx = (int)i;
-	}
-	st->slots[idx].order = ++st->clock_seq;
-	st->slots[idx].key = *key;
-	st->slots[idx].req = *req;
-	st->dbg[DNS_DBG_REQ_LRU_EVICT]++;
-	st->dbg[DNS_DBG_QUERY_STORED]++;
+	st->dbg[DNS_DBG_REQ_TABLE_FULL]++;
 }
 
 static void sim_process_packet(struct sim_dns_state *st, __u16 ethertype,
@@ -272,20 +254,20 @@ static void sim_process_packet(struct sim_dns_state *st, __u16 ethertype,
 	}
 
 	if (send) {
-		__u16 id, flags, qdcount, arcount, qtype, qclass;
+		__u16 id, flags, qdcount, qtype, qclass;
 		struct dns_request req = {};
 		__u32 pos, next = 0;
 		int step, replaced = 0;
 
 		st->dbg[DNS_DBG_QUERY_PACKET]++;
-		if (!dns_read_u16_bounded(data, data_end, meta.dns_off,
+		if (!dns_hdr_bounded(data, data_end, meta.dns_off,
+				     meta.dns_end) ||
+		    !dns_read_u16_bounded(data, data_end, meta.dns_off,
 					  meta.dns_end, &id) ||
 		    !dns_read_u16_bounded(data, data_end, meta.dns_off + 2,
 					  meta.dns_end, &flags) ||
 		    !dns_read_u16_bounded(data, data_end, meta.dns_off + 4,
-					  meta.dns_end, &qdcount) ||
-		    !dns_read_u16_bounded(data, data_end, meta.dns_off + 10,
-					  meta.dns_end, &arcount)) {
+					  meta.dns_end, &qdcount)) {
 			st->dbg[DNS_DBG_QUERY_HDR_FAIL]++;
 			goto out;
 		}
@@ -355,22 +337,23 @@ static void sim_process_packet(struct sim_dns_state *st, __u16 ethertype,
 		sim_key_from_meta(&meta, true, id, &rkey);
 		sim_insert_req(st, &rkey, &req, now_ns);
 	} else {
-		__u16 id, flags, qdcount, ancount, arcount, qtype, qclass;
+		__u16 id, flags, qdcount, ancount, qtype, qclass;
+		struct dns_request req_copy;
 		bool bad_flags = false;
 		__u32 off, next = 0;
 		int slot, qrc, i;
 
 		st->dbg[DNS_DBG_RESP_PACKET]++;
-		if (!dns_read_u16_bounded(data, data_end, meta.dns_off,
+		if (!dns_hdr_bounded(data, data_end, meta.dns_off,
+				     meta.dns_end) ||
+		    !dns_read_u16_bounded(data, data_end, meta.dns_off,
 					  meta.dns_end, &id) ||
 		    !dns_read_u16_bounded(data, data_end, meta.dns_off + 2,
 					  meta.dns_end, &flags) ||
 		    !dns_read_u16_bounded(data, data_end, meta.dns_off + 4,
 					  meta.dns_end, &qdcount) ||
 		    !dns_read_u16_bounded(data, data_end, meta.dns_off + 6,
-					  meta.dns_end, &ancount) ||
-		    !dns_read_u16_bounded(data, data_end, meta.dns_off + 10,
-					  meta.dns_end, &arcount)) {
+					  meta.dns_end, &ancount)) {
 			st->dbg[DNS_DBG_RESP_HDR_FAIL]++;
 			goto out;
 		}
@@ -403,7 +386,8 @@ static void sim_process_packet(struct sim_dns_state *st, __u16 ethertype,
 				st->dbg[DNS_DBG_RESP_REQ_MISS]++;
 			goto out;
 		}
-		if (dns_is_req_stale(&st->slots[slot].req, now_ns)) {
+		req_copy = st->slots[slot].req;
+		if (dns_is_req_stale(&req_copy, now_ns)) {
 			st->dbg[DNS_DBG_RESP_STALE]++;
 			sim_delete_slot(st, &rkey);
 			st->dbg[DNS_DBG_RESP_DELETE]++;
@@ -412,7 +396,7 @@ static void sim_process_packet(struct sim_dns_state *st, __u16 ethertype,
 		qrc = dns_match_qname_bounded(data, data_end, meta.dns_off,
 					      meta.dns_end,
 					      meta.dns_off + sizeof(struct dns_hdr),
-					      st->slots[slot].req.name, &next);
+					      req_copy.name, &next);
 		if (qrc < 0) {
 			if (qrc == -EBADMSG)
 				st->dbg[DNS_DBG_RESP_QNAME_MISMATCH]++;
@@ -427,24 +411,21 @@ static void sim_process_packet(struct sim_dns_state *st, __u16 ethertype,
 			st->dbg[DNS_DBG_RESP_QTYPE_READ_FAIL]++;
 			goto out;
 		}
-		if (qtype != st->slots[slot].req.qtype) {
+		if (qtype != req_copy.qtype) {
 			st->dbg[DNS_DBG_RESP_QTYPE_MISMATCH]++;
 			goto out;
 		}
 		if (qclass != DNS_CLASS_IN ||
-		    qclass != st->slots[slot].req.qclass) {
+		    qclass != req_copy.qclass) {
 			st->dbg[DNS_DBG_RESP_QCLASS_MISMATCH]++;
 			goto out;
 		}
-		if (bad_flags) {
-			sim_delete_slot(st, &rkey);
-			st->dbg[DNS_DBG_RESP_DELETE]++;
+		sim_delete_slot(st, &rkey);
+		st->dbg[DNS_DBG_RESP_DELETE]++;
+		if (bad_flags)
 			goto out;
-		}
 		if (ancount == 0) {
 			st->dbg[DNS_DBG_RESP_NO_ANSWER]++;
-			sim_delete_slot(st, &rkey);
-			st->dbg[DNS_DBG_RESP_DELETE]++;
 			goto out;
 		}
 		off = next + 4;
@@ -478,7 +459,7 @@ static void sim_process_packet(struct sim_dns_state *st, __u16 ethertype,
 			}
 			arc = dns_extract_answer_addr(data, data_end, rdata_off,
 						      meta.dns_end,
-						      st->slots[slot].req.qtype,
+						      req_copy.qtype,
 						      rtype, rclass, rdlen,
 						      &ip);
 			if (arc < 0) {
@@ -492,15 +473,13 @@ static void sim_process_packet(struct sim_dns_state *st, __u16 ethertype,
 				st->dbg[DNS_DBG_RESP_TOUCH]++;
 				st->recorded++;
 				st->last_ip = ip;
-				memcpy(st->last_name, st->slots[slot].req.name,
+				memcpy(st->last_name, req_copy.name,
 				       sizeof(st->last_name));
 			}
 			off = rdata_off + rdlen;
 		}
 		if (i == DNS_MAX_ANSWERS && ancount > DNS_MAX_ANSWERS)
 			st->dbg[DNS_DBG_RESP_ANSWER_CAP]++;
-		sim_delete_slot(st, &rkey);
-		st->dbg[DNS_DBG_RESP_DELETE]++;
 	}
 out:
 	xfree(heap_pkt, raw_len);
@@ -773,23 +752,35 @@ static void compression_pointers_ttl_lru_and_answer_cap(void)
 	EXPECT_UEQ(st.dbg[DNS_DBG_RESP_STALE], 1u);
 	EXPECT_UEQ(st.recorded, 0u);
 
-	/* LRU eviction and full pending table are counted explicitly. */
-	for (i = 0; i < 3; i++) {
-		dns_len = make_dns_query(dns, (__u16)(0x5000 + i), 0x0100,
-					 "lru.example", DNS_TYPE_A,
-					 DNS_CLASS_IN);
-		pkt_len = build_ipv4_udp(raw, dns, dns_len, 44000, 53, 0,
-					 IPPROTO_UDP, -1, -1);
-		sim_process_packet(&st, ETH_P_IP, raw, pkt_len, true, 5000);
-	}
-	EXPECT_UEQ(st.dbg[DNS_DBG_REQ_LRU_EVICT], 1u);
-
-	st.pin_full = true;
-	dns_len = make_dns_query(dns, 0x5099, 0x0100, "full.example",
+	/*
+	 * Duplicate in-flight query (same tuple/txid) is ignored without
+	 * incrementing DNS_DBG_REQ_TABLE_FULL; stale duplicate replaces the
+	 * entry; third distinct query on a 2-slot table increments TABLE_FULL.
+	 */
+	EXPECT_UEQ(DNS_MAX_NAME_STEPS, 144);
+	dns_len = make_dns_query(dns, 0x5000, 0x0100, "dup.example",
 				 DNS_TYPE_A, DNS_CLASS_IN);
 	pkt_len = build_ipv4_udp(raw, dns, dns_len, 44000, 53, 0,
 				 IPPROTO_UDP, -1, -1);
 	sim_process_packet(&st, ETH_P_IP, raw, pkt_len, true, 5000);
+	sim_process_packet(&st, ETH_P_IP, raw, pkt_len, true, 5500);
+	EXPECT_UEQ(st.dbg[DNS_DBG_REQ_TABLE_FULL], 0u);
+	EXPECT_UEQ(st.dbg[DNS_DBG_REQ_LIVE], 1u);
+
+	sim_process_packet(&st, ETH_P_IP, raw, pkt_len, true,
+			   5000 + DNS_REQ_TTL_NS + 1);
+	EXPECT_UEQ(st.dbg[DNS_DBG_RESP_STALE], 2u);
+	EXPECT_UEQ(st.dbg[DNS_DBG_REQ_LIVE], 1u);
+
+	for (i = 1; i <= 2; i++) {
+		dns_len = make_dns_query(dns, (__u16)(0x5000 + i), 0x0100,
+					 "full.example", DNS_TYPE_A,
+					 DNS_CLASS_IN);
+		pkt_len = build_ipv4_udp(raw, dns, dns_len, 44000, 53, 0,
+					 IPPROTO_UDP, -1, -1);
+		sim_process_packet(&st, ETH_P_IP, raw, pkt_len, true, 6000);
+	}
+	EXPECT_UEQ(st.dbg[DNS_DBG_REQ_LIVE], 2u);
 	EXPECT_UEQ(st.dbg[DNS_DBG_REQ_TABLE_FULL], 1u);
 
 	/* Answers past DNS_MAX_ANSWERS (75): 75 parsed, cap counter incremented. */

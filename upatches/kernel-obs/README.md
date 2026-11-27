@@ -187,10 +187,10 @@ that suite runs rather than against one no test exercises.
 On that kernel the `lsm` and `cgroup_skb` programs run with preemption
 disabled, so no other task's run starts on a CPU before one ends; a
 softirq can still run an ingress program on top of an egress one, and
-the sleepable `lsm.s` programs can sleep. The DNS parser builds a query
-in a per-CPU scratch buffer without a guard: only egress runs use it,
-and those come from the task that sends the query, so on that kernel
-none starts before another ends. Runs on different CPUs share the arena
+the sleepable `lsm.s` programs can sleep. The DNS parser keeps separate
+per-CPU scratch slots for egress queries and ingress responses without a
+lock: on that kernel neither two egress runs nor two ingress runs
+interleave on a CPU. Runs on different CPUs share the arena
 tables on every kernel, so the tables take and count their entries with
 atomics, publish a buffer with a release store, and an export expects
 late writes into the buffer it drains.
@@ -210,6 +210,10 @@ nothing.
 
 DNS over TCP, TLS and HTTPS is not parsed; the resolvers are on the
 watch list instead, and DNS on ports other than 53 is not looked at.
+The `cgroup_skb` parser reads only the linear `sk_buff` head
+(`[skb->data, skb->data_end)`); nonlinear UDP `sk_buff` datagrams whose
+DNS bytes spill into paged fragments fail the linear bounds check and
+are counted under `DNS_DBG_PACKET_LEN_BAD` without pulling fragments.
 UDP DNS packets past the 1232-byte budget, IPv4 fragments, IPv6 packets
 with extension headers, non-zero opcodes or RCODEs, truncated (`TC = 1`)
 responses, non-`IN` classes, mismatched response question names/types/classes,

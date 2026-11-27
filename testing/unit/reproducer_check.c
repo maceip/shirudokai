@@ -183,15 +183,30 @@ static void verdict_json_and_text_are_deterministic(void)
 	EXPECT_TRUE(str_contains(tbuf, "Captured stack IDs:    77"));
 	libc_free(tbuf);
 
-	/* Invalid or unpinned upatch name fails cleanly in test-run runner. */
+	/* Invalid or unpinned upatch/map names fail cleanly in test-run runner. */
 	EXPECT_EQ(reproducer_run_test_prog("../bad", "shield_counters", NULL,
 					   "/nonexistent", "/nonexistent",
 					   &v), -EINVAL);
+	EXPECT_EQ(reproducer_run_test_prog("absent-shield", "../bad", NULL,
+					   "/nonexistent", "/nonexistent",
+					   &v), -EINVAL);
+	EXPECT_EQ(reproducer_run_test_prog("absent-shield", "..", NULL,
+					   "/nonexistent", "/nonexistent",
+					   &v), -EINVAL);
+	EXPECT_EQ(reproducer_run_test_prog("absent-shield", "shield_counters",
+					   "", "/nonexistent", "/nonexistent",
+					   &v), -EINVAL);
+	EXPECT_EQ(reproducer_run_test_prog("absent-shield", "shield_counters",
+					   "bad/stack", "/nonexistent",
+					   "/nonexistent", &v), -EINVAL);
+	EXPECT_EQ(reproducer_run_test_prog("absent-shield", "shield_counters",
+					   "seventeen_chars17", "/nonexistent",
+					   "/nonexistent", &v), -EINVAL);
 	EXPECT_EQ(reproducer_run_test_prog("absent-shield", "shield_counters",
 					   NULL, "/nonexistent", NULL, &v),
 		  -EINVAL);
 	EXPECT_TRUE(reproducer_run_test_prog("absent-shield", "shield_counters",
-					     NULL, "/nonexistent",
+					     "shield_stack_ids", "/nonexistent",
 					     "/nonexistent", &v) < 0);
 }
 

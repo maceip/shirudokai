@@ -5,9 +5,18 @@
  * Unit tests for OTLP origin digests, signed headers and classification.
  */
 
+#include <arpa/inet.h>
+#include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <netinet/in.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <zlib.h>
 
 #include <linux/bpf.h>
 #include <linux/btf.h>
@@ -333,11 +342,275 @@ static void shield_metrics_export_and_origin_signature(void)
 	btf__free(btf);
 }
 
+struct captured_post {
+	char	ak_name[2 * TPM_NAME_LEN + 1];
+	char	attest[2 * TPM_ATTEST_MAX + 1];
+	char	signature[2 * TPM_SIGNATURE_MAX + 1];
+	char	boot_id[OTEL_BOOT_ID_MAX + 1];
+	char	export_seq[32];
+	bool	has_gzip_encoding;
+	size_t	body_len;
+	__u8	body[4096];
+};
+
+static int copy_trimmed_header(char *dst, size_t cap, const char *s, size_t len)
+{
+	while (len && (*s == ' ' || *s == '\t')) {
+		s++;
+		len--;
+	}
+	while (len && (s[len - 1] == ' ' || s[len - 1] == '\t'))
+		len--;
+	return span_to_str(dst, cap, s, len);
+}
+
+static int match_header_value(const char *tok, size_t tok_len,
+			      const char *prefix, char *dst, size_t cap)
+{
+	size_t plen = strlen(prefix), i;
+
+	if (tok_len < plen)
+		return 0;
+	for (i = 0; i < plen; i++) {
+		if (tolower((__u8)tok[i]) != tolower((__u8)prefix[i]))
+			return 0;
+	}
+	if (copy_trimmed_header(dst, cap, tok + plen, tok_len - plen))
+		return -1;
+	return 1;
+}
+
+static int serve_one_otel_post(int listen_fd, int pipe_wr)
+{
+	static const char resp[] =
+		"HTTP/1.1 200 OK\r\n"
+		"Content-Type: application/json\r\n"
+		"Content-Length: 2\r\n"
+		"Connection: close\r\n\r\n{}";
+	struct captured_post cap = {};
+	const char *hdr_end = NULL, *tok;
+	__u64 content_len = 0;
+	size_t got = 0, hdr_len = 0, tok_len, sent = 0;
+	bool have_len = false;
+	char req[16384];
+	int conn;
+
+	conn = accept(listen_fd, NULL, NULL);
+	if (conn < 0)
+		return 1;
+	while (got < sizeof(req)) {
+		ssize_t n = read(conn, req + got, sizeof(req) - got);
+
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n <= 0)
+			break;
+		got += (size_t)n;
+		if (!hdr_end) {
+			hdr_end = span_find(req, got, "\r\n\r\n");
+			if (hdr_end) {
+				hdr_len = (size_t)(hdr_end - req);
+				for_each_token(tok, tok_len, req, hdr_len,
+					       "\r\n") {
+					char num[32];
+					int m;
+
+					m = match_header_value(tok, tok_len,
+							       "Content-Length:",
+							       num,
+							       sizeof(num));
+					if (!m)
+						continue;
+					if (m < 0 ||
+					    parse_u64(num, strlen(num),
+						      sizeof(cap.body),
+						      &content_len)) {
+						close(conn);
+						return 1;
+					}
+					have_len = true;
+				}
+				if (!have_len) {
+					close(conn);
+					return 1;
+				}
+			}
+		}
+		if (hdr_end && got >= hdr_len + 4 + (size_t)content_len)
+			break;
+	}
+	if (!hdr_end || got < hdr_len + 4 + (size_t)content_len) {
+		close(conn);
+		return 1;
+	}
+	for_each_token(tok, tok_len, req, hdr_len, "\r\n") {
+		char enc[32];
+		int m;
+
+		m = match_header_value(tok, tok_len, "Content-Encoding:",
+				       enc, sizeof(enc));
+		if (m < 0)
+			goto bad;
+		if (m > 0) {
+			if (str_equals_nocase(enc, "gzip"))
+				cap.has_gzip_encoding = true;
+			continue;
+		}
+		if (match_header_value(tok, tok_len, "X-Shirudo-TPM-AK-Name:",
+				       cap.ak_name, sizeof(cap.ak_name)) < 0 ||
+		    match_header_value(tok, tok_len, "X-Shirudo-TPM-Attest:",
+				       cap.attest, sizeof(cap.attest)) < 0 ||
+		    match_header_value(tok, tok_len, "X-Shirudo-TPM-Signature:",
+				       cap.signature,
+				       sizeof(cap.signature)) < 0 ||
+		    match_header_value(tok, tok_len, "X-Shirudo-Boot-ID:",
+				       cap.boot_id, sizeof(cap.boot_id)) < 0 ||
+		    match_header_value(tok, tok_len, "X-Shirudo-Export-Seq:",
+				       cap.export_seq,
+				       sizeof(cap.export_seq)) < 0)
+			goto bad;
+	}
+	cap.body_len = (size_t)content_len;
+	memcpy(cap.body, req + hdr_len + 4, cap.body_len);
+	if (write(conn, resp, sizeof(resp) - 1) != (ssize_t)(sizeof(resp) - 1))
+		goto bad;
+	close(conn);
+	while (sent < sizeof(cap)) {
+		ssize_t n = write(pipe_wr, (const __u8 *)&cap + sent,
+				  sizeof(cap) - sent);
+
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n <= 0)
+			return 1;
+		sent += (size_t)n;
+	}
+	return 0;
+bad:
+	close(conn);
+	return 1;
+}
+
+static void gzip_signed_post_roundtrips_through_quote_check(void)
+{
+	static const char status_body[] = "{\"status\":\"ok\"}";
+	struct sockaddr_in addr = {
+		.sin_family	= AF_INET,
+		.sin_addr	= { .s_addr = htonl(INADDR_LOOPBACK) },
+	};
+	socklen_t addr_len = sizeof(addr);
+	struct quote_otel_envelope env = {};
+	struct captured_post cap = {};
+	struct quote_result res = {};
+	struct tpm_key ak = {};
+	struct otel_opts opts = {
+		.retries	= 0,
+		.tpm_sign	= true,
+		.boot_id	= "boot-gzip-77",
+		.export_seq	= 23,
+		.quote_fn	= software_quote_cb,
+		.quote_ctx	= &ak,
+	};
+	__u8 body_sha256[32], plain_sha256[32];
+	int listen_fd, pfd[2], status = 0, send_rc;
+	char plain[8192];
+	char endpoint[64];
+	z_stream zs = {};
+	size_t got = 0;
+	pid_t pid;
+
+	test_ak_key();
+	listen_fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+	ASSERT_TRUE(listen_fd >= 0);
+	ASSERT_EQ(bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr)), 0);
+	ASSERT_EQ(getsockname(listen_fd, (struct sockaddr *)&addr, &addr_len),
+		  0);
+	ASSERT_EQ(listen(listen_fd, 1), 0);
+	ASSERT_TRUE(strsprintf(endpoint, sizeof(endpoint),
+			       "http://127.0.0.1:%u",
+			       (__u32)ntohs(addr.sin_port)) > 0);
+	opts.endpoint = endpoint;
+	ASSERT_EQ(pipe2(pfd, O_CLOEXEC), 0);
+
+	pid = fork();
+	ASSERT_TRUE(pid >= 0);
+	if (pid == 0) {
+		int rc;
+
+		close(pfd[0]);
+		rc = serve_one_otel_post(listen_fd, pfd[1]);
+		close(pfd[1]);
+		close(listen_fd);
+		_exit(rc);
+	}
+	close(pfd[1]);
+	close(listen_fd);
+
+	ASSERT_EQ(setenv("OTEL_EXPORTER_OTLP_COMPRESSION", "gzip", 1), 0);
+	send_rc = otel_send_log_string(&opts, "shirudo.status",
+				       "shirudo.status.report", 9, "INFO",
+				       status_body, sizeof(status_body) - 1,
+				       "shirudo.status", "ok");
+	unsetenv("OTEL_EXPORTER_OTLP_COMPRESSION");
+	ASSERT_EQ(send_rc, 0);
+
+	while (got < sizeof(cap)) {
+		ssize_t n = read(pfd[0], (__u8 *)&cap + got, sizeof(cap) - got);
+
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n <= 0)
+			break;
+		got += (size_t)n;
+	}
+	close(pfd[0]);
+	ASSERT_EQ(waitpid(pid, &status, 0), pid);
+	ASSERT_TRUE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	ASSERT_UEQ(got, sizeof(cap));
+
+	EXPECT_TRUE(cap.has_gzip_encoding);
+	ASSERT_TRUE(cap.body_len > 10);
+	EXPECT_UEQ(cap.body[0], 0x1f);
+	EXPECT_UEQ(cap.body[1], 0x8b);
+
+	/* Wire body inflates cleanly to the OTLP JSON payload. */
+	zs.next_in = cap.body;
+	zs.avail_in = (uInt)cap.body_len;
+	zs.next_out = (__u8 *)plain;
+	zs.avail_out = sizeof(plain) - 1;
+	ASSERT_EQ(inflateInit2(&zs, 15 + 16), Z_OK);
+	ASSERT_EQ(inflate(&zs, Z_FINISH), Z_STREAM_END);
+	plain[zs.total_out] = '\0';
+	ASSERT_EQ(inflateEnd(&zs), Z_OK);
+	EXPECT_TRUE(str_contains(plain, "\"resourceLogs\""));
+
+	/* Quote verifies against the compressed HTTP wire bytes. */
+	ASSERT_EQ(sha256_buffer(cap.body, cap.body_len, body_sha256), 0);
+	env.ak_name_hex = cap.ak_name;
+	env.attest_hex = cap.attest;
+	env.sig_hex = cap.signature;
+	env.ak_public = ak.public;
+	env.ak_public_len = ak.public_len;
+	env.boot_id = cap.boot_id;
+	env.export_seq = cap.export_seq;
+	env.body_sha256 = body_sha256;
+	ASSERT_EQ(quote_otel_check(&env, &res), 0);
+	EXPECT_EQ(res.verdict, QUOTE_OK);
+	EXPECT_UEQ(res.seq, 23);
+
+	/* Hashing the uncompressed JSON fails with QUOTE_BODY_MISMATCH. */
+	ASSERT_EQ(sha256_buffer(plain, zs.total_out, plain_sha256), 0);
+	env.body_sha256 = plain_sha256;
+	ASSERT_EQ(quote_otel_check(&env, &res), 0);
+	EXPECT_EQ(res.verdict, QUOTE_BODY_MISMATCH);
+}
+
 static const struct unit_case cases[] = {
 	UNIT_CASE(origin_digest_binds_domain_boot_seq_and_body),
 	UNIT_CASE(signed_headers_roundtrip_through_quote_check),
 	UNIT_CASE(reserved_shirudo_headers_are_refused),
 	UNIT_CASE(shield_metrics_export_and_origin_signature),
+	UNIT_CASE(gzip_signed_post_roundtrips_through_quote_check),
 	{}
 };
 

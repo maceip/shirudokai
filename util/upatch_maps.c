@@ -33,6 +33,7 @@
 #include "malloc.h"
 #include "paths.h"
 #include "serializer.h"
+#include "upatch.h"
 #include "upatch_map_types.h"
 #include "upatch_maps.h"
 #include "upatch_pins.h"
@@ -479,6 +480,7 @@ static char *btf_format_value(const struct btf *btf, __u32 type_id,
 		int vlen = BTF_INFO_VLEN(t->info);
 		size_t cap = 64, off = 0;
 		char *out = xmalloc(cap);
+		bool emitted = false;
 		int i;
 
 		if (!out)
@@ -508,7 +510,7 @@ static char *btf_format_value(const struct btf *btf, __u32 type_id,
 			if (ft) {
 				__s64 sz = btf__resolve_size(btf, m[i].type);
 
-				if (sz > 0)
+				if (sz > 0 && (__u64)sz <= bytes_size)
 					fsize = (__u32)sz;
 			}
 			if (!fsize || check_add_overflow(byte_off, fsize, &end) ||
@@ -527,10 +529,11 @@ static char *btf_format_value(const struct btf *btf, __u32 type_id,
 				fval = xasprintf("?");
 			strbuf_append_take(&out, &cap, &off,
 					   xasprintf("%s%s=%s",
-						     i ? ", " : "",
+						     emitted ? ", " : "",
 						     fname && fname[0] ?
 						     fname : "?",
 						     fval ? fval : "?"));
+			emitted = true;
 			xstrfree(fval);
 		}
 		strbuf_append_take(&out, &cap, &off, xasprintf(" }"));
@@ -583,7 +586,7 @@ static char *btf_format_value(const struct btf *btf, __u32 type_id,
  * own cpumask, nr_cpu_ids bits rounded up, and bounds what a lookup
  * writes.
  */
-static int nproc_possible(void)
+int upatch_nproc_possible(void)
 {
 	static int cached;
 	__u8 mask[1024];
@@ -602,6 +605,27 @@ static int nproc_possible(void)
 			return -errno;
 	}
 	return -E2BIG;
+}
+
+bool upatch_map_name_valid(const char *name)
+{
+	size_t i;
+
+	if (!name || !name[0])
+		return false;
+	if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0)
+		return false;
+	for (i = 0; name[i]; i++) {
+		char c = name[i];
+		bool ok = (c >= 'A' && c <= 'Z') ||
+			  (c >= 'a' && c <= 'z') ||
+			  (c >= '0' && c <= '9') ||
+			  c == '_' || c == '.';
+
+		if (!ok || i >= MAP_NAME_MAX)
+			return false;
+	}
+	return true;
 }
 
 static char *format_value(const void *value, __u32 value_size,
@@ -726,6 +750,8 @@ static int open_map_pin(const char *upatch, const char *map_name,
 	__u32 info_len = sizeof(*info_out);
 	int fd, ret;
 
+	if (!upatch_name_valid(upatch) || !upatch_map_name_valid(map_name))
+		return -EINVAL;
 	if (upatch_pin_path(path, sizeof(path), upatch, "maps", map_name, NULL))
 		return -ENAMETOOLONG;
 	/* libbpf returns the error it failed with. */
@@ -754,6 +780,8 @@ static int open_serializer_pin(const char *upatch, const char *map_name)
 	char path[PATH_MAX];
 	int fd;
 
+	if (!upatch_name_valid(upatch) || !upatch_map_name_valid(map_name))
+		return -EINVAL;
 	if (upatch_pin_path(path, sizeof(path), upatch, "serializers",
 			    map_name, NULL))
 		return -ENAMETOOLONG;
@@ -1223,7 +1251,11 @@ int upatch_maps_read(const char *upatch, const char *map,
 	int fd = -1;
 	int ret;
 
+	if (!out)
+		return -EINVAL;
 	memset(out, 0, sizeof(*out));
+	if (!upatch_name_valid(upatch) || !upatch_map_name_valid(map))
+		return -EINVAL;
 	if (strscpy(out->upatch, upatch, sizeof(out->upatch)) < 0 ||
 	    strscpy(out->name, map, sizeof(out->name)) < 0)
 		return -ENAMETOOLONG;
@@ -1239,7 +1271,7 @@ int upatch_maps_read(const char *upatch, const char *map,
 	out->max_entries = info.max_entries;
 	out->n_cpus = 1;
 	if (upatch_map_is_percpu(info.type)) {
-		int n = nproc_possible();
+		int n = upatch_nproc_possible();
 
 		if (n < 0) {
 			close(fd);
@@ -1353,7 +1385,7 @@ static void scan_upatch_maps(const char *upatch,
 		one.max_entries = info.max_entries;
 		one.n_cpus = 1;
 		if (upatch_map_is_percpu(info.type)) {
-			int cpus = nproc_possible();
+			int cpus = upatch_nproc_possible();
 
 			if (cpus < 0)
 				continue;
@@ -1954,7 +1986,7 @@ static void btf_emit_json_value(struct json_emit *e, const struct btf *btf,
 				continue;
 			}
 			sz = btf__resolve_size(btf, m[i].type);
-			if (sz > 0)
+			if (sz > 0 && (__u64)sz <= bytes_size)
 				fsize = (__u32)sz;
 			if (!fsize || check_add_overflow(byte_off, fsize, &end) ||
 			    end > bytes_size)
@@ -2241,6 +2273,10 @@ static struct btf *try_load_upatch_btf(const char *upatch)
 		__u32 id = 0;
 
 		pfd = upatch_xdp_prog_open(upatch, pins.first_xdp_prog, &id);
+	} else if (pins.nr_tcx_progs) {
+		__u32 id = 0;
+
+		pfd = upatch_tcx_prog_open(upatch, pins.first_tcx_prog, &id);
 	}
 	if (lfd >= 0) {
 		if (bpf_link_get_info_by_fd(lfd, &linfo, &linfo_len) == 0 &&
@@ -2322,25 +2358,6 @@ static void ringbuf_rebind_specs(struct ringbuf_slot *slots, size_t n,
 	}
 }
 
-static bool ringbuf_upatch_valid(const char *name)
-{
-	size_t i;
-
-	if (!name || !name[0] || name[0] == '.')
-		return false;
-	for (i = 0; name[i]; i++) {
-		char c = name[i];
-		bool ok = (c >= 'A' && c <= 'Z') ||
-			  (c >= 'a' && c <= 'z') ||
-			  (c >= '0' && c <= '9') ||
-			  c == '.' || c == '_' || c == '-';
-
-		if (!ok || i >= UPATCH_NAME_MAX)
-			return false;
-	}
-	return true;
-}
-
 int upatch_ringbuf_read(const char *upatch, const char *map,
 			__u32 max_records, __u32 timeout_ms, bool json,
 			struct ringbuf_batch *out)
@@ -2353,12 +2370,12 @@ int upatch_ringbuf_read(const char *upatch, const char *map,
 	if (!out)
 		return -EINVAL;
 	memset(out, 0, sizeof(*out));
-	if (!ringbuf_upatch_valid(upatch))
+	if (!upatch_name_valid(upatch))
 		return -EINVAL;
 	if (!max_records || max_records > RINGBUF_MAX_RECORDS_LIMIT ||
 	    timeout_ms > RINGBUF_MAX_TIMEOUT_MS)
 		return -EINVAL;
-	if (map && (!map[0] || strchr(map, '/') || strlen(map) > MAP_NAME_MAX))
+	if (map && !upatch_map_name_valid(map))
 		return -EINVAL;
 	out->max_records = max_records;
 	out->json = json;
@@ -2435,28 +2452,20 @@ int upatch_ringbuf_read(const char *upatch, const char *map,
 		goto out;
 	}
 	epfd = ring_buffer__epoll_fd(rb);
-	if (consumed == 0 && timeout_ms > 0) {
-		if (epfd >= 0) {
-			struct pollfd pfd = {
-				.fd	= epfd,
-				.events	= POLLIN,
-			};
-			int pr = poll(&pfd, 1, (int)timeout_ms);
+	if (consumed == 0 && timeout_ms > 0 && epfd >= 0) {
+		struct pollfd pfd = {
+			.fd	= epfd,
+			.events	= POLLIN,
+		};
+		int pr = poll(&pfd, 1, (int)timeout_ms);
 
-			if (pr < 0 && errno != EINTR) {
-				ret = -errno;
-				goto out;
-			}
-			if (pr > 0 && (pfd.revents & POLLIN)) {
-				consumed = ring_buffer__consume_n(rb, max_records);
-				if (consumed < 0) {
-					ret = out->err ? out->err : consumed;
-					goto out;
-				}
-			}
-		} else {
-			consumed = ring_buffer__poll(rb, (int)timeout_ms);
-			if (consumed < 0 && consumed != -EINTR) {
+		if (pr < 0 && errno != EINTR) {
+			ret = -errno;
+			goto out;
+		}
+		if (pr > 0 && (pfd.revents & POLLIN)) {
+			consumed = ring_buffer__consume_n(rb, max_records);
+			if (consumed < 0) {
 				ret = out->err ? out->err : consumed;
 				goto out;
 			}

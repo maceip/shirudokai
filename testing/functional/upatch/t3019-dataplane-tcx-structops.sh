@@ -223,7 +223,20 @@ test_expect_success 'struct_ops map outside .struct_ops.link and unreferenced ca
 	EOF
 	! build_upatch "$WORK/stray.bpf.c" "$WORK/stray.upatch" stray 2>"$WORK/stray.err" &&
 	grep -q "referenced anywhere" "$WORK/stray.err" &&
-	[ ! -e "$WORK/stray.upatch" ]
+	[ ! -e "$WORK/stray.upatch" ] &&
+	cat "$WORK/struct-ops.bpf.c" - >"$WORK/two-ops.bpf.c" <<-\EOF &&
+	SEC(".struct_ops.link")
+	struct tcp_congestion_ops shirudo_t3019_cc2 = {
+		.init		= (void *)shirudo_t3019_init,
+		.ssthresh	= (void *)shirudo_t3019_ssthresh,
+		.cong_avoid	= (void *)shirudo_t3019_cong_avoid,
+		.undo_cwnd	= (void *)shirudo_t3019_undo_cwnd,
+		.name		= "t3019_c2",
+	};
+	EOF
+	! build_upatch "$WORK/two-ops.bpf.c" "$WORK/two-ops.upatch" two-ops 2>"$WORK/two-ops.err" &&
+	grep -q "at most one struct_ops map" "$WORK/two-ops.err" &&
+	[ ! -e "$WORK/two-ops.upatch" ]
 '
 
 test_done

@@ -1456,21 +1456,21 @@ static noinline_for_stack int otel_post(struct otel_state *st,
 	    json_len > st->opts.otlp_max_bytes)
 		return -E2BIG;
 	req_headers = st->headers;
-	if (st->opts.tpm_sign) {
-		ret = otel_build_signed_headers(st, json, json_len,
-						&signed_headers);
-		if (ret)
-			return ret;
-		req_headers = signed_headers;
-	}
 	if (st->gzip) {
 		ret = gzip_data(json, json_len, &compressed, &body_len);
+		if (ret)
+			return ret;
+		body = compressed;
+		compressed_cap = size_add(compressBound(json_len), 32);
+	}
+	if (st->opts.tpm_sign) {
+		ret = otel_build_signed_headers(st, (const char *)body,
+						body_len, &signed_headers);
 		if (ret) {
-			curl_slist_free_sensitive(signed_headers);
+			xfree(compressed, compressed_cap);
 			return ret;
 		}
-		body = compressed;
-		compressed_cap = compressBound(json_len) + 32;
+		req_headers = signed_headers;
 	}
 	for (attempt = 0; attempt < max_attempts; attempt++) {
 		struct otel_response response = {};

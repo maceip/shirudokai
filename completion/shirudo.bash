@@ -39,8 +39,8 @@ _shirudo_value()
 	*dir*)
 		COMPREPLY=( $(compgen -d -- "$cur") ) ;;
 	'<hex>'|'<64-hex>'|'<n>'|'<ms>'|'<0-10>'|'<id>'|'<cve-id>'|'<url>'|\
-	'<uri>'|'<version>'|'<ref>'|'<list>'|'<map>'|'<upatch-name>'|*'=<hex>'|\
-	*':'*|sha256:*|"'<flags>'")
+	'<uri>'|'<version>'|'<ref>'|'<list>'|'<map>'|'<upatch-name>'|'<name>'|\
+	'<repository>'|*'=<hex>'|*':'*|sha256:*|"'<flags>'")
 		;;
 	*)
 		COMPREPLY=( $(compgen -f -- "$cur") ) ;;

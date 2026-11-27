@@ -13,7 +13,6 @@
 #include <unistd.h>
 
 #include <bpf/bpf.h>
-#include <bpf/libbpf.h>
 #include <linux/bpf.h>
 
 #include <shirudo/misc.h>
@@ -256,6 +255,8 @@ static int read_counters_pin(const char *upatch_name, const char *map_name,
 	int fd, ret;
 
 	memset(out, 0, sizeof(*out));
+	if (!upatch_name_valid(upatch_name) || !upatch_map_name_valid(map_name))
+		return -EINVAL;
 	if (upatch_pin_path(pin, sizeof(pin), upatch_name, "maps", map_name,
 			    NULL))
 		return -ENAMETOOLONG;
@@ -273,7 +274,7 @@ static int read_counters_pin(const char *upatch_name, const char *map_name,
 		goto out;
 	}
 	if (info.type == BPF_MAP_TYPE_PERCPU_ARRAY) {
-		int nr_cpus = libbpf_num_possible_cpus();
+		int nr_cpus = upatch_nproc_possible();
 		size_t stride = DIV_ROUND_UP(sizeof(struct shield_counters), 8) * 8;
 		size_t buf_sz;
 		__u8 *percpu;
@@ -326,8 +327,10 @@ static int read_stack_ids_pin(const char *upatch_name, const char *map_name,
 	int fd, ret = 0;
 
 	snap->nr_stack_ids = 0;
-	if (!map_name || !map_name[0])
+	if (!map_name)
 		return 0;
+	if (!upatch_name_valid(upatch_name) || !upatch_map_name_valid(map_name))
+		return -EINVAL;
 	if (upatch_pin_path(pin, sizeof(pin), upatch_name, "maps", map_name,
 			    NULL))
 		return -ENAMETOOLONG;
@@ -338,7 +341,12 @@ static int read_stack_ids_pin(const char *upatch_name, const char *map_name,
 		ret = -errno;
 		goto out;
 	}
-	if (info.key_size != sizeof(__u32)) {
+	if ((info.type != BPF_MAP_TYPE_HASH &&
+	     info.type != BPF_MAP_TYPE_PERCPU_HASH &&
+	     info.type != BPF_MAP_TYPE_LRU_HASH &&
+	     info.type != BPF_MAP_TYPE_LRU_PERCPU_HASH) ||
+	    info.key_size != sizeof(__u32) ||
+	    info.value_size != sizeof(__u64)) {
 		ret = -EINVAL;
 		goto out;
 	}
@@ -354,6 +362,12 @@ static int read_stack_ids_pin(const char *upatch_name, const char *map_name,
 		snap->stack_ids[snap->nr_stack_ids++] = next_key;
 		cur_key = next_key;
 		has_cur = true;
+	}
+	if (!ret && snap->nr_stack_ids == REPRODUCER_MAX_STACK_IDS) {
+		if (bpf_map_get_next_key(fd, &cur_key, &next_key) == 0)
+			ret = -E2BIG;
+		else if (errno != ENOENT)
+			ret = -errno;
 	}
 out:
 	close(fd);
@@ -412,7 +426,8 @@ int reproducer_run_test_prog(const char *upatch_name,
 	int prog_fd, ret;
 
 	if (!upatch_name || !upatch_name_valid(upatch_name) ||
-	    !counters_map || !counters_map[0] ||
+	    !upatch_map_name_valid(counters_map) ||
+	    (stack_map && !upatch_map_name_valid(stack_map)) ||
 	    !test_input_path || !test_input_path[0] ||
 	    !benign_input_path || !benign_input_path[0] || !out)
 		return -EINVAL;
