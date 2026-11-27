@@ -26,8 +26,8 @@ shirudo is pre-release. Production targets require a Linux kernel with
 the signed-loader ABI and shirudo's kernel patches, plus a TPM 2.0. See the
 [system requirements](https://docs.shirudo.dev/operate/plan/system-requirements.html).
 
-CI runs all test tiers on x86-64 and host tests on arm64. The test VM
-also boots locally on arm64. Target validation for riscv64 is pending.
+CI runs all test tiers on x86-64 and unit, lint, and functional target
+VM tests on arm64. Target validation for riscv64 is pending.
 The operator and target may use different architectures. See
 [architecture support](https://docs.shirudo.dev/contribute/arch-support.html).
 
@@ -66,6 +66,19 @@ The operator and target may use different architectures. See
 
 The [threat model](https://docs.shirudo.dev/security/threat-model.html)
 states where each of these mechanisms stops.
+
+## Extensions
+
+- **Kernel readiness and pre-flight hardening.** Checks `lsm/mm_read_access` and carried-patch prerequisites (`test-kernel-patches`), and enforces 32-bit compatibility, hibernation, and mounted block-device pre-flight checks.
+- **Shared enforcement mode.** Selects `enforcement.mode = shared` in runtime bootstrap so root retains `bpf()` for host workloads such as Cilium while shirudo seals and guards its own objects, maps, and links.
+- **Cloud vTPM attestation and arm64 VM CI.** Verifies AWS NitroTPM, GCP Shielded VM, and Azure vTPM endorsement public keys (`shirudo attest verify --ek-pub`, `shirudo attest challenge --ek-pub`, `shirudo attest ek-name`, `shirudo attest --ek-rsa`) and runs functional target VM shards on arm64.
+- **Curated CVE shield feed and multi-arch `kernel-cve`.** Verifies and matches offline ML-DSA-87 signed vulnerability feeds (`shirudo bpm feed verify|list|match`) and ships CO-RE multi-architecture [`kernel-cve`](upatches/kernel-cve) detectors and mitigations.
+- **Signed observe mode and reproducer checks.** Builds signed audit-only upatches (`shirudo build --observe` over `shirudo_observe_mode`) and checks benign-versus-exploit behavior and call stacks before enforcement (`shirudo upatch check --after-benign`).
+- **Application runtime shields.** Ships a deterministic SQL lexer ([`java-sql-inj`](upatches/java-sql-inj/README.md)), a bytecode guard for JNDI, deserialization, and process execution ([`java-runtime-guard`](upatches/java-runtime-guard/README.md)), and a BPF LSM shield for web workers ([`web-worker-guard`](upatches/web-worker-guard/README.md)).
+- **Pod and LLM agent sandboxes.** Scopes [`app-sandbox`](upatches/app-sandbox/README.md) rules to ancestor cgroup IDs, restricts socket families, TCP/UDP ports, `ptrace`, and file reads, and blocks cloud metadata and credential paths in [`llm-agent.toml`](upatches/app-sandbox/llm-agent.toml).
+- **Key rotation, config epoch floor, and FIPS 140-3 profile.** Adds key rotation and time-bounded v2 vouches (`shirudo keys rotate`, `shirudo keys vouch --expires-days`), monotonic `security.epoch` rollback floors, and an operator `FIPS=1` OpenSSL provider build profile.
+- **TPM-signed telemetry, `upatch events`, and hardened DNS parsing.** Signs OTLP exports with the TPM attestation key, exports shield hit metrics, streams one-shot BTF-formatted ring buffers (`shirudo upatch events`), and hardens [`kernel-obs`](upatches/kernel-obs/README.md) DNS wire parsing.
+- **TCX dataplane, netdev filters, and `struct_ops` upatches.** Attaches chained `tcx/ingress` and `tcx/egress` programs, filters XDP and TCX targets by interface or driver globs (`ifname=`, `driver=`), and signs `.struct_ops.link` loader metadata.
 
 ## How it works
 
