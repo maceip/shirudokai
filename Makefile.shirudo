@@ -1182,9 +1182,11 @@ build/unit/quote_check: tools/quote-check/row.o
 build/unit/upatch_maps_otel: UNIT_OBJS := tools/quote-check/row.o
 build/unit/upatch_maps_otel: tools/quote-check/row.o
 
-# The same for the builder's jar check.
+# The same for the builder's jar check and operator-only feed parser.
 build/unit/jar: UNIT_OBJS := tools/shirudo-build/jar.o
 build/unit/jar: tools/shirudo-build/jar.o
+build/unit/bpm_feed: UNIT_OBJS := util/bpm_feed.o
+build/unit/bpm_feed: util/bpm_feed.o
 
 UNIT_COVERAGE_CFLAGS = $(if $(filter --coverage,$(CFLAGS)),-DUNIT_GCOV)
 
