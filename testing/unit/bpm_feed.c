@@ -463,6 +463,31 @@ static void test_verify_cms_and_files(void)
 	EXPECT_EQ(feed.n_entries, 1);
 	bpm_feed_free(&feed);
 
+	/* Trusted directory verification uses enrolled cert.der. */
+	ASSERT_EQ(bpm_feed_verify_files_trusted(feed_path, sig_path, dir,
+						&feed), 0);
+	EXPECT_EQ(feed.n_entries, 1);
+	bpm_feed_free(&feed);
+
+	/* Expired feed document fails with -EKEYEXPIRED even with valid sig. */
+	{
+		static const char exp_doc[] =
+			"{\"schema\":1,\"feed_id\":\"verified-feed\","
+			"\"generated_at\":\"2020-01-01T00:00:00Z\","
+			"\"expires\":\"2020-01-02T00:00:00Z\","
+			"\"entries\":[]}\n";
+		__u8 *esig = NULL;
+		size_t esig_len = 0;
+
+		sign_cms(pkey, x509, EVP_sha512(), (const __u8 *)exp_doc,
+			 sizeof(exp_doc) - 1, &esig, &esig_len);
+		EXPECT_EQ(bpm_feed_verify_memory((const __u8 *)exp_doc,
+						 sizeof(exp_doc) - 1, esig,
+						 esig_len, &cert, &feed),
+			  -EKEYEXPIRED);
+		xfree(esig, esig_len);
+	}
+
 	unlink(feed_path);
 	unlink(sig_path);
 	unlink(cert_path);
@@ -484,11 +509,92 @@ static void test_verify_cms_and_files(void)
 	EVP_PKEY_free(pkey);
 }
 
+static void test_freshness_and_ranges(void)
+{
+	static const char sample[] =
+		"{\"schema\":1,\"feed_id\":\"shirudo/shields\","
+		"\"generated_at\":\"2026-11-26T12:00:00Z\","
+		"\"expires\":\"2026-12-01T00:00:00Z\","
+		"\"entries\":[{"
+		"\"id\":\"cve-2026-31431-alg-splice-block\","
+		"\"cves\":[\"CVE-2026-31431\"],"
+		"\"package\":\"cve-2026-31431-alg-splice-block\","
+		"\"version\":\"1.0.0\","
+		"\"reference\":\"oci://quay.io/shirudo/alg-splice:1.0.0\","
+		"\"manifest_digest\":\"" DIGEST_A "\","
+		"\"role\":\"mitigation\","
+		"\"selector\":{},"
+		"\"description\":\"ok\","
+		"\"affected\":\">=6.1,<6.13\","
+		"\"fixed_in\":\"6.12.5\""
+		"}]}";
+	struct bpm_feed feed = {};
+	char *out = NULL;
+	size_t out_len = 0;
+
+	ASSERT_EQ(bpm_feed_parse(sample, sizeof(sample) - 1, &feed), 0);
+	EXPECT_STREQ(feed.expires, "2026-12-01T00:00:00Z");
+	EXPECT_STREQ(feed.entries[0].affected, ">=6.1,<6.13");
+	EXPECT_STREQ(feed.entries[0].fixed_in, "6.12.5");
+	ASSERT_EQ(bpm_feed_emit(&feed, &out, &out_len), 0);
+	EXPECT_TRUE(str_contains(out, "\"expires\":\"2026-12-01T00:00:00Z\""));
+	xfree(out, out_len);
+
+	/*
+	 * 2026-11-26T12:00:00Z = 1795694400
+	 * 2026-12-01T00:00:00Z = 1796083200
+	 */
+	EXPECT_EQ(bpm_feed_check_freshness(&feed, 1795694400), 0);
+	EXPECT_EQ(bpm_feed_check_freshness(&feed, 1795694400 - 300), 0);
+	EXPECT_EQ(bpm_feed_check_freshness(&feed, 1795694400 - 301), -EINVAL);
+	EXPECT_EQ(bpm_feed_check_freshness(&feed, 1796083200), 0);
+	EXPECT_EQ(bpm_feed_check_freshness(&feed, 1796083201), -EKEYEXPIRED);
+
+	/* Release matching against affected + fixed_in. */
+	EXPECT_FALSE(bpm_feed_entry_matches_release(&feed.entries[0], "6.0.9"));
+	EXPECT_TRUE(bpm_feed_entry_matches_release(&feed.entries[0],
+						   "6.1.0-rc1"));
+	EXPECT_TRUE(bpm_feed_entry_matches_release(&feed.entries[0],
+						   "6.12.4-shirudo"));
+	EXPECT_FALSE(bpm_feed_entry_matches_release(&feed.entries[0],
+						    "6.12.5"));
+	EXPECT_FALSE(bpm_feed_entry_matches_release(&feed.entries[0],
+						    "6.13.0"));
+	EXPECT_FALSE(bpm_feed_entry_matches_release(&feed.entries[0], "bad"));
+
+	/* Entry without affected/fixed_in matches any release. */
+	feed.entries[0].affected[0] = '\0';
+	feed.entries[0].fixed_in[0] = '\0';
+	EXPECT_TRUE(bpm_feed_entry_matches_release(&feed.entries[0], "7.2.0"));
+	bpm_feed_free(&feed);
+
+	/* expires < generated_at, empty expires, and bad ranges are refused. */
+	expect_bad("{\"schema\":1,\"feed_id\":\"ok\","
+		   "\"generated_at\":\"2026-11-26T12:00:00Z\","
+		   "\"expires\":\"2026-11-26T11:59:59Z\",\"entries\":[]}");
+	expect_bad("{\"schema\":1,\"feed_id\":\"ok\","
+		   "\"generated_at\":\"2026-11-26T12:00:00Z\","
+		   "\"expires\":\"\",\"entries\":[]}");
+	expect_bad("{\"schema\":1,\"feed_id\":\"ok\","
+		   "\"generated_at\":\"2026-11-26T00:00:00Z\",\"entries\":[{"
+		   "\"id\":\"s1\",\"cves\":[\"CVE-2026-1111\"],\"package\":\"pkg\","
+		   "\"version\":\"1.0.0\",\"reference\":\"oci://r.io/a/b:1.0.0\","
+		   "\"manifest_digest\":\"" DIGEST_A "\","
+		   "\"role\":\"mitigation\",\"affected\":\"bad\"}]}");
+	expect_bad("{\"schema\":1,\"feed_id\":\"ok\","
+		   "\"generated_at\":\"2026-11-26T00:00:00Z\",\"entries\":[{"
+		   "\"id\":\"s1\",\"cves\":[\"CVE-2026-1111\"],\"package\":\"pkg\","
+		   "\"version\":\"1.0.0\",\"reference\":\"oci://r.io/a/b:1.0.0\","
+		   "\"manifest_digest\":\"" DIGEST_A "\","
+		   "\"role\":\"mitigation\",\"fixed_in\":\">=6.1\"}]}");
+}
+
 static const struct unit_case cases[] = {
 	UNIT_CASE(test_cve_ok),
 	UNIT_CASE(test_parse_and_emit_roundtrip),
 	UNIT_CASE(test_reject_invalid),
 	UNIT_CASE(test_verify_cms_and_files),
+	UNIT_CASE(test_freshness_and_ranges),
 	{},
 };
 

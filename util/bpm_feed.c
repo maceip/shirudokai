@@ -23,6 +23,7 @@
 #include "json.h"
 #include "keys.h"
 #include "malloc.h"
+#include "paths.h"
 #include "upatch.h"
 
 #define BPM_FEED_SIG_MAX	(1024u * 1024u)
@@ -80,12 +81,25 @@ static bool feed_leap_year(__u64 year)
 	return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
 }
 
-static bool feed_timestamp_ok(const char *s)
+static __s64 days_from_civil(__s64 y, unsigned m, unsigned d)
+{
+	__s64 era, yoe, doy, doe;
+
+	y -= m <= 2;
+	era = (y >= 0 ? y : y - 399) / 400;
+	yoe = y - era * 400;
+	doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+	doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+	return era * 146097 + doe - 719468;
+}
+
+static bool feed_timestamp_parse(const char *s, __s64 *unix_sec)
 {
 	static const __u8 mdays[12] = {
 		31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
 	};
 	__u64 year, mon, day, hour, min, sec, max_day;
+	__s64 days;
 
 	if (!s || strlen(s) != 20)
 		return false;
@@ -102,7 +116,20 @@ static bool feed_timestamp_ok(const char *s)
 	max_day = mdays[mon - 1];
 	if (mon == 2 && feed_leap_year(year))
 		max_day = 29;
-	return day <= max_day;
+	if (day > max_day)
+		return false;
+	if (sec == 60)
+		sec = 59;
+	days = days_from_civil((__s64)year, (unsigned)mon, (unsigned)day);
+	if (unix_sec)
+		*unix_sec = days * 86400 + (__s64)hour * 3600 +
+			    (__s64)min * 60 + (__s64)sec;
+	return true;
+}
+
+static bool feed_timestamp_ok(const char *s)
+{
+	return feed_timestamp_parse(s, NULL);
 }
 
 bool bpm_feed_cve_ok(const char *cve)
@@ -196,6 +223,172 @@ bool bpm_feed_entry_has_cve(const struct bpm_feed_entry *entry,
 		if (!strcmp(entry->cves[i], cve))
 			return true;
 	return false;
+}
+
+struct feed_kver {
+	__u64	major;
+	__u64	minor;
+	__u64	patch;
+	bool	has_patch;
+};
+
+static bool feed_kver_parse_prefix(const char *s, const char **endp,
+				   struct feed_kver *v, bool allow_suffix)
+{
+	size_t n;
+
+	if (!s || !isdigit((__u8)*s))
+		return false;
+	n = digits(s, 8);
+	if (!n || parse_u64(s, n, 99999, &v->major) || s[n] != '.')
+		return false;
+	s += n + 1;
+	n = digits(s, 8);
+	if (!n || parse_u64(s, n, 99999, &v->minor))
+		return false;
+	s += n;
+	v->patch = 0;
+	v->has_patch = false;
+	if (*s == '.') {
+		s++;
+		n = digits(s, 8);
+		if (!n || parse_u64(s, n, 99999, &v->patch))
+			return false;
+		s += n;
+		v->has_patch = true;
+	}
+	if (!allow_suffix && *s && *s != ',')
+		return false;
+	if (allow_suffix && *s && *s != '-' && *s != '+' && *s != '.')
+		return false;
+	if (endp)
+		*endp = s;
+	return true;
+}
+
+static int feed_kver_cmp(const struct feed_kver *a, const struct feed_kver *b)
+{
+	if (a->major != b->major)
+		return a->major < b->major ? -1 : 1;
+	if (a->minor != b->minor)
+		return a->minor < b->minor ? -1 : 1;
+	if (a->patch != b->patch)
+		return a->patch < b->patch ? -1 : 1;
+	return 0;
+}
+
+static bool feed_fixed_in_ok(const char *s)
+{
+	struct feed_kver v;
+	const char *end;
+
+	if (!s || !*s)
+		return true;
+	return feed_kver_parse_prefix(s, &end, &v, false) && !*end;
+}
+
+static bool feed_affected_eval(const char *expr, const struct feed_kver *rel)
+{
+	const char *p = expr;
+	int terms = 0;
+
+	while (*p) {
+		enum { OP_EQ, OP_LT, OP_LE, OP_GT, OP_GE } op = OP_EQ;
+		struct feed_kver bound;
+		const char *end;
+		int cmp;
+
+		if (terms >= 2)
+			return false;
+		if (p[0] == '>' && p[1] == '=') {
+			op = OP_GE;
+			p += 2;
+		} else if (p[0] == '<' && p[1] == '=') {
+			op = OP_LE;
+			p += 2;
+		} else if (p[0] == '>') {
+			op = OP_GT;
+			p += 1;
+		} else if (p[0] == '<') {
+			op = OP_LT;
+			p += 1;
+		} else if (p[0] == '=') {
+			op = OP_EQ;
+			p += 1;
+		}
+		if (!feed_kver_parse_prefix(p, &end, &bound, false))
+			return false;
+		if (rel) {
+			cmp = feed_kver_cmp(rel, &bound);
+			if (op == OP_EQ && !bound.has_patch) {
+				if (rel->major != bound.major ||
+				    rel->minor != bound.minor)
+					return false;
+			} else if ((op == OP_EQ && cmp != 0) ||
+				   (op == OP_LT && cmp >= 0) ||
+				   (op == OP_LE && cmp > 0) ||
+				   (op == OP_GT && cmp <= 0) ||
+				   (op == OP_GE && cmp < 0)) {
+				return false;
+			}
+		}
+		terms++;
+		if (!*end)
+			return true;
+		if (*end != ',' || !end[1])
+			return false;
+		p = end + 1;
+	}
+	return terms > 0;
+}
+
+static bool feed_affected_ok(const char *s)
+{
+	if (!s || !*s)
+		return true;
+	return feed_affected_eval(s, NULL);
+}
+
+bool bpm_feed_entry_matches_release(const struct bpm_feed_entry *entry,
+				    const char *release)
+{
+	struct feed_kver rel, fixed;
+
+	if (!entry)
+		return false;
+	if (!entry->affected[0] && !entry->fixed_in[0])
+		return true;
+	if (!release || !feed_kver_parse_prefix(release, NULL, &rel, true))
+		return false;
+	if (entry->fixed_in[0]) {
+		if (!feed_kver_parse_prefix(entry->fixed_in, NULL, &fixed,
+					    false))
+			return false;
+		if (feed_kver_cmp(&rel, &fixed) >= 0)
+			return false;
+	}
+	if (entry->affected[0] && !feed_affected_eval(entry->affected, &rel))
+		return false;
+	return true;
+}
+
+int bpm_feed_check_freshness(const struct bpm_feed *feed, __s64 now_sec)
+{
+	__s64 gen_sec = 0, exp_sec = 0;
+
+	if (!feed || !feed_timestamp_parse(feed->generated_at, &gen_sec))
+		return -EINVAL;
+	if (gen_sec > now_sec + BPM_FEED_CLOCK_SKEW_SEC)
+		return -EINVAL;
+	if (feed->expires[0]) {
+		if (!feed_timestamp_parse(feed->expires, &exp_sec))
+			return -EINVAL;
+		if (exp_sec < gen_sec)
+			return -EINVAL;
+		if (now_sec > exp_sec)
+			return -EKEYEXPIRED;
+	}
+	return 0;
 }
 
 void bpm_feed_free(struct bpm_feed *feed)
@@ -327,7 +520,9 @@ static bool feed_entry_valid(const struct bpm_feed_entry *e)
 	    !feed_digest_ok(e->manifest_digest) ||
 	    e->role == BPM_FEED_ROLE_NONE ||
 	    !feed_selector_text_ok(&e->selector) ||
-	    !feed_text_ok(e->description))
+	    !feed_text_ok(e->description) ||
+	    !feed_affected_ok(e->affected) ||
+	    !feed_fixed_in_ok(e->fixed_in))
 		return false;
 	for (int i = 0; i < e->n_cves; i++) {
 		if (!bpm_feed_cve_ok(e->cves[i]))
@@ -360,6 +555,9 @@ static int feed_take_entry(void *ctx)
 	for (int i = 0; i < 7; i++)
 		if (!r->entry_fields[i].seen)
 			return -EINVAL;
+	if ((r->entry_fields[9].seen && !e->affected[0]) ||
+	    (r->entry_fields[10].seen && !e->fixed_in[0]))
+		return -EINVAL;
 	for (size_t i = 0; i < ARRAY_SIZE(counts); i++)
 		if (r->sel_lists[i].seen && !counts[i])
 			return -EINVAL;
@@ -470,6 +668,10 @@ int bpm_feed_parse(const char *body, size_t len, struct bpm_feed *out)
 			  ARRAY_SIZE(selector) },
 			{ "description", JSON_T_STRING, e->description,
 			  sizeof(e->description), 0, NULL, 0 },
+			{ "affected", JSON_T_STRING, e->affected,
+			  sizeof(e->affected), 0, NULL, 0 },
+			{ "fixed_in", JSON_T_STRING, e->fixed_in,
+			  sizeof(e->fixed_in), 0, NULL, 0 },
 		};
 		struct json_field root[] = {
 			{ "schema", JSON_T_INT, &schema, 0, 0, NULL, 0 },
@@ -479,6 +681,8 @@ int bpm_feed_parse(const char *body, size_t len, struct bpm_feed *out)
 			  sizeof(out->generated_at), 0, NULL, 0 },
 			{ "entries", JSON_T_ARRAY, &entries_sink, 0, 0, entry,
 			  ARRAY_SIZE(entry) },
+			{ "expires", JSON_T_STRING, out->expires,
+			  sizeof(out->expires), 0, NULL, 0 },
 		};
 
 		r->sel_lists = selector;
@@ -487,12 +691,22 @@ int bpm_feed_parse(const char *body, size_t len, struct bpm_feed *out)
 		if (!ret && (!root[0].seen || !root[1].seen || !root[2].seen ||
 			     !root[3].seen))
 			ret = -EINVAL;
+		if (!ret && root[4].seen && !out->expires[0])
+			ret = -EINVAL;
 	}
 	if (ret && ret != -E2BIG && ret != -ENOMEM)
 		ret = -EINVAL;
 	if (!ret && (schema != 1 || !feed_id_ok(out->feed_id) ||
 		     !feed_timestamp_ok(out->generated_at)))
 		ret = -EINVAL;
+	if (!ret && out->expires[0]) {
+		__s64 gen_sec = 0, exp_sec = 0;
+
+		if (!feed_timestamp_parse(out->generated_at, &gen_sec) ||
+		    !feed_timestamp_parse(out->expires, &exp_sec) ||
+		    exp_sec < gen_sec)
+			ret = -EINVAL;
+	}
 	out->schema = (int)schema;
 	tree_selector_free(&r->entry.selector);
 	xfree(r, sizeof(*r));
@@ -605,6 +819,10 @@ static int feed_emit_entry(struct json_emit *e,
 	if (ret)
 		return ret;
 	json_kv_string(e, "description", ent->description);
+	if (ent->affected[0])
+		json_kv_string(e, "affected", ent->affected);
+	if (ent->fixed_in[0])
+		json_kv_string(e, "fixed_in", ent->fixed_in);
 	json_obj_close(e);
 	return e->err;
 }
@@ -619,6 +837,7 @@ int bpm_feed_emit(const struct bpm_feed *feed, char **out, size_t *out_len)
 	if (!feed || !out || !out_len || feed->schema != 1 ||
 	    !feed_id_ok(feed->feed_id) ||
 	    !feed_timestamp_ok(feed->generated_at) ||
+	    (feed->expires[0] && !feed_timestamp_ok(feed->expires)) ||
 	    feed->n_entries < 0 || feed->n_entries > BPM_FEED_MAX_ENTRIES)
 		return -EINVAL;
 	for (int i = 0; i < feed->n_entries; i++) {
@@ -639,6 +858,8 @@ int bpm_feed_emit(const struct bpm_feed *feed, char **out, size_t *out_len)
 	json_kv_int(&e, "schema", feed->schema);
 	json_kv_string(&e, "feed_id", feed->feed_id);
 	json_kv_string(&e, "generated_at", feed->generated_at);
+	if (feed->expires[0])
+		json_kv_string(&e, "expires", feed->expires);
 	json_arr_open(&e, "entries");
 	for (int i = 0; !ret && i < feed->n_entries; i++)
 		ret = feed_emit_entry(&e, &feed->entries[i]);
@@ -680,7 +901,46 @@ int bpm_feed_verify_memory(const __u8 *feed_bytes, size_t feed_len,
 	ret = verify_detached(feed_bytes, feed_len, sig_bytes, sig_len, cert);
 	if (ret)
 		return -EKEYREJECTED;
-	return bpm_feed_parse((const char *)feed_bytes, feed_len, out);
+	ret = bpm_feed_parse((const char *)feed_bytes, feed_len, out);
+	if (ret)
+		return ret;
+	ret = bpm_feed_check_freshness(out, (__s64)time(NULL));
+	if (ret)
+		bpm_feed_free(out);
+	return ret;
+}
+
+int bpm_feed_verify_trusted(const __u8 *feed_bytes, size_t feed_len,
+			    const __u8 *sig_bytes, size_t sig_len,
+			    const struct trusted_set *trusted,
+			    struct bpm_feed *out)
+{
+	int ret = -EKEYREJECTED;
+
+	if (!feed_bytes || !sig_bytes || !trusted || !out)
+		return -EINVAL;
+	if (!trusted->n)
+		return -ENOKEY;
+	if (cms_check_signers(sig_bytes, sig_len))
+		return -EKEYREJECTED;
+	for (size_t i = 0; i < trusted->n; i++) {
+		struct cert cert = {};
+		int r;
+
+		r = keys_cert_read(&trusted->certs[i], &cert);
+		if (r)
+			continue;
+		r = cms_signed_by(sig_bytes, sig_len, &cert);
+		if (r == 1) {
+			ret = bpm_feed_verify_memory(feed_bytes, feed_len,
+						     sig_bytes, sig_len,
+						     &cert, out);
+			cert_free(&cert);
+			return ret;
+		}
+		cert_free(&cert);
+	}
+	return ret;
 }
 
 int bpm_feed_verify_files(const char *feed_path, const char *sig_path,
@@ -712,5 +972,44 @@ out_sig:
 	xfree(sig_bytes, sig_len + 1);
 out_feed:
 	xfree(feed_bytes, feed_len + 1);
+	return ret;
+}
+
+int bpm_feed_verify_files_trusted(const char *feed_path, const char *sig_path,
+				  const char *keys_dir, struct bpm_feed *out)
+{
+	size_t feed_len = 0, sig_len = 0;
+	__u8 *feed_bytes = NULL, *sig_bytes = NULL;
+	struct trusted_set *trusted;
+	int ret;
+
+	if (!feed_path || !sig_path || !out)
+		return -EINVAL;
+	trusted = xcalloc(1, sizeof(*trusted));
+	if (!trusted)
+		return -ENOMEM;
+	if (!keys_dir) {
+		const char *env = getenv(KEYS_DIR_ENV);
+
+		keys_dir = (env && env[0]) ? env : KEYS_DIR;
+	}
+	ret = keys_load(keys_dir, KEYS_REVOKED_DIR, true, trusted);
+	if (!ret && (!trusted->n || trusted->n_unvouched))
+		ret = -EKEYREJECTED;
+	if (ret)
+		goto out_trusted;
+	ret = read_file(feed_path, JSON_MAX_BYTES, &feed_bytes, &feed_len);
+	if (ret)
+		goto out_trusted;
+	ret = read_file(sig_path, BPM_FEED_SIG_MAX, &sig_bytes, &sig_len);
+	if (ret)
+		goto out_feed;
+	ret = bpm_feed_verify_trusted(feed_bytes, feed_len, sig_bytes, sig_len,
+				      trusted, out);
+	xfree(sig_bytes, sig_len + 1);
+out_feed:
+	xfree(feed_bytes, feed_len + 1);
+out_trusted:
+	xfree(trusted, sizeof(*trusted));
 	return ret;
 }
