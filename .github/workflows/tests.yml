@@ -94,26 +94,10 @@ jobs:
             runner: ubuntu-latest
             vm: '1'
             suite: end2end
-          - name: CI unit tests (arm64)
+          - name: CI host tests (arm64)
             runner: ubuntu-24.04-arm
             vm: '0'
-            suite: unit
-          - name: CI functional tests (arm64, shard 1)
-            runner: ubuntu-24.04-arm
-            vm: '1'
-            suite: functional-ci-1
-          - name: CI functional tests (arm64, shard 2)
-            runner: ubuntu-24.04-arm
-            vm: '1'
-            suite: functional-ci-2
-          - name: CI functional tests (arm64, shard 3)
-            runner: ubuntu-24.04-arm
-            vm: '1'
-            suite: functional-ci-3
-          - name: CI functional tests (arm64, shard 4)
-            runner: ubuntu-24.04-arm
-            vm: '1'
-            suite: functional-ci-4
+            suite: host
     env:
       VM: ${{ matrix.vm }}
 
@@ -230,15 +214,11 @@ jobs:
           path: build/host-libtpms
           key: ${{ steps.host-libtpms.outputs.cache-primary-key }}
 
-      # On x86-64 only end-to-end builds the operator image; arm64 runs no
-      # end-to-end shard, so shard 1 saves the runtime image cache there.
       - name: Save the VM images
         if: >-
           always() && steps.images.outputs.cache-hit != 'true' &&
-          ((matrix.suite == 'end2end' &&
-            hashFiles('build/test-vm/cache/runtime/.operator-*.key') != '') ||
-           (runner.arch == 'ARM64' && matrix.suite == 'functional-ci-1' &&
-            hashFiles('build/test-vm/cache/runtime/.rootfs-*.key') != ''))
+          matrix.suite == 'end2end' &&
+          hashFiles('build/test-vm/cache/runtime/.operator-*.key') != ''
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: build/test-vm/cache

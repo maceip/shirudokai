@@ -32,7 +32,7 @@ Comparison
      - riscv64
    * - CI
      - Every tier on every push
-     - Unit tests, ``ci-checks``, and functional target VM tests
+     - Unit tests, ``ci-checks``, and host functional tests (``VM=0``)
      - Unit tests under QEMU user emulation, after each push to ``main``
    * - Test VM
      - Boots on x86-64 hosts
