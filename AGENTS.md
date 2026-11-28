@@ -9,13 +9,31 @@ not visible from the code.
 
 Read `.agents/skills/coding/SKILL.md` and follow it before you write,
 change or review any C in this tree, userspace, BPF, tests and tools
-alike, and before you write the commit message of such a change. It is
-how code here is written, with
+alike, with the files it links when it says to read them. It is how
+code here is written, with
 `Documentation/contribute/code/coding-style.rst` that it builds on.
 Claude Code loads it as the `coding` skill, Codex from `.agents/skills/`,
-and an agent that does not load skills reads the file. Work another
-skill covers, tests, documentation, proofs or an upatch, loads that skill
-as well.
+and an agent that does not load skills reads the file.
+
+Load the `commits` skill before every commit, of code, documentation,
+tests, scripts and CI alike. Work another skill covers loads that skill
+as well:
+
+- `shell` for shell scripts
+- `testing` to run tests and the test VM, and `unit-tests`,
+  `functional-tests` and `end2end-tests` to write them
+- `proofs` for proofs
+- `docs` for documentation
+- `upatch` for a upatch
+- `kernel` for the kernel shirudo needs and its carried patches
+- `user-experience` for anything a user sees: command output, JSON,
+  messages, options and help
+- `writing` for the prose of every page, commit message, comment,
+  message and help text
+
+Claude Code lists a skill with `paths:` only once the session has read
+a file it matches, never one in another worktree; until then, read
+`.agents/skills/<name>/SKILL.md` itself.
 
 ## What shirudo is
 
@@ -51,7 +69,9 @@ remote-management or transport layers.
 
 Before changing security-relevant code, read
 `Documentation/internals/architecture.rst` and
-`Documentation/security/threat-model.rst`.
+`Documentation/security/threat-model.rst`. An audit of the tree or of a
+change, and a check of whether a reported issue is real, follow the
+`security-audit` skill.
 
 | Path | Purpose |
 |---|---|
@@ -63,7 +83,7 @@ Before changing security-relevant code, read
 | `Documentation/upatches/` | Authoring and shipping upatches: attach kinds, maps and serializers, decoders, the Beefile, publishing, debugging a failed load. |
 | `Documentation/reference/` | Every command (`reference/cli/`), the formats (`reference/formats/`, including the `.upatch` container), the settings (`configuration.rst`), the eventlog, failure categories and exit status, files, units, environment variables, the cheat sheet. |
 | `Documentation/contribute/` | Developer guide, test tiers and the test VM (read `testing.rst` before adding or moving a test), test coverage, the kernel coding style, commits and sign-off (read `contributing.rst` before crafting a commit), and the documentation style guide `writing-docs.rst`. |
-| `.agents/skills/` | Skills for coding agents in the `SKILL.md` format of agentskills.io, which Codex reads there and Claude Code through the `.claude/skills` link: `coding` writes C in the tree's style, grows `util/` and writes its commit messages, `testing` runs the test tiers and the test VM, `pre-submit` the checks CI runs on a series, `upatch` writes for the target's preemption model and a low cost, builds, packages and publishes an upatch, `bpf-concurrency` checks upatch code whose runs share state, `bpf-coccinelle` runs and extends the Coccinelle rules for it, `docs` finds and checks the pages a change touches, `fuzz-target` adds a libFuzzer target for a parser, `proofs` runs and writes the CBMC and Lean 4 proofs, `security-audit` audits the tree against the threat model, and the threat model and the proofs against the tree. |
+| `.agents/skills/` | Skills for coding agents in the `SKILL.md` format of agentskills.io, which Codex reads there and Claude Code through the `.claude/skills` link, each a `SKILL.md` with the reference files it links beside it: `coding` writes C in the tree's style and grows `util/`, `commits` writes commit messages and shapes a series, `shell` writes POSIX shell for dash, `testing` runs the test tiers and the test VM, `unit-tests`, `functional-tests` and `end2end-tests` write a test in each tier, `pre-submit` the checks CI runs on a series, `upatch` writes for the target's preemption model and a low cost, builds, packages and publishes an upatch, `bpf-concurrency` checks upatch code whose runs share state, `bpf-coccinelle` runs and extends the Coccinelle rules for it, `docs` finds and checks the pages a change touches, `fuzz-target` adds a libFuzzer target for a parser, `user-experience` keeps command output, JSON, messages, options and help consistent across commands, `writing` keeps the prose of pages, commit messages, comments and help plain and free of generated-text patterns, `proofs` runs and writes the CBMC and Lean 4 proofs, `kernel` moves the bpf-next pin and carries, rebases and drops kernel patches, `security-audit` audits the tree against the threat model, and the threat model and the proofs against the tree. |
 
 The kernel side of the signing design is the kernel's own
 `Documentation/bpf/signing.rst`; `bpf_prog_verify_signature()` runs
@@ -79,11 +99,12 @@ that is added, changed or removed is added, changed or removed in
 change closes leaves the threat model. A page that no longer matches
 the code is a bug, whichever of the two is wrong.
 `.github/scripts/check-docs.sh` catches the names it can; the prose is
-the author's to check. The skills in `.agents/skills/` name commands,
-make targets, options, files, scripts and rules as well: a change to
-one of those checks the skills that mention it (`git grep -n '<name>'
-.agents/skills`) and updates them in the same commit, and a skill that
-no longer matches the tree is a bug like a page.
+the author's to check. The `docs` skill lists the pages each kind of
+change touches and how to check them. The skills in `.agents/skills/`
+name commands, make targets, options, files, scripts and rules as well:
+a change to one of those checks the skills that mention it (`git grep
+-n '<name>' .agents/skills`) and updates them in the same commit, and a
+skill that no longer matches the tree is a bug like a page.
 
 The proofs under `testing/proofs/` follow the code the same way. A
 change to a file or function a CBMC harness includes or reaches (`git
@@ -114,20 +135,21 @@ package for `bpm info`.
 
 C follows the kernel coding style,
 `Documentation/contribute/code/coding-style.rst`, in userspace and BPF
-alike. The `coding` skill gives these conventions with their reasons,
-the helpers to use and the commit message that carries a change:
-`.agents/skills/coding/SKILL.md` is the reference, and the "Before you
-write code" section above has you load and follow it.
+alike. The `coding` skill gives these conventions with their reasons
+and the helpers to use: `.agents/skills/coding/SKILL.md` is the
+reference, and the "Before you write code" section above has you load
+and follow it.
 
-Coding conventions, helpers, patterns, and commit message format belong
-in the `coding` skill, not here. This file documents architecture,
-invariants, and project policies; the skill documents how to write C.
+Coding conventions, helpers and patterns belong in the `coding` skill,
+the commit message format in the `commits` skill, not here. This file
+documents architecture, invariants, and project policies; the skills
+document how to write C and how to commit it.
 
 ## Commits
 
 Every commit follows `Documentation/contribute/code/contributing.rst` and
-the commit message format in the `coding` skill. One logical change per
-commit, each one building and passing on its own.
+the `commits` skill, which an agent loads before it commits. One logical
+change per commit, each one building and passing on its own.
 
 An agent never adds a `Signed-off-by:`, on its own or anyone else's
 behalf: only a person can give one, and that line is left to the human
