@@ -73,13 +73,12 @@ struct attest_evidence_args {
 	bool		rsa_ek;
 };
 
-extern const struct opt_spec attest_evidence_opts[ATTEST_EVIDENCE_N_OPTS];
-
 /*
  * Parse `shirudo attest` (evidence) options. Returns 0 to proceed,
  * 1 when --help/--list-opts was handled, or -EINVAL on usage error.
  */
 int attest_parse_evidence_args(int argc, const char **argv,
+			       const struct opt_spec *opts,
 			       const struct help *help,
 			       struct attest_evidence_args *out);
 

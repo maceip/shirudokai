@@ -218,20 +218,8 @@ static void emit_certification(struct json_emit *e,
 	emit_hex(e, "after_signature", after->signature, after->signature_len);
 }
 
-const struct opt_spec attest_evidence_opts[ATTEST_EVIDENCE_N_OPTS] = {
-	[EVIDENCE_NONCE] = { "--nonce", 0, 0, "<hex>",
-		"freshness value from the verifier (up to 64 bytes)" },
-	[EVIDENCE_PCRS] = { "--pcrs", 0, 0, "<list>",
-		"PCRs to quote, comma separated (default 0-7,9,11-15)" },
-	[EVIDENCE_CHALLENGE] = { "--challenge", 0, 0, "<path>",
-		"a challenge from the verifier to activate while attesting" },
-	[EVIDENCE_EK_RSA] = { "--ek-rsa", 0, 0, NULL,
-		"present the RSA endorsement key when the TPM has no certificate" },
-	[EVIDENCE_OUTPUT] = { "--output", 'o', 0, "<path>",
-		"write the evidence there (0600) instead of stdout" },
-};
-
 int attest_parse_evidence_args(int argc, const char **argv,
+			       const struct opt_spec *opts,
 			       const struct help *help,
 			       struct attest_evidence_args *out)
 {
@@ -240,7 +228,8 @@ int attest_parse_evidence_args(int argc, const char **argv,
 
 	memset(out, 0, sizeof(*out));
 	out->pcr_mask = ATTEST_PCR_DEFAULT;
-	OPT_INIT(&p, "attest", attest_evidence_opts, help, argc, argv, 1);
+	opt_init(&p, "attest", opts, ATTEST_EVIDENCE_N_OPTS, help,
+		 argc, argv, 1);
 	for (opt = opt_next(&p); opt != OPT_END; opt = opt_next(&p)) {
 		switch (opt) {
 		case EVIDENCE_CHALLENGE:

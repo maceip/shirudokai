@@ -1646,10 +1646,10 @@ a proof covers.
      - Mostly calls into a library a harness would have to model whole:
        OpenSSL, libcurl, libelf, the BTF reader of libbpf, tpm2-tss and
        LuaJIT
-   * - :src:`util/bpm_feed.c`
+   * - :src:`util/bpm_feed.c`, :src:`tools/shirudo-build/bpm-feed.c`
      - Pure JSON feed parser and canonical emitter without a CBMC harness
-       yet; verified by :src:`testing/unit/bpm_feed.c` and
-       :src:`testing/fuzz/fuzz-bpm-feed.c` (plus OpenSSL CMS verification)
+       yet; verified by ``testing/unit/bpm_feed.c`` and
+       ``testing/fuzz/fuzz-bpm-feed.c`` (plus OpenSSL CMS verification)
    * - :src:`util/format.c`, :src:`util/help.c`, :src:`util/report.c`,
        :src:`util/timefmt.c`, :src:`util/upatch_table.c`
      - Output for people: sizes, durations, help, the load report and

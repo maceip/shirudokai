@@ -13,6 +13,7 @@ source = "java-base64.jar"
 
 [upatches.tree]
 id = "java-base64"
+role = "mitigation"
 fixes = ["CVE-2026-114938"]
 
 [upatches.tree.selector]

@@ -187,6 +187,19 @@ static const struct opt_spec predict_opts[] = {
 		"init record's 384-byte RSA modulus (with --bind-pcr)" },
 };
 
+static const struct opt_spec attest_evidence_opts[ATTEST_EVIDENCE_N_OPTS] = {
+	[EVIDENCE_NONCE] = { "--nonce", 0, 0, "<hex>",
+		"freshness value from the verifier (up to 64 bytes)" },
+	[EVIDENCE_PCRS] = { "--pcrs", 0, 0, "<list>",
+		"PCRs to quote, comma separated (default 0-7,9,11-15)" },
+	[EVIDENCE_CHALLENGE] = { "--challenge", 0, 0, "<path>",
+		"a challenge from the verifier to activate while attesting" },
+	[EVIDENCE_EK_RSA] = { "--ek-rsa", 0, 0, NULL,
+		"present the RSA endorsement key when the TPM has no certificate" },
+	[EVIDENCE_OUTPUT] = { "--output", 'o', 0, "<path>",
+		"write the evidence there (0600) instead of stdout" },
+};
+
 static const struct help_section attest_help_sections[] = {
 	HELP_ITEMS("subcommands:", attest_subcmds),
 	HELP_OPTIONS("evidence options (target):", attest_evidence_opts),
@@ -1083,7 +1096,8 @@ static int cmd_attest_evidence(int argc, const char **argv)
 	size_t len = 0, cap = 0;
 	int ret;
 
-	ret = attest_parse_evidence_args(argc, argv, &attest_help, &args);
+	ret = attest_parse_evidence_args(argc, argv, attest_evidence_opts,
+					 &attest_help, &args);
 	if (ret > 0)
 		return 0;
 	if (ret < 0)

@@ -307,6 +307,14 @@ static void cloud_ek_pub_vouches_challenge_and_verify(void)
 
 static void ek_rsa_option_selects_and_warns(void)
 {
+	const struct opt_spec opts[ATTEST_EVIDENCE_N_OPTS] = {
+		[EVIDENCE_NONCE] = { "--nonce", 0, 0, "<hex>", "nonce" },
+		[EVIDENCE_PCRS] = { "--pcrs", 0, 0, "<list>", "pcrs" },
+		[EVIDENCE_CHALLENGE] = { "--challenge", 0, 0, "<path>",
+					 "challenge" },
+		[EVIDENCE_EK_RSA] = { "--ek-rsa", 0, 0, NULL, "rsa" },
+		[EVIDENCE_OUTPUT] = { "--output", 'o', 0, "<path>", "output" },
+	};
 	const char *argv_rsa[] = { "attest", "--ek-rsa", "--nonce", "0102" };
 	const char *argv_def[] = { "attest", "--nonce", "0102" };
 	struct attest_evidence_args args;
@@ -315,12 +323,12 @@ static void ek_rsa_option_selects_and_warns(void)
 	bool ignored = false;
 
 	ASSERT_EQ(attest_parse_evidence_args(ARRAY_SIZE(argv_def), argv_def,
-					     NULL, &args), 0);
+					     opts, NULL, &args), 0);
 	EXPECT_FALSE(args.rsa_ek);
 	EXPECT_EQ(args.nonce_len, 2U);
 
 	ASSERT_EQ(attest_parse_evidence_args(ARRAY_SIZE(argv_rsa), argv_rsa,
-					     NULL, &args), 0);
+					     opts, NULL, &args), 0);
 	EXPECT_TRUE(args.rsa_ek);
 
 	/* Without certificate or challenge, --ek-rsa selects RSA. */

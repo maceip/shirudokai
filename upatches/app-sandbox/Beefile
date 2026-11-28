@@ -38,4 +38,5 @@ paths = ["/usr/local/bin/llm-agent*"]
 
 [upatches.tree]
 id = "app-sandbox"
+role = "mitigation"
 fixes = ["CVE-2026-109618", "CVE-2026-109619"]

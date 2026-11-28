@@ -4,7 +4,7 @@
   Copyright (c) 2026 Authors of shirudo
 
   Declares tpm_otel_check(ak_name, attest, sig, ak, body_sha256) over
-  the shirudo-quote-check --otel program of the shirudo operator package.
+  the shirudo-otel-check program of the shirudo operator package.
   Install this file beside the server's config.xml and the program in
   the server's user_scripts directory.
 -->
