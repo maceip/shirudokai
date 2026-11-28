@@ -147,13 +147,12 @@ static int line_string(void *ctx, const char *s)
 	return 0;
 }
 
-static int line_number(void *ctx, const char *text, size_t len,
-		       bool integer __unused)
+static int line_number(void *ctx, const char *text, size_t len, bool integer)
 {
 	struct line *line = ctx;
 
 	if (!strcmp(line->key, "ok")) {
-		if (line->has_ok || len != 1 ||
+		if (line->has_ok || !integer || len != 1 ||
 		    (text[0] != '0' && text[0] != '1'))
 			return -EINVAL;
 		line->has_ok = true;
