@@ -20,6 +20,9 @@ guestfs_setup()
 	# qemu-system-<arch> has neither. Run the appliance directly with the
 	# emulator the VM uses, unless the caller chose otherwise.
 	export LIBGUESTFS_BACKEND="${LIBGUESTFS_BACKEND:-direct}"
+	if [[ -z "${LIBGUESTFS_BACKEND_SETTINGS:-}" && ! -w /dev/kvm ]]; then
+		export LIBGUESTFS_BACKEND_SETTINGS=force_tcg
+	fi
 	if [[ -z "${LIBGUESTFS_HV:-}" ]]; then
 		LIBGUESTFS_HV="$(command -v "${TEST_VM_QEMU:-$TEST_VM_ARCH_QEMU}" || true)"
 		[[ -z "$LIBGUESTFS_HV" ]] || export LIBGUESTFS_HV
