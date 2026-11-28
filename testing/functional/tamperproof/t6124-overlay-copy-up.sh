@@ -63,12 +63,7 @@ test_expect_success 'a load through an overlay over the state root is refused' '
 	[ ! -e "$PIN" ] &&
 	[ "$(counter)" -gt "$before" ] &&
 	[ "$(wc -l </var/lib/shirudo/eventlog)" = "$LINES" ] &&
-	[ "$(chain)" = "$CHAIN" ] || {
-		echo "t6124 diag: rc=$rc before=$before after=$(counter) lines=$(wc -l </var/lib/shirudo/eventlog)/$LINES chain=$(chain)/$CHAIN" >&2
-		cat "$W/upper" >&2
-		cat "$W/err" >&2
-		false
-	}
+	[ "$(chain)" = "$CHAIN" ]
 '
 
 test_expect_success 'the same load succeeds on the sealed tree' '

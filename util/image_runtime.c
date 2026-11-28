@@ -855,50 +855,17 @@ static const struct config_update_ops boot_ops = {
 
 static int open_update(void)
 {
-	struct stat expected = {}, opened = {};
-	int active, state_fd, child_fd, ret;
+	int ret;
 
 	if (image.update.lock_fd >= 0)
 		return 0;
-	active = enforcement_active();
-	if (active < 0)
-		return active;
-	if (active > 0) {
-		state_fd = state_root_open();
-		if (state_fd < 0)
-			return state_fd;
-		child_fd = seal_mkdir_child(state_fd, "config-update", 0700,
-					    false);
-		close(state_fd);
-		if (child_fd < 0)
-			return child_fd;
-		ret = fstat(child_fd, &expected) ? -errno : 0;
-		close(child_fd);
-		if (ret)
-			return ret;
-	} else {
-		ret = mkdir_owned(CONFIG_UPDATE_DIR);
-		if (ret)
-			return ret;
-	}
-	if (!image.tpm) {
+	ret = mkdir_owned(CONFIG_UPDATE_DIR);
+	if (!ret && !image.tpm)
 		ret = tpm_open(&image.tpm);
-		if (ret)
-			return ret;
-	}
-	ret = config_update_open(CONFIG_UPDATE_DIR, &update_ops, &image,
-				 &image.update);
-	if (ret)
-		return ret;
-	if (active > 0) {
-		if (fstat(image.update.dir_fd, &opened))
-			ret = -errno;
-		else if (opened.st_dev != expected.st_dev ||
-			 opened.st_ino != expected.st_ino)
-			ret = -EXDEV;
-		if (ret)
-			config_update_close(&image.update);
-	}
+	if (!ret)
+		ret = config_update_open(CONFIG_UPDATE_DIR,
+					 &update_ops, &image,
+					 &image.update);
 	return ret;
 }
 
