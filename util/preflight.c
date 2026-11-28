@@ -24,8 +24,9 @@
 #include <shirudo/string.h>
 
 #include "config.h"
-#include "initrd.h"
 #include "crypto.h"
+#include "identity.h"
+#include "initrd.h"
 #include "io.h"
 #include "kernel_abi.h"
 #include "kernel_prereq.h"
@@ -299,6 +300,10 @@ static void check_bdev_write_mounted(struct preflight_result *r)
 	char path[PATH_MAX];
 	int ret;
 
+	if (!in_initrd() && enforcement_active() == 1) {
+		pass(c);
+		return;
+	}
 	if (in_initrd()) {
 		if (strsprintf(path, sizeof(path), "%s%s", sysroot(),
 			       VAR_LIB) < 0) {

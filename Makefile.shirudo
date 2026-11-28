@@ -1302,8 +1302,8 @@ $(FUZZ_OUT)/fuzz-ek-pub: testing/fuzz/fuzz-ek-pub.c $(FUZZ_BASE) \
                           util/crypto_openssl.c util/io.c $(FUZZ_SEAL)
 $(FUZZ_OUT)/fuzz-attest: testing/fuzz/fuzz-attest.c $(FUZZ_BASE) \
                           util/attest.c util/ek_cloud.c util/chain.c \
-                          util/chain_history.c \
-                          util/nv_writer.c util/tpm.c \
+                          util/chain_history.c util/options.c util/help.c \
+                          util/similar.c util/nv_writer.c util/tpm.c \
                           util/tpm_wire.c util/eventlog.c util/timefmt.c \
                           util/crypto_openssl.c util/io.c $(FUZZ_SEAL) \
                           util/config_attest.c util/config_update.c \
@@ -1344,7 +1344,11 @@ $(FUZZ_OUT)/fuzz-otel: testing/fuzz/fuzz-otel.c $(FUZZ_BASE) \
                         util/tls_openssl.c util/io.c util/version_id.c \
                         $(FUZZ_SEAL)
 $(FUZZ_OUT)/fuzz-beefile: testing/fuzz/fuzz-beefile.c $(FUZZ_BASE) \
-                           tools/shirudo-build/bpm-build.c $(FUZZ_PACKAGE) \
+                           tools/shirudo-build/bpm-build.c \
+                           tools/shirudo-build/bpm-feed.c util/bpm_feed.c \
+                           util/bpm_tree_state.c util/kconfig.c \
+                           util/kernel_build_id.c util/kernel_release.c \
+                           util/sign.c $(FUZZ_PACKAGE) \
                            util/upatch.c util/timefmt.c util/paths.c \
                            util/version_id.c util/options.c util/help.c \
                            util/similar.c
